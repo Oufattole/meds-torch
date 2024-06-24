@@ -132,3 +132,10 @@ def test_clmbr(tmp_path):
     splits_fp = MEDS_cohort_dir / "splits.json"
     json.dump(split_json, splits_fp.open("w"))
 
+    pyd = PytorchDataset(cfg, split="tuning")
+
+    # Get an item:
+    item = pyd[0]
+
+    # Get a batch:
+    batch = pyd.collate([pyd[i] for i in range(5)])
