@@ -95,7 +95,7 @@ MEDS_OUTPUTS = {
 
 
 def test_clmbr(tmp_path):
-    MEDS_cohort_dir = tmp_path / "processed"
+    MEDS_cohort_dir = tmp_path / "processed" / "final_cohort"
 
     describe_codes_config = {
         "raw_MEDS_cohort_dir": str(MEDS_cohort_dir.parent.resolve()),
@@ -110,11 +110,11 @@ def test_clmbr(tmp_path):
         cfg = compose(config_name="pytorch_dataset", overrides=overrides)  # config.yaml
 
     # Create the directories
-    (MEDS_cohort_dir / "final_cohort").mkdir(parents=True, exist_ok=True)
+    MEDS_cohort_dir.mkdir(parents=True, exist_ok=True)
 
     # Store MEDS outputs
     for split, data in MEDS_OUTPUTS.items():
-        file_path = MEDS_cohort_dir / "final_cohort" / f"{split}.parquet"
+        file_path = MEDS_cohort_dir / f"{split}.parquet"
         file_path.parent.mkdir(exist_ok=True)
         df = pl.read_csv(StringIO(data))
         df.with_columns(pl.col("timestamp").str.to_datetime("%Y-%m-%dT%H:%M:%S%.f")).write_parquet(
@@ -129,9 +129,10 @@ def test_clmbr(tmp_path):
     for f in meds_files:
         assert pl.read_parquet(f).shape[0] > 0, "MEDS Data Tabular Dataframe Should not be Empty!"
     split_json = json.load(StringIO(SPLITS_JSON))
-    splits_fp = MEDS_cohort_dir / "splits.json"
+    splits_fp = MEDS_cohort_dir.parent / "splits.json"
     json.dump(split_json, splits_fp.open("w"))
 
+    # TODO: Tokenize data using normalization -> tokenization -> tensorize pipeline in MEDS_polars_function repo
     pyd = PytorchDataset(cfg, split="tuning")
 
     # Get an item:

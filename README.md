@@ -6,7 +6,7 @@ tokenized data.
 
 ## Installation
 
-```bash
+```console
 git clone https://github.com/mmcdermott/MEDS_pytorch_dataset.git
 pip install .
 ```
