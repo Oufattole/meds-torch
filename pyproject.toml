@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meds-torch"
+version = "0.0.1"
+authors = [
+  {name="Matthew McDermott", email="mattmcdermott8@gmail.com"},
+  {name="Nassim Oufattole", email="noufattole@gmail.com"},
+]
+description = "A MEDS PyTorch Dataset, leveraging a on-the-fly retrieval strategy for flexible, efficient data loading."
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "polars", "pyarrow", "nested_ragged_tensors", "loguru", "numpy", "ml-mixins", "torch", "omegaconf"
+]
+
+[project.optional-dependencies]
+dev = ["pre-commit","notebook"]
+tests = ["pytest", "pytest-cov[toml]"]
+
+[project.urls]
+Homepage = "https://github.com/oufattole/meds-torch"
+Issues = "https://github.com/oufattole/meds-torch/issues"
