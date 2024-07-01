@@ -1,13 +1,11 @@
 from pathlib import Path
 from MEDS_torch.pytorch_dataset import PytorchDataset
 from MEDS_torch.utils import list_subdir_files
-from omegaconf import OmegaConf
-import tempfile
 from hydra import initialize, compose
+from pathlib import Path
 import polars as pl
 import json
 from io import StringIO
-import MEDS_polars_functions as mpf
 import os
 
 SPLITS_JSON = """{"train/0": [239684, 1195293], "train/1": [68729, 814703], "tuning/0": [754281], "held_out/0": [1500733]}"""  # noqa: E501
@@ -316,10 +314,12 @@ def test_clmbr(tmp_path):
     JNRT_TRAIN_0.save(tensorize_dir / "train/0.nrt")
     JNRT_TRAIN_1.save(tensorize_dir / "train/1.nrt")
 
-    pyd = PytorchDataset(cfg, split="train")
+    pyd_train = PytorchDataset(cfg, split="train")
+    return pyd_train
 
     # Get an item:
     item = pyd[0]
 
     # Get a batch:
     batch = pyd.collate([pyd[i] for i in range(2)])
+
