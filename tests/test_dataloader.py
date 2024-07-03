@@ -7,7 +7,6 @@ from hydra import initialize, compose
 import polars as pl
 import json
 from io import StringIO
-import MEDS_polars_functions as mpf
 import os
 
 SPLITS_JSON = """{"train/0": [239684, 1195293], "train/1": [68729, 814703], "tuning/0": [754281], "held_out/0": [1500733]}"""  # noqa: E501

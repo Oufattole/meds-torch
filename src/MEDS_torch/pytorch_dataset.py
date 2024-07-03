@@ -239,7 +239,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
             self.static_dfs[shard] = df
             patient_ids = df["patient_id"]
-            n_events = df.select(pl.col("timestamp").list.lengths().alias("n_events")).get_column("n_events")
+            n_events = df.select(pl.col("timestamp").list.len().alias("n_events")).get_column("n_events")
             for i, (subj, n_events) in enumerate(zip(patient_ids, n_events)):
                 if subj in self.subj_indices or subj in self.subj_seq_bounds:
                     raise ValueError(f"Duplicate subject {subj} in {shard}!")
