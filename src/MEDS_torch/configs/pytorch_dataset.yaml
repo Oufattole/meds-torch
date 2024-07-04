@@ -10,6 +10,7 @@ train_subset_seed: 1
 
 min_seq_len: null
 max_seq_len: ???
+collate_type: ???
 
 do_include_patient_id: false
 do_include_subsequence_indices: false
@@ -20,3 +21,7 @@ split_shards_fp: ${raw_MEDS_cohort_dir}/splits.json
 schema_files_root: ${MEDS_cohort_dir}/tokenization/schemas
 tasks_root: ${MEDS_cohort_dir}/tasks
 tensorized_root: ${MEDS_cohort_dir}/tensorize
+
+embedder:
+  token_dim: 32
+  vocab_size: ${get_vocab_size:${code_metadata_fp}}

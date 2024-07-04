@@ -1,9 +1,19 @@
 import dataclasses
 import enum
 
+import polars as pl
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch import nn
+
+OmegaConf.register_new_resolver(
+    "get_vocab_size",
+    lambda code_metadata_fp: pl.scan_parquet(code_metadata_fp)
+    .select("code/vocab_index")
+    .max()
+    .collect()
+    .item(),
+)
 
 
 @dataclasses.dataclass
@@ -53,8 +63,7 @@ class ObservationEmbedder(nn.Module):
         self.cfg = cfg
         # Define Triplet Embedders
         self.date_embedder = CVE(cfg)
-        code_vocab_size = 1  # TODO: FIX THIS
-        self.code_embedder = torch.nn.Embedding(code_vocab_size, embedding_dim=cfg.embedder.token_dim)
+        self.code_embedder = torch.nn.Embedding(cfg.embedder.vocab_size, embedding_dim=cfg.embedder.token_dim)
         self.numerical_value_embedder = CVE(cfg)
 
     def embed_func(self, embedder, x):
@@ -69,6 +78,9 @@ class ObservationEmbedder(nn.Module):
         dynamic_values = batch["dynamic_values"]
         static_indices = batch["static_indices"]
         static_values = batch["static_values"]
+        import pdb
+
+        pdb.set_trace()
 
         time_emb = self.embed_func(self.date_embedder, timestamp)
         code_emb = self.code_embedder(code).transpose(1, 2)

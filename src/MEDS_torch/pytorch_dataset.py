@@ -1,7 +1,7 @@
 import json
 from collections import defaultdict
 from datetime import timedelta
-from enum import StrEnum
+from enum import Enum, StrEnum
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +16,11 @@ from nested_ragged_tensors.ragged_numpy import (
     JointNestedRaggedTensorDict,
 )
 from omegaconf import DictConfig
+
+
+class CollateType(Enum):
+    event_stream = "event_stream"
+    triplet = "triplet"
 
 
 def count_or_proportion(N: int | pl.Expr | None, cnt_or_prop: int | float) -> int:
@@ -578,7 +583,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         return out_batch
 
-    def collate(self, batch: list[dict]) -> dict:
+    def collate_event_stream(self, batch: list[dict]) -> dict:
         """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
 
         This function handles conversion of arrays to tensors and padding of elements within the batch across
@@ -612,3 +617,78 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             out_batch[k] = torch.cat([T.unsqueeze(0) for T in v], dim=0)
 
         return out_batch
+
+    def __process_triplet(self, item: dict) -> dict:
+        dynamic_data = item["dynamic"]
+        raw_codes = dynamic_data.tensors["dim1/code"]
+        raw_values = dynamic_data.tensors["dim1/numerical_value"]
+        raw_times = dynamic_data.tensors["dim0/time_delta_days"]
+
+        # add static data to beginning of dynamic data
+        static_values = np.asarray(item["static_values"], dtype=raw_values[0].dtype)
+        static_indices = np.asarray(item["static_indices"], dtype=raw_codes[0].dtype)
+        code = np.concatenate([np.array(static_indices)] + raw_codes)
+        numerical_value = np.concatenate([np.array(static_values)] + raw_values)
+
+        # we add a static mask to indicate which data is static for modeling
+        static_mask = np.zeros(len(code), dtype=bool)
+        static_mask[: len(static_values)] = True
+
+        # we add a mask to indicate which data is dynamic for modeling
+        lengths = np.concatenate([[len(static_values)], dynamic_data.tensors["dim1/lengths"]])
+        time_delta_days = np.repeat(np.concatenate([[0], raw_times], dtype=raw_times.dtype), lengths)
+
+        # we add a mask for the full sequence
+        mask = np.ones(len(time_delta_days), dtype=bool)
+
+        return dict(
+            mask=mask,
+            static_mask=static_mask,
+            code=code,
+            numerical_value=numerical_value,
+            time_delta_days=time_delta_days,
+        )
+
+    def collate_triplet(self, batch: list[dict]) -> dict:
+        """Combines the ragged dictionaries produced by `__getitem__` into a triplet format (times, codes,
+        values) batch.
+
+        This function handles conversion of arrays to tensors and padding of elements within the batch across
+        static data elements, sequence events, and dynamic data elements.
+
+        Args:
+            batch: A list of `__getitem__` format output dictionaries.
+
+        Returns:
+            A fully collated, tensorized, and padded batch.
+        """
+        #
+
+        processed_batch = [self.__process_triplet(item) for item in batch]
+        tensorized_batch = {
+            k: torch.nn.utils.rnn.pad_sequence(
+                [torch.as_tensor(x[k]) for x in processed_batch], batch_first=True, padding_value=0
+            )
+            for k in processed_batch[0].keys()
+        }
+        return tensorized_batch
+
+    def collate(self, batch: list[dict]) -> dict:
+        """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
+
+        This function handles conversion of arrays to tensors and padding of elements within the batch across
+        static data elements, sequence events, and dynamic data elements.
+
+        Args:
+            batch: A list of `__getitem__` format output dictionaries.
+
+        Returns:
+            A fully collated, tensorized, and padded batch.
+        """
+        collate_type = CollateType[self.config.collate_type]
+        if collate_type == CollateType.event_stream:
+            return self.collate_event_stream(batch)
+        elif collate_type == CollateType.triplet:
+            return self.collate_triplet(batch)
+        else:
+            raise NotImplementedError(f"Unsupported collate type {collate_type}!")
