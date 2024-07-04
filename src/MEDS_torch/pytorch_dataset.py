@@ -668,7 +668,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         static_values = np.asarray(item["static_values"], dtype=raw_values[0].dtype)
         static_indices = np.asarray(item["static_indices"], dtype=raw_codes[0].dtype)
-        code = np.concatenate([np.array(static_indices)] + raw_codes)
+        code = np.concatenate([np.array(static_indices)] + raw_codes, dtype=np.int32, casting="unsafe")
         numerical_value = np.concatenate([np.array(static_values)] + raw_values)
         numerical_value_mask = ~np.isnan(numerical_value)
         # Replace NaNs with 0s
@@ -682,7 +682,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         time_delta_days = np.repeat(
             np.concatenate([np.array([0], dtype=raw_times.dtype), raw_times]), lengths
         )
-
         mask = np.ones(len(time_delta_days), dtype=bool)
 
         return dict(
@@ -730,25 +729,22 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> from pprint import pprint
             >>> pprint(collated_batch)
             {'code': tensor([[0, 1, 0, 0, 0],
-                    [2, 5, 6, 1, 2]]),
-             'mask': tensor([[1, 1, 0, 0, 0],
-                    [1, 1, 1, 1, 1]]),
+                    [2, 5, 6, 1, 2]], dtype=torch.int32),
+             'mask': tensor([[ True,  True, False, False, False],
+                    [ True,  True,  True,  True,  True]]),
              'numerical_value': tensor([[20., 10.,  0.,  0.,  0.],
                     [70., 50., 60.,  0.,  0.]]),
-             'numerical_value_mask': tensor([[1, 1, 0, 0, 0],
-                    [1, 1, 1, 0, 0]]),
-             'static_mask': tensor([[1, 0, 0, 0, 0],
-                    [1, 0, 0, 0, 0]]),
+             'numerical_value_mask': tensor([[ True,  True, False, False, False],
+                    [ True,  True,  True, False, False]]),
+             'static_mask': tensor([[ True, False, False, False, False],
+                    [ True, False, False, False, False]]),
              'time_delta_days': tensor([[ 0,  0,  0,  0,  0],
-                    [ 0,  0,  0, 12, 12]])}
+                    [ 0,  0,  0, 12, 12]], dtype=torch.uint8)}
         """
         processed_batch = [cls.process_triplet(item) for item in batch]
         tensorized_batch = {
             k: torch.nn.utils.rnn.pad_sequence(
-                [
-                    torch.as_tensor(x[k], dtype=torch.float32 if k == "numerical_value" else torch.int64)
-                    for x in processed_batch
-                ],
+                [torch.as_tensor(x[k]) for x in processed_batch],
                 batch_first=True,
                 padding_value=0,
             )

@@ -5,8 +5,10 @@ root = rootutils.setup_root(__file__, dotenv=True, pythonpath=True, cwd=True)
 import shutil
 from pathlib import Path
 
+import torch
 from hydra import compose, initialize
 
+from MEDS_torch import embedder
 from MEDS_torch.pytorch_dataset import PytorchDataset
 
 
@@ -28,7 +30,17 @@ def test_event_stream(tmp_path):
 
     pyd = PytorchDataset(cfg, split="train")
     item = pyd[0]
+    assert item.keys() == {"static_indices", "static_values", "dynamic"}
     batch = pyd.collate([pyd[i] for i in range(2)])
+    assert batch.keys() == {
+        "event_mask",
+        "dynamic_values_mask",
+        "time_delta_days",
+        "dynamic_indices",
+        "dynamic_values",
+        "static_indices",
+        "static_values",
+    }
 
 
 def test_triplet(tmp_path):
@@ -47,16 +59,19 @@ def test_triplet(tmp_path):
         overrides = [f"{k}={v}" for k, v in kwargs.items()]
         cfg = compose(config_name="pytorch_dataset", overrides=overrides)  # config.yaml
 
-    # event stream collating
+    # triplet collating
     pyd = PytorchDataset(cfg, split="train")
-    item = pyd[0]
     batch = pyd.collate([pyd[i] for i in range(2)])
-    # observation level collating
 
-    # from MEDS_torch import embedder
-    # data = torch.ones((2, 3), dtype=torch.float32)
-    # cve_embedding = embedder.CVE(cfg).forward(data[None, :].T).permute(1, 2, 0)
-    # # Output should have shape B x D x T
-    # assert cve_embedding.shape == torch.Size([2, 4, 3])
-    # model = embedder.ObservationEmbedder(cfg)
-    # # embedding = model.embed(batch)
+    # check the continuous value embedder works
+    data = torch.ones((2, 3), dtype=torch.float32)
+    cve_embedding = embedder.CVE(cfg).forward(data[None, :].T).permute(1, 2, 0)
+    # Output should have shape B x D x T
+    assert cve_embedding.shape == torch.Size([2, 4, 3])
+    model = embedder.ObservationEmbedder(cfg)
+    embedding, mask = model.embed(batch)
+
+    # Check that the embedding is shape batch size x embedding dimension size x sequence length
+    assert embedding.shape == torch.Size([2, 4, 17])
+    # Check that the mask is shape batch size x sequence length
+    assert mask.shape == torch.Size([2, 17])

@@ -12,7 +12,8 @@ OmegaConf.register_new_resolver(
     .select("code/vocab_index")
     .max()
     .collect()
-    .item(),
+    .item()
+    + 1,
 )
 
 
@@ -71,26 +72,25 @@ class ObservationEmbedder(nn.Module):
         return out
 
     def get_embedding(self, batch):
-        event_mask = batch["event_mask"]
-        dynamic_values_mask = batch["dynamic_values_mask"]
+        static_mask = batch["static_mask"]
+        code = batch["code"]
+        numerical_value = batch["numerical_value"]
         time_delta_days = batch["time_delta_days"]
-        dynamic_indices = batch["dynamic_indices"]
-        dynamic_values = batch["dynamic_values"]
-        static_indices = batch["static_indices"]
-        static_values = batch["static_values"]
-        import pdb
+        numerical_value_mask = batch["numerical_value_mask"]
 
-        pdb.set_trace()
+        # Embed times and mask static value times
+        time_emb = self.embed_func(self.date_embedder, time_delta_days) * ~static_mask.unsqueeze(dim=1)
+        # Embed codes
+        code_emb = self.code_embedder.forward(code).permute(0, 2, 1)
+        # Embed numerical values and mask nan values
+        val_emb = self.embed_func(
+            self.numerical_value_embedder, numerical_value
+        ) * numerical_value_mask.unsqueeze(dim=1)
 
-        time_emb = self.embed_func(self.date_embedder, timestamp)
-        code_emb = self.code_embedder(code).transpose(1, 2)
-        val_emb = self.embed_func(self.numerical_value_embedder, numerical_value).squeeze(dim=1)
-
+        # Sum the (time, code, value) triplets and
         embedding = time_emb + code_emb + val_emb
-        embedding *= mask
 
         assert embedding.isfinite().all(), "Embedding is not finite"
-
         return embedding
 
     def embed(self, batch):
