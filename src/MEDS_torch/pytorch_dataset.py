@@ -651,8 +651,13 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...         'static_indices': [2]
             ...     }
             >>> triplet_item = PytorchDataset.process_triplet(item)
-            >>> triplet_item.keys()
-            dict_keys(['mask', 'static_mask', 'code', 'numerical_value', 'time_delta_days', 'numerical_value_mask'])
+            >>> for each in sorted(list(triplet_item.keys())): print(each)
+            code
+            mask
+            numerical_value
+            numerical_value_mask
+            static_mask
+            time_delta_days
             >>> for key, value in triplet_item.items(): print(key, value);
             mask [ True  True  True  True  True]
             static_mask [ True False False False False]
@@ -695,19 +700,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
     @classmethod
     def collate_triplet(cls, batch: list[dict]) -> dict:
-        """Combines the ragged dictionaries produced by `__getitem__` into a triplet format (times, codes,
-        values) batch.
+        """Combines the ragged dictionaries  into a triplet format (times, codes, values) batch.
 
-        This function handles conversion of arrays to tensors and padding of elements within the batch across
-        static data elements, sequence events, and dynamic data elements. It ensures that each batch has uniform shape
-        by padding shorter sequences with zeros.
+        This function handles conversion of arrays to tensors and padding of elements within the
+        batch across static data elements, sequence events, and dynamic data elements. It ensures
+        that each batch has uniform shape by padding shorter sequences with zeros.
 
         Args:
             batch: A list of dictionaries with dynamic and static data from `__getitem__` method outputs.
 
         Returns:
-            A dictionary containing tensorized and padded data for each key. The keys include 'mask', 'static_mask',
-            'code', 'numerical_value', and 'time_delta_days'.
+            A dictionary containing tensorized and padded data for each key. The keys include 'mask',
+            'static_mask', 'code', 'numerical_value', 'numerical_value_mask', and 'time_delta_days'.
 
         Examples:
         Examples:
@@ -715,12 +719,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> import numpy as np
             >>> batch = [
             ...     {
-            ...         'dynamic': JointNestedRaggedTensorDict({'code': [np.array([1])], 'numerical_value': [np.array([10.0])], 'time_delta_days': np.array([0])}),
+            ...         'dynamic': JointNestedRaggedTensorDict(
+            ...             {'code': [np.array([1])],
+            ...              'numerical_value': [np.array([10.0])],
+            ...              'time_delta_days': np.array([0])}),
             ...         'static_values': [20.0],
             ...         'static_indices': [0]
             ...     },
             ...     {
-            ...         'dynamic': JointNestedRaggedTensorDict({'code': [np.array([5, 6]), np.array([1, 2])], 'numerical_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])], 'time_delta_days': np.array([np.nan, 12])}),
+            ...         'dynamic': JointNestedRaggedTensorDict(
+            ...             {'code': [np.array([5, 6]), np.array([1, 2])],
+            ...              'numerical_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
+            ...              'time_delta_days': np.array([np.nan, 12])}),
             ...         'static_values': [70.0],
             ...         'static_indices': [2]
             ...         },
