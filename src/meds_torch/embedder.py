@@ -70,7 +70,7 @@ class ObservationEmbedder(nn.Module):
         self.numerical_value_embedder = CVE(cfg)
 
     def embed_func(self, embedder, x):
-        out = embedder.forward(x[None, :].T).permute(1, 2, 0)
+        out = embedder.forward(x[None, :].transpose(2, 0)).permute(1, 2, 0)
         return out
 
     def get_embedding(self, batch):

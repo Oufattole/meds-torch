@@ -23,7 +23,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pre-commit","notebook"]
-tests = ["pytest", "pytest-cov[toml]", "rootutils"]
+tests = ["pytest", "pytest-cov[toml]", "rootutils", "pytest-sugar", "pytest-instafail", "pytest-xdist"]
+
+[pytest]
+looponfailroots = ["tests"]
 
 [project.urls]
 Homepage = "https://github.com/oufattole/meds-torch"

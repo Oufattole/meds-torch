@@ -77,7 +77,7 @@ def test_triplet(tmp_path):
 
     # check the continuous value embedder works
     data = torch.ones((2, 3), dtype=torch.float32)
-    cve_embedding = embedder.CVE(cfg).forward(data[None, :].T).permute(1, 2, 0)
+    cve_embedding = embedder.CVE(cfg).forward(data[None, :].transpose(2, 0)).permute(1, 2, 0)
     # Output should have shape B x D x T
     assert cve_embedding.shape == torch.Size([2, 4, 3])
     model = embedder.ObservationEmbedder(cfg)
