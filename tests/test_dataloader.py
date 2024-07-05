@@ -10,8 +10,8 @@ import polars as pl
 import torch
 from hydra import compose, initialize
 
-from MEDS_torch import embedder
-from MEDS_torch.pytorch_dataset import PytorchDataset
+from meds_torch import embedder
+from meds_torch.pytorch_dataset import PytorchDataset
 
 
 def test_event_stream(tmp_path):
@@ -22,11 +22,11 @@ def test_event_stream(tmp_path):
         "raw_MEDS_cohort_dir": str(MEDS_cohort_dir.parent.resolve()),
         "MEDS_cohort_dir": str(MEDS_cohort_dir.resolve()),
         "max_seq_len": 512,
-        "embedder.token_dim": 4,
+        "model.embedder.token_dim": 4,
         "collate_type": "event_stream",
     }
 
-    with initialize(version_base=None, config_path="../src/MEDS_torch/configs"):  # path to config.yaml
+    with initialize(version_base=None, config_path="../src/meds_torch/configs"):  # path to config.yaml
         overrides = [f"{k}={v}" for k, v in kwargs.items()]
         cfg = compose(config_name="pytorch_dataset", overrides=overrides)  # config.yaml
 
@@ -53,11 +53,11 @@ def test_triplet(tmp_path):
         "raw_MEDS_cohort_dir": str(MEDS_cohort_dir.parent.resolve()),
         "MEDS_cohort_dir": str(MEDS_cohort_dir.resolve()),
         "max_seq_len": 512,
-        "embedder.token_dim": 4,
+        "model.embedder.token_dim": 4,
         "collate_type": "triplet",
     }
 
-    with initialize(version_base=None, config_path="../src/MEDS_torch/configs"):  # path to config.yaml
+    with initialize(version_base=None, config_path="../src/meds_torch/configs"):  # path to config.yaml
         overrides = [f"{k}={v}" for k, v in kwargs.items()]
         cfg = compose(config_name="pytorch_dataset", overrides=overrides)  # config.yaml
 
@@ -98,7 +98,7 @@ def test_task(tmp_path):
         "raw_MEDS_cohort_dir": str(MEDS_cohort_dir.parent.resolve()),
         "MEDS_cohort_dir": str(MEDS_cohort_dir.resolve()),
         "max_seq_len": 512,
-        "embedder.token_dim": 4,
+        "model.embedder.token_dim": 4,
         "collate_type": "triplet",
         "task_name": task_name,
     }
@@ -125,7 +125,7 @@ def test_task(tmp_path):
     tasks_dir.mkdir(parents=True, exist_ok=True)
     task_df.write_parquet(tasks_dir / f"{task_name}.parquet")
 
-    with initialize(version_base=None, config_path="../src/MEDS_torch/configs"):  # path to config.yaml
+    with initialize(version_base=None, config_path="../src/meds_torch/configs"):  # path to config.yaml
         overrides = [f"{k}={v}" for k, v in kwargs.items()]
         cfg = compose(config_name="pytorch_dataset", overrides=overrides)  # config.yaml
 

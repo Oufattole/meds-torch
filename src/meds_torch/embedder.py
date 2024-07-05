@@ -47,7 +47,7 @@ class CVE(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
-        self.layer = nn.Linear(1, cfg.embedder.token_dim)
+        self.layer = nn.Linear(1, cfg.model.embedder.token_dim)
 
     def forward(self, x):
         return self.layer(x)
@@ -64,7 +64,9 @@ class ObservationEmbedder(nn.Module):
         self.cfg = cfg
         # Define Triplet Embedders
         self.date_embedder = CVE(cfg)
-        self.code_embedder = torch.nn.Embedding(cfg.embedder.vocab_size, embedding_dim=cfg.embedder.token_dim)
+        self.code_embedder = torch.nn.Embedding(
+            cfg.model.embedder.vocab_size, embedding_dim=cfg.model.embedder.token_dim
+        )
         self.numerical_value_embedder = CVE(cfg)
 
     def embed_func(self, embedder, x):
