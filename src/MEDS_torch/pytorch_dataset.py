@@ -17,6 +17,8 @@ from nested_ragged_tensors.ragged_numpy import (
 )
 from omegaconf import DictConfig
 
+IDX_COL = "_row_index"
+
 
 class CollateType(Enum):
     event_stream = "event_stream"
@@ -139,6 +141,134 @@ def to_int_index(col: pl.Expr) -> pl.Expr:
     return pl.when(col.is_null()).then(pl.lit(None)).otherwise(indices).alias(col.meta.output_name())
 
 
+def merge_task_with_static(task_df, static_dfs):
+    """Merges a DataFrame containing task information with multiple static DataFrames on the 'patient_id'
+    column. The function performs a sequence of operations to merge these dataframes based on patient
+    identifiers and respective timestamps.
+
+    Parameters:
+    - task_df (DataFrame): A DataFrame with columns 'patient_id', 'start_time', 'end_time', and 'label'.
+    - static_dfs (dict of DataFrames): A dictionary of DataFrames indexed by their source names,
+      each containing 'patient_id', 'start_time', 'static_indices', 'static_values', and 'timestamp'.
+
+    Returns:
+    - DataFrame: The merged DataFrame containing data from task_df and all static_dfs.
+
+    Example:
+    >>> from datetime import datetime
+    >>> import polars as pl
+    >>> task_df = pl.DataFrame({
+    ...     "patient_id": [1, 2],
+    ...     "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
+    ...     "end_time": [datetime(2020, 1, 2), datetime(2020, 1, 3)],
+    ...     "label": [0, 1]
+    ... })
+    >>> static_dfs = {
+    ...     'train/0': pl.DataFrame({
+    ...         "patient_id": [1, 2],
+    ...         "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
+    ...         "timestamp": [[datetime(2020, 1, 1, 1), datetime(2020, 1, 1, 3)],
+    ...                       [datetime(2020, 1, 2), datetime(2020, 1, 1, 2, 3)]]
+    ...     })
+    ... }
+    >>> merge_task_with_static(task_df, static_dfs)
+    shape: (2, 6)
+    ┌────────────┬────────────┬─────────────┬────────────┬────────────┬────────────┐
+    │ _row_index ┆ patient_id ┆ start_time  ┆ end_time   ┆ start_time ┆ timestamp  │
+    │ ---        ┆ ---        ┆ ---         ┆ ---        ┆ _global    ┆ ---        │
+    │ u32        ┆ i64        ┆ list[dateti ┆ list[datet ┆ ---        ┆ list[datet │
+    │            ┆            ┆ me[μs]]     ┆ ime[μs]]   ┆ datetime[μ ┆ ime[μs]]   │
+    │            ┆            ┆             ┆            ┆ s]         ┆            │
+    ╞════════════╪════════════╪═════════════╪════════════╪════════════╪════════════╡
+    │ 0          ┆ 1          ┆ [2020-01-01 ┆ [2020-01-0 ┆ 2020-01-01 ┆ [2020-01-0 │
+    │            ┆            ┆ 00:00:00]   ┆ 2          ┆ 00:00:00   ┆ 1          │
+    │            ┆            ┆             ┆ 00:00:00]  ┆            ┆ 01:00:00,  │
+    │            ┆            ┆             ┆            ┆            ┆ 2020-01-…  │
+    │ 1          ┆ 2          ┆ [2020-01-02 ┆ [2020-01-0 ┆ 2020-01-02 ┆ [2020-01-0 │
+    │            ┆            ┆ 00:00:00]   ┆ 3          ┆ 00:00:00   ┆ 2          │
+    │            ┆            ┆             ┆ 00:00:00]  ┆            ┆ 00:00:00,  │
+    │            ┆            ┆             ┆            ┆            ┆ 2020-01-…  │
+    └────────────┴────────────┴─────────────┴────────────┴────────────┴────────────┘
+    """
+    task_df_joint = (
+        task_df.select("patient_id", "start_time", "end_time")
+        .with_row_index(IDX_COL)
+        .group_by(IDX_COL, "patient_id", maintain_order=True)
+        .agg("start_time", "end_time")
+        .join(
+            pl.concat(static_dfs.values()).select(
+                "patient_id", pl.col("start_time").alias("start_time_global"), "timestamp"
+            ),
+            on="patient_id",
+            how="left",
+        )
+        .with_columns(pl.col("timestamp"))
+    )
+    return task_df_joint
+
+
+def get_task_indexes(task_df_joint) -> list[tuple[int, int, int]]:
+    """Processes the joint DataFrame to determine the index range for each patient's tasks.
+
+    For each row in task_df_joint, it is assumed that `timestamp` is a sorted column
+    and the start index and end index of the span of timestamps in between `start_time` and `end_time`
+    are computed.
+
+    Parameters:
+    - task_df_joint (DataFrame): A DataFrame resulting from the merge_task_with_static function.
+
+    Returns:
+    - list: list of tuples (patient_id, start_idx, end_idx).
+
+    Example:
+    >>> from datetime import datetime
+    >>> df = pl.DataFrame({
+    ...     IDX_COL: [i for i in range(5)],
+    ...     "patient_id": [i for i in range(5)],
+    ...     "start_time": [
+    ...         [datetime(2021, 1, 1)],
+    ...         [datetime(2021, 1, 1)],
+    ...         [datetime(2021, 1, 1)],
+    ...         [datetime(2021, 1, 2)],
+    ...         [datetime(2021, 1, 3)]
+    ...     ],
+    ...     "end_time": [
+    ...         [datetime(2021, 1, 2)],
+    ...         [datetime(2021, 1, 2)],
+    ...         [datetime(2021, 1, 3)],
+    ...         [datetime(2021, 1, 4)],
+    ...         [datetime(2021, 1, 4)]
+    ...     ],
+    ...     "timestamp": [
+    ...         pl.date_range(datetime(2021, 1, 1), datetime(2021, 1, 5), "1d", eager=True)
+    ...     ]*5
+    ... })
+    >>> get_task_indexes(df)
+    [(0, 0, 1), (1, 0, 1), (2, 0, 2), (3, 1, 3), (4, 2, 3)]
+    """
+    start_idx_expr = (
+        (pl.col("timestamp").search_sorted(pl.col("start_time"), side="left")).first().alias("start_idx")
+    )
+    end_idx_expr = (
+        (pl.col("timestamp").search_sorted(pl.col("end_time"), side="left")).last().alias("end_idx")
+    )
+    task_df_joint.explode("start_time", "end_time")
+    task_df_joint = (
+        task_df_joint.explode("start_time", "end_time")
+        .explode("timestamp")
+        .group_by(IDX_COL, "patient_id", "start_time", "end_time", maintain_order=True)
+        .agg(start_idx_expr, end_idx_expr)
+    )
+
+    patient_ids = task_df_joint["patient_id"]
+    start_indices = task_df_joint["start_idx"]
+    end_indices = task_df_joint["end_idx"]
+
+    indexes = list(zip(patient_ids, start_indices, end_indices))
+
+    return indexes
+
+
 class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
     """A PyTorch Dataset class.
 
@@ -181,7 +311,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             for valid_dtypes, normalize_fn in checkers:
                 if dtype in valid_dtypes:
                     return task_type, (col if normalize_fn is None else normalize_fn(col))
-
         raise TypeError(f"Can't process label of {dtype} type!")
 
     def __init__(self, cfg: DictConfig, split: str):
@@ -277,40 +406,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             while idx_col in task_df.columns:
                 idx_col = f"_{idx_col}"
 
-            raise NotImplementedError("Need to figure out task constraints still")
-
-            task_df_joint = (
-                task_df.select("patient_id", "start_time", "end_time")
-                .with_row_index(idx_col)
-                .group_by("patient_id")
-                .agg("start_time", "end_time", idx_col)
-                .join(
-                    pl.concat(self.static_dfs.values()).select(
-                        "patient_id", pl.col("start_time").alias("start_time_global"), "timestamp"
-                    ),
-                    on="patient_id",
-                    how="left",
-                )
-                .with_columns(pl.col("timestamp"))
-            )
-
-            start_idx_expr = (pl.col("start_time").search_sorted(pl.col("timestamp"))).alias("start_idx")
-            end_idx_expr = (pl.col("end_time").search_sorted(pl.col("timestamp"))).alias("end_idx")
-
-            task_df_joint = (
-                task_df_joint.explode(idx_col, "start_time", "end_time")
-                .explode("timestamp")
-                .group_by("patient_id", idx_col, "start_time", "end_time", maintain_order=True)
-                .agg(start_idx_expr.first(), end_idx_expr.first())
-                .sort(by=idx_col, descending=False)
-            )
-
-            patient_ids = task_df_joint["patient_id"]
-            start_indices = task_df_joint["start_idx"]
-            end_indices = task_df_joint["end_idx"]
+            task_df_joint = merge_task_with_static(task_df, self.static_dfs)
+            self.index = get_task_indexes(task_df_joint)
 
             self.labels = {t: task_df.get_column(t).to_list() for t in self.tasks}
-            self.index = list(zip(patient_ids, start_indices, end_indices))
         else:
             self.index = [(subj, *bounds) for subj, bounds in self.subj_seq_bounds.items()]
             self.labels = {}
@@ -724,7 +823,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...              'numerical_value': [np.array([10.0])],
             ...              'time_delta_days': np.array([0])}),
             ...         'static_values': [20.0],
-            ...         'static_indices': [0]
+            ...         'static_indices': [0],
+            ...         'label': 0,
             ...     },
             ...     {
             ...         'dynamic': JointNestedRaggedTensorDict(
@@ -732,7 +832,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...              'numerical_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
             ...              'time_delta_days': np.array([np.nan, 12])}),
             ...         'static_values': [70.0],
-            ...         'static_indices': [2]
+            ...         'static_indices': [2],
+            ...         'label': 1,
             ...         },
             ... ]
             >>> collated_batch = PytorchDataset.collate_triplet(batch)
@@ -740,6 +841,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> pprint(collated_batch)
             {'code': tensor([[0, 1, 0, 0, 0],
                     [2, 5, 6, 1, 2]], dtype=torch.int32),
+             'label': tensor([0., 1.]),
              'mask': tensor([[ True,  True, False, False, False],
                     [ True,  True,  True,  True,  True]]),
              'numerical_value': tensor([[20., 10.,  0.,  0.,  0.],
@@ -760,6 +862,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             )
             for k in processed_batch[0].keys()
         }
+        for k in batch[0].keys():
+            if k not in ("dynamic", "static_values", "static_indices"):
+                tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
         return tensorized_batch
 
     def collate(self, batch: list[dict]) -> dict:
