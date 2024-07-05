@@ -118,7 +118,7 @@ def test_task(tmp_path):
                 datetime(2010, 5, 26, 2, 30, 56),
                 datetime(2010, 2, 5, 5, 55, 39),
             ],
-            "label": [0, 1, 0, 1],
+            task_name: [0, 1, 0, 1],
         }
     )
     tasks_dir = MEDS_cohort_dir / "tasks"
@@ -139,6 +139,8 @@ def test_task(tmp_path):
         "numerical_value",
         "time_delta_days",
         "numerical_value_mask",
+        task_name,
     }
-    for key in batch.keys():
+    for key in batch.keys() - {task_name}:
         assert batch[key].shape == torch.Size([2, 10])
+    assert batch[task_name].shape == torch.Size([2])

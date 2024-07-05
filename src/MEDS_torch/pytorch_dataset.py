@@ -823,7 +823,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...              'numerical_value': [np.array([10.0])],
             ...              'time_delta_days': np.array([0])}),
             ...         'static_values': [20.0],
-            ...         'static_indices': [0]
+            ...         'static_indices': [0],
+            ...         'label': 0,
             ...     },
             ...     {
             ...         'dynamic': JointNestedRaggedTensorDict(
@@ -831,7 +832,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...              'numerical_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
             ...              'time_delta_days': np.array([np.nan, 12])}),
             ...         'static_values': [70.0],
-            ...         'static_indices': [2]
+            ...         'static_indices': [2],
+            ...         'label': 1,
             ...         },
             ... ]
             >>> collated_batch = PytorchDataset.collate_triplet(batch)
@@ -839,6 +841,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> pprint(collated_batch)
             {'code': tensor([[0, 1, 0, 0, 0],
                     [2, 5, 6, 1, 2]], dtype=torch.int32),
+             'label': tensor([0., 1.]),
              'mask': tensor([[ True,  True, False, False, False],
                     [ True,  True,  True,  True,  True]]),
              'numerical_value': tensor([[20., 10.,  0.,  0.,  0.],
@@ -859,6 +862,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             )
             for k in processed_batch[0].keys()
         }
+        for k in batch[0].keys():
+            if k not in ("dynamic", "static_values", "static_indices"):
+                tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
         return tensorized_batch
 
     def collate(self, batch: list[dict]) -> dict:
