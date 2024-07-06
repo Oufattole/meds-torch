@@ -1,11 +1,12 @@
 import torch
+from loguru import logger
 from omegaconf import DictConfig
 
 try:
     from mamba_ssm.models.config_mamba import MambaConfig
     from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
 except ImportError:
-    raise ImportError("Please install mamba-ssm to use this model.")
+    logger.warning("Please install mamba-ssm to use this model.")
 
 from meds_torch.model.architectures.utils import get_last_token
 

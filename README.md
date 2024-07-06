@@ -10,12 +10,12 @@ Pipeline:
 - [x] Transformer Encoder (to get a fixed size representation— a representation token is used in the `TransformerEncoderModel` class and an attention-based token average is used in the `AttentionAveragedTransformerEncoderModel` class)
 - [x] Transformer Decoder Model (GPT-Style)
 - [x] Mamba
-- [ ] Supervised Training
+- [x] Supervised Training
 - [ ] Transfer Learning Models
-- [ ] EBCL
-- [ ] Forecasting
-- [ ] Masked Imputation
-- [ ] OCP
+  - [ ] EBCL
+  - [ ] Forecasting
+  - [ ] Masked Imputation
+  - [ ] OCP
 - [ ] Generate Embeddings
 
 Development Help

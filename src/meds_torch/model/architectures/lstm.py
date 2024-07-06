@@ -26,11 +26,14 @@ class LstmModel(torch.nn.Module):
         )
         self.get_last_token = cfg.model.get_last_token
 
-    def forward(self, batch, mask):
+    def forward(self, batch, mask=None):
         # pass tokens and attention mask to the lstm
         output = self.model(batch.transpose(1, 2))[0]
         # extract the representation token's embedding
         if self.get_last_token:
-            return get_last_token(output, mask)
+            if mask is None:
+                return output[:, -1, :]
+            else:
+                return get_last_token(output, mask)
         else:
             return output
