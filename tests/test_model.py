@@ -7,6 +7,7 @@ import torch
 from hydra import compose, initialize
 
 from meds_torch import embedder
+from meds_torch.model.architectures.lstm import LstmModel
 from meds_torch.model.architectures.transformer_decoder import TransformerDecoderModel
 from meds_torch.model.architectures.transformer_encoder import (
     AttentionAveragedTransformerEncoderModel,
@@ -71,6 +72,13 @@ def test_transformer_encoder(prep_embedding):
 
     model = AttentionAveragedTransformerEncoderModel(cfg)
     output = model.forward(embedding, mask)
+    assert output.shape == torch.Size([2, 4])
+
+
+def test_lstm(prep_embedding):
+    embedding, mask, cfg = prep_embedding
+    model = LstmModel(cfg)
+    output = model(embedding, mask)
     assert output.shape == torch.Size([2, 4])
 
 

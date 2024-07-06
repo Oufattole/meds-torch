@@ -7,6 +7,8 @@ try:
 except ImportError:
     raise ImportError("Please install mamba-ssm to use this model.")
 
+from meds_torch.model.architectures.utils import get_last_token
+
 
 class MambaModel(torch.nn.Module):
     """Wrapper of MambaLMHeadModel for use in MEDS with triplet token embeddings."""
@@ -29,32 +31,6 @@ class MambaModel(torch.nn.Module):
     def forward(self, batch, mask):
         output = self.model(batch.transpose(1, 2))
         if self.get_last_token:
-            logits = output.logits
-            # extract the final non-padding token
-            mask_max = (~mask).max(dim=1)
-            lengths = mask_max.indices
-            lengths[~mask_max.values] = mask.shape[1]
-            lengths -= 1
-            # expand to match the shape of next_token_embedding
-            indices = lengths.view(-1, 1, 1).expand(-1, -1, logits.shape[-1])
-            rep = torch.gather(logits, dim=1, index=indices).squeeze(1)  # gather the last token
-            return rep
+            return get_last_token(output.logits, mask)
         else:
             return output
-
-    # output = self.model(batch, mask=mask)
-    #     if self.get_last_token:
-    #         lengths = mask.argmax(dim=1)  # get the length of each sequence
-    #         # extract the final non-padding token
-    #         indices = (
-    #             torch.tensor(lengths, device=output.device) - 1
-    #         )  # indices of the last token
-    #         indices = indices.view(-1, 1, 1).expand(
-    #             -1, -1, output.shape[-1]
-    #         )  # expand to match the shape of all_token_embeddings
-    #         last_token = torch.gather(output, dim=1, index=indices).squeeze(
-    #             1
-    #         )  # gather the last token
-    #         return last_token
-    #     else:
-    #         return output

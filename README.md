@@ -6,10 +6,11 @@ Pipeline:
 - [x] `PytorchDatset` class That can generate batches
 - [x] Generate Triplet style batches
 - [x] Generate Eventstream style batches
-- [ ] Supervised Models
-- [ ] LSTM
-- [ ] Transformer
-- [ ] Mamba
+- [x] LSTM
+- [x] Transformer Encoder (to get a fixed size representation— a representation token is used in the `TransformerEncoderModel` class and an attention-based token average is used in the `AttentionAveragedTransformerEncoderModel` class)
+- [x] Transformer Decoder Model (GPT-Style)
+- [x] Mamba
+- [ ] Supervised Training
 - [ ] Transfer Learning Models
 - [ ] EBCL
 - [ ] Forecasting

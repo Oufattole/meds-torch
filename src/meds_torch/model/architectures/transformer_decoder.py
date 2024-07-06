@@ -7,6 +7,8 @@ from omegaconf import DictConfig
 from torch import nn
 from x_transformers import Decoder, TransformerWrapper
 
+from meds_torch.model.architectures.utils import get_last_token
+
 
 class TransformerDecoderModel(torch.nn.Module):
     """Wrapper of Decoder Transformer for use in MEDS with triplet token embeddings."""
@@ -39,14 +41,6 @@ class TransformerDecoderModel(torch.nn.Module):
     def forward(self, batch, mask):
         output = self.model(batch.transpose(1, 2), mask=mask)
         if self.get_last_token:
-            mask_max = (~mask).max(dim=1)
-            lengths = mask_max.indices
-            lengths[~mask_max.values] = mask.shape[1]
-            lengths -= 1
-
-            # expand to match the shape of all_token_embeddings
-            indices = lengths.view(-1, 1, 1).expand(-1, -1, output.shape[-1])
-            last_token = torch.gather(output, dim=1, index=indices).squeeze(1)
-            return last_token
+            return get_last_token(output, mask)
         else:
             return output
