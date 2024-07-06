@@ -1,18 +1,24 @@
+import os
 import shutil
 from pathlib import Path
 
+import pytest
 import torch
 from hydra import compose, initialize
 
 from meds_torch import embedder
-from meds_torch.model.architectures.transformer_encoders import (
+from meds_torch.model.architectures.transformer_decoder import TransformerDecoderModel
+from meds_torch.model.architectures.transformer_encoder import (
     AttentionAveragedTransformerEncoderModel,
     TransformerEncoderModel,
 )
 from meds_torch.pytorch_dataset import PytorchDataset
 
+IN_GITHUB_ACTIONS = os.getenv("GITHUB_ACTIONS") == "true"
 
-def test_triplet(tmp_path):
+
+@pytest.fixture
+def prep_embedding(tmp_path):
     MEDS_cohort_dir = tmp_path / "processed" / "final_cohort"
     shutil.copytree(Path("./tests/test_data"), MEDS_cohort_dir.parent)
 
@@ -54,10 +60,32 @@ def test_triplet(tmp_path):
     assert embedding.shape == torch.Size([2, 4, 17])
     # Check that the mask is shape batch size x sequence length
     assert mask.shape == torch.Size([2, 17])
+    return embedding, mask, cfg
+
+
+def test_transformer_encoder(prep_embedding):
+    embedding, mask, cfg = prep_embedding
     model = TransformerEncoderModel(cfg)
     output = model(embedding, mask)
     assert output.shape == torch.Size([2, 4])
 
     model = AttentionAveragedTransformerEncoderModel(cfg)
     output = model.forward(embedding, mask)
+    assert output.shape == torch.Size([2, 4])
+
+
+def test_transformer_decoder(prep_embedding):
+    embedding, mask, cfg = prep_embedding
+    model = TransformerDecoderModel(cfg)
+    output = model(embedding, mask)
+    assert output.shape == torch.Size([2, 4])
+
+
+@pytest.mark.skipif(IN_GITHUB_ACTIONS, reason="Test does not work in Github Actions due to Mamba setup.")
+def test_mamba(prep_embedding):
+    embedding, mask, cfg = prep_embedding
+    from meds_torch.model.architectures.mamba import MambaModel
+
+    model = MambaModel(cfg).cuda()
+    output = model(embedding.cuda(), mask.cuda())
     assert output.shape == torch.Size([2, 4])

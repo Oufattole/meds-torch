@@ -18,10 +18,11 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "polars", "pyarrow", "nested_ragged_tensors", "loguru", "numpy", "ml-mixins", "torch", "omegaconf", "hydra-core", "lightning",
+    "polars", "pyarrow", "nested_ragged_tensors", "loguru", "numpy", "ml-mixins", "torch", "omegaconf", "hydra-core", "lightning", "x-transformers",
 ]
 
 [project.optional-dependencies]
+mamba = ["mamba-ssm", "causal-conv1d>=1.4.0"]
 dev = ["pre-commit","notebook"]
 tests = ["pytest", "pytest-cov[toml]", "rootutils", "pytest-sugar", "pytest-instafail", "pytest-xdist"]
 

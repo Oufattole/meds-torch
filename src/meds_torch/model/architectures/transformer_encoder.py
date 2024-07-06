@@ -8,27 +8,30 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch import nn
+from x_transformers import Encoder, TransformerWrapper
 
 
 class TransformerEncoderModel(torch.nn.Module):
-    """Container module with an encoder, a recurrent or transformer module, and a decoder.
-
-    Copied from: https://github.com/pytorch/examples/blob/main/word_language_model/model.py
-    """
+    """Wrapper of Encoder Transformer for use in MEDS with triplet token embeddings."""
 
     def __init__(self, cfg: DictConfig):
         super().__init__()
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=cfg.model.embedder.token_dim,
-            nhead=cfg.model.params.nheads,
-            dim_feedforward=cfg.model.params.dim_feedforward,
-            dropout=cfg.model.params.dropout,
-            batch_first=True,
+        dropout = cfg.model.params.dropout
+        self.model = TransformerWrapper(
+            num_tokens=cfg.model.embedder.token_dim,  # placeholder as this is not used
+            max_seq_len=cfg.model.embedder.max_seq_len,
+            emb_dropout=dropout,
+            use_abs_pos_emb=False,
+            attn_layers=Encoder(
+                dim=cfg.model.embedder.token_dim,
+                depth=cfg.model.params.n_layers,
+                heads=cfg.model.params.nheads,
+                layer_dropout=dropout,  # stochastic depth - dropout entire layer
+                attn_dropout=dropout,  # dropout post-attention
+                ff_dropout=dropout,  # feedforward dropout
+            ),
         )
-        self.model = nn.TransformerEncoder(
-            encoder_layer=encoder_layer,
-            num_layers=cfg.model.params.n_layers,
-        )
+        self.model.token_emb = nn.Identity()
         self.rep_token = torch.nn.Parameter(torch.randn(1, 1, cfg.model.embedder.token_dim))
 
     def forward(self, batch, mask):
@@ -37,7 +40,7 @@ class TransformerEncoderModel(torch.nn.Module):
         batch = torch.column_stack((repeated_rep_token, batch.transpose(1, 2)))
         mask = torch.cat((torch.ones((2, 1), dtype=torch.bool), mask), dim=1)
         # pass tokens and attention mask to the transformer
-        output = self.model(batch, src_key_padding_mask=mask)
+        output = self.model(batch, mask=mask)
         # extract the representation token's embedding
         output = output[:, 0, :]
         return output
@@ -76,71 +79,44 @@ class AttentionAverager(torch.nn.Module):
         self.layer = torch.nn.Linear(cfg.model.embedder.token_dim, self.out_dim)
         self.softmax = torch.nn.Softmax(dim=1)
 
-    def activation(self, h_t):
-        """
-        Step 2:
-        Compute the embedding activations e_t
-
-        In : torch.Size([batch_size, sequence_length, hidden_dimensions])
-        Out: torch.Size([batch_size, sequence_length, 1])
-        """
-        return F.tanh(self.layer(h_t))
-
-    def attention(self, e_t, mask):
-        """
-        Step 3:
-        Compute the probabilities alpha_t
-
-        In : torch.Size([batch_size, sequence_length, 1])
-        Out: torch.Size([batch_size, sequence_length, 1])
-        """
-        alphas = self.softmax(e_t + mask.unsqueeze(-1))
-        return alphas
-
-    def context(self, alpha_t, x_t):
-        """
-        Step 4:
-        Compute the context vector c
-
-        In : torch.Size([batch_size, sequence_length, 1])
-             torch.Size([batch_size, sequence_length, sequence_dim])
-        Out: torch.Size([batch_size, 1, hidden_dimensions])
-        """
-        batch_size = x_t.shape[0]
-        return torch.bmm(alpha_t.view(batch_size, self.out_dim, x_t.shape[1]), x_t).squeeze(dim=1)
-
-    def forward(self, x_e, mask=None, training=True):
+    def forward(self, x, mask=None):
         """Forward pass for the Feed Forward Attention network."""
-        self.training = training
-        x_a = self.activation(x_e)
-        alpha = self.attention(x_a, mask)
-        x_c = self.context(alpha, x_e)
-        # x_o = self.out(x_c)
-        return x_c, alpha
+        # Compute the embedding activations
+        x_a = F.tanh(self.layer(x))
+        # Compute the probabilities alpha
+        alpha = self.softmax(x_a + mask.unsqueeze(-1))
+        # Compute the context vector c
+        output = torch.bmm(alpha.view(x.shape[0], self.out_dim, x.shape[1]), x).squeeze(dim=1)
+        return output, alpha
 
 
 class AttentionAveragedTransformerEncoderModel(torch.nn.Module):
-    """Container module with an encoder, a recurrent or transformer module, and a decoder.
+    """Wrapper of Encoder Transformer for use in MEDS with triplet token embeddings.
 
-    Copied from: https://github.com/pytorch/examples/blob/main/word_language_model/model.py
+    Attention averaging is used to get an embedding from tokens.
     """
 
     def __init__(self, cfg: DictConfig):
         super().__init__()
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=cfg.model.embedder.token_dim,
-            nhead=cfg.model.params.nheads,
-            dim_feedforward=cfg.model.params.dim_feedforward,
-            dropout=cfg.model.params.dropout,
-            batch_first=True,
+        dropout = cfg.model.params.dropout
+        self.model = TransformerWrapper(
+            num_tokens=cfg.model.embedder.token_dim,  # placeholder as this is not used
+            max_seq_len=cfg.model.embedder.max_seq_len,
+            emb_dropout=dropout,
+            use_abs_pos_emb=False,
+            attn_layers=Encoder(
+                dim=cfg.model.embedder.token_dim,
+                depth=cfg.model.params.n_layers,
+                heads=cfg.model.params.nheads,
+                layer_dropout=dropout,  # stochastic depth - dropout entire layer
+                attn_dropout=dropout,  # dropout post-attention
+                ff_dropout=dropout,  # feedforward dropout
+            ),
         )
-        self.model = nn.TransformerEncoder(
-            encoder_layer=encoder_layer,
-            num_layers=cfg.model.params.n_layers,
-        )
+        self.model.token_emb = nn.Identity()
         self.decoder = AttentionAverager(cfg)
 
     def forward(self, batch, mask):
-        output = self.model(batch.transpose(1, 2), src_key_padding_mask=mask)
+        output = self.model(batch.transpose(1, 2), mask=mask)
         output, _ = self.decoder(output, mask)
         return output

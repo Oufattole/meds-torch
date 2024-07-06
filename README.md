@@ -1,21 +1,21 @@
-# MEDS torch models \[WIP\]
+# MEDS torch models  \[WIP\]
 
 Pipeline:
 
--\[x\] Takes a Nested Ragged Tensor file path (with it's corresponding schema file_path) as input
--\[x\] `PytorchDatset` class That can generate batches
--\[x\] Generate Triplet style batches
--\[x\] Generate Eventstream style batches
--\[ \] Supervised Models
--\[ \] LSTM
--\[ \] Transformer
--\[ \] Mamba
--\[ \] Transfer Learning Models
--\[ \] EBCL
--\[ \] Forecasting
--\[ \] Masked Imputation
--\[ \] OCP
--\[ \] Generate Embeddings
+- [x] Takes a Nested Ragged Tensor file path (with it's corresponding schema file_path) as input
+- [x] `PytorchDatset` class That can generate batches
+- [x] Generate Triplet style batches
+- [x] Generate Eventstream style batches
+- [ ] Supervised Models
+- [ ] LSTM
+- [ ] Transformer
+- [ ] Mamba
+- [ ] Transfer Learning Models
+- [ ] EBCL
+- [ ] Forecasting
+- [ ] Masked Imputation
+- [ ] OCP
+- [ ] Generate Embeddings
 
 Development Help
 
