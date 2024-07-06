@@ -47,13 +47,13 @@ class CVE(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
-        self.layer = nn.Linear(1, cfg.embedder.token_dim)
+        self.layer = nn.Linear(1, cfg.model.embedder.token_dim)
 
     def forward(self, x):
         return self.layer(x)
 
 
-class ObservationEmbedder(nn.Module):
+class TripletEmbedder(nn.Module):
     """Container module with an encoder, a recurrent or transformer module, and a decoder.
 
     Copied from: https://github.com/pytorch/examples/blob/main/word_language_model/model.py
@@ -64,11 +64,13 @@ class ObservationEmbedder(nn.Module):
         self.cfg = cfg
         # Define Triplet Embedders
         self.date_embedder = CVE(cfg)
-        self.code_embedder = torch.nn.Embedding(cfg.embedder.vocab_size, embedding_dim=cfg.embedder.token_dim)
+        self.code_embedder = torch.nn.Embedding(
+            cfg.model.embedder.vocab_size, embedding_dim=cfg.model.embedder.token_dim
+        )
         self.numerical_value_embedder = CVE(cfg)
 
     def embed_func(self, embedder, x):
-        out = embedder.forward(x[None, :].T).permute(1, 2, 0)
+        out = embedder.forward(x[None, :].transpose(2, 0)).permute(1, 2, 0)
         return out
 
     def get_embedding(self, batch):
