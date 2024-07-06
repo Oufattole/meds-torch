@@ -53,7 +53,7 @@ class CVE(nn.Module):
         return self.layer(x)
 
 
-class ObservationEmbedder(nn.Module):
+class TripletEmbedder(nn.Module):
     """Container module with an encoder, a recurrent or transformer module, and a decoder.
 
     Copied from: https://github.com/pytorch/examples/blob/main/word_language_model/model.py

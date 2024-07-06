@@ -1,5 +1,9 @@
 architecture: transformer
-params: null
+params:
+  nheads: 2
+  n_layers: 1
+  dim_feedforward: 2
+  dropout: 0.1
 
 embedder:
   collate_style: triplet
