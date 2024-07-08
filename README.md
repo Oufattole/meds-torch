@@ -1,6 +1,6 @@
 # MEDS torch models  \[WIP\]
 
-Several Ideas are layed out in this [planning doc](https://docs.google.com/document/d/1AVzKPHi4pRMTjryl7uWNwT4zH8g0S0hwG-C6-wxfNHQ/edit)
+Several Ideas are laid out in this [planning doc](https://docs.google.com/document/d/1SjWP6RyHJC9eU5y0Dy7LTjoGiKgF_J5bIF6juab1X3g/edit)
 
 Pipeline:
 
