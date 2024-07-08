@@ -22,8 +22,9 @@ def get_all_file_paths(directory):
     file_paths = []
     for root, dirs, files in os.walk(directory):
         for file in files:
-            file_path = os.path.join(root, file)
-            file_paths.append(file_path)
+            full_path = os.path.join(root, file)  # Construct full file path
+            print(full_path)
+            file_paths.append(full_path)
     return file_paths
 
 
@@ -64,13 +65,13 @@ class CLMBR:
         Returns:
             dict: A dictionary containing the training, held-out, and tuning datasets.
         """
-        train_path = os.path.join(main_path, "train")
-        held_out_path = os.path.join(main_path, "held_out")
-        tuning_path = os.path.join(main_path, "tuning")
+        train_data = get_all_file_paths(os.path.join(main_path, "train"))
+        held_out_data = get_all_file_paths(os.path.join(main_path, "held_out"))
+        tuning_data = get_all_file_paths(os.path.join(main_path, "tuning"))
 
-        train_dataset = datasets.Dataset.from_parquet(get_all_file_paths(train_path))
-        held_out_dataset = datasets.Dataset.from_parquet(get_all_file_paths(held_out_path))
-        tuning_dataset = datasets.Dataset.from_parquet(get_all_file_paths(tuning_path))
+        train_dataset = datasets.Dataset.from_parquet(train_data)
+        held_out_dataset = datasets.Dataset.from_parquet(held_out_data)
+        tuning_dataset = datasets.Dataset.from_parquet(tuning_data)
 
         return {"train": train_dataset, "held_out": held_out_dataset, "tuning": tuning_dataset}
 
