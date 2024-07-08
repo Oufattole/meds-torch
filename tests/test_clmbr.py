@@ -1,11 +1,15 @@
 import json
 import os
+import sys
 from io import StringIO
 from pathlib import Path
 
 import polars as pl
 from hydra import compose, initialize
 
+sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
+
+from MEDS_torch.clmbr.clmbr_model import CLMBR
 from MEDS_torch.utils import list_subdir_files
 
 SPLITS_JSON = """{"train/0": [239684, 1195293], "train/1": [68729, 814703], "tuning/0": [754281], "held_out/0": [1500733]}"""  # noqa: E501
@@ -320,16 +324,16 @@ def test_clmbr(tmp_path):
     splits_fp = MEDS_cohort_dir.parent / "splits.json"
     json.dump(split_json, splits_fp.open("w"))
 
-    train_0_schema_df = process_schema(TRAIN_0_SCHEMA)
-    train_1_schema_df = process_schema(TRAIN_1_SCHEMA)
-    # heldout_0_schema_df = process_schema(HELDOUT_0_SCHEMA)
-    # tuning_0_schema_df = process_schema(TUNING_0_SCHEMA)
-    write_schema_df(train_0_schema_df, MEDS_cohort_dir, "train", "0")
-    write_schema_df(train_1_schema_df, MEDS_cohort_dir, "train", "1")
-    tensorize_dir = MEDS_cohort_dir / "tensorize"
-    os.makedirs(tensorize_dir / "train", exist_ok=True)
-    JNRT_TRAIN_0.save(tensorize_dir / "train/0.nrt")
-    JNRT_TRAIN_1.save(tensorize_dir / "train/1.nrt")
+    # train_0_schema_df = process_schema(TRAIN_0_SCHEMA)
+    # train_1_schema_df = process_schema(TRAIN_1_SCHEMA)
+    # # heldout_0_schema_df = process_schema(HELDOUT_0_SCHEMA)
+    # # tuning_0_schema_df = process_schema(TUNING_0_SCHEMA)
+    # write_schema_df(train_0_schema_df, MEDS_cohort_dir, "train", "0")
+    # write_schema_df(train_1_schema_df, MEDS_cohort_dir, "train", "1")
+    # tensorize_dir = MEDS_cohort_dir / "tensorize"
+    # os.makedirs(tensorize_dir / "train", exist_ok=True)
+    # JNRT_TRAIN_0.save(tensorize_dir / "train/0.nrt")
+    # JNRT_TRAIN_1.save(tensorize_dir / "train/1.nrt")
 
     # pyd = PytorchDataset(cfg, split="train")
 
@@ -338,3 +342,13 @@ def test_clmbr(tmp_path):
 
     # Get a batch:
     # batch = pyd.collate([pyd[i] for i in range(2)])
+
+
+MEDS_cohort_dir = Path("tests") / "processed" / "final_cohort"
+clmbr = CLMBR(target_dir="tests/clmbr")
+datasets = clmbr.load_datasets(MEDS_cohort_dir)
+transformer_cfg, tokenizer = clmbr.train_tokenizer(datasets)
+train_batches, val_batches, processor, clmbr_task = clmbr.create_batches(tokenizer, datasets)
+model = clmbr.train_model(transformer_cfg, clmbr_task, processor, train_batches, val_batches)
+# evaluation_results = clmbr.evaluate_model(model, processor, datasets)
+# print("Evaluation Results:", evaluation_results)
