@@ -1,13 +1,10 @@
 import json
 import os
-import sys
 from io import StringIO
 from pathlib import Path
 
 import polars as pl
 from hydra import compose, initialize
-
-sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
 
 from MEDS_torch.clmbr.clmbr_model import CLMBR
 from MEDS_torch.utils import list_subdir_files
