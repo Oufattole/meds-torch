@@ -23,6 +23,7 @@ IDX_COL = "_row_index"
 class CollateType(Enum):
     event_stream = "event_stream"
     triplet = "triplet"
+    text_code = "text_code"
 
 
 def count_or_proportion(N: int | pl.Expr | None, cnt_or_prop: int | float) -> int:
@@ -867,6 +868,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
         return tensorized_batch
 
+    @classmethod
+    def collate_text_code(cls, code_metadata, batch: list[dict]) -> dict:
+        # TODO(teya)
+        pass
+
     def collate(self, batch: list[dict]) -> dict:
         """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
 
@@ -884,5 +890,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             return self.collate_event_stream(batch)
         elif collate_type == CollateType.triplet:
             return self.collate_triplet(batch)
+        elif collate_type == CollateType.text_code:
+            code_metadata = pl.read_parquet(self.config.code_metadata_fp)
+            # TODO Convert to dict
+            # code_metadata = code_metadata.to_dict()
+            return self.collate_text_code(code_metadata, batch)
         else:
             raise NotImplementedError(f"Unsupported collate type {collate_type}!")

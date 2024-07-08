@@ -44,6 +44,28 @@ def test_event_stream(tmp_path):
     }
 
 
+def test_text_code(tmp_path):
+    MEDS_cohort_dir = tmp_path / "processed" / "final_cohort"
+    shutil.copytree(Path("./tests/test_data"), MEDS_cohort_dir.parent)
+
+    kwargs = {
+        "raw_MEDS_cohort_dir": str(MEDS_cohort_dir.parent.resolve()),
+        "MEDS_cohort_dir": str(MEDS_cohort_dir.resolve()),
+        "max_seq_len": 512,
+        "model.embedder.token_dim": 4,
+        "collate_type": "text_code",
+    }
+
+    with initialize(version_base=None, config_path="../src/meds_torch/configs"):  # path to config.yaml
+        overrides = [f"{k}={v}" for k, v in kwargs.items()]
+        cfg = compose(config_name="pytorch_dataset", overrides=overrides)  # config.yaml
+
+    pyd = PytorchDataset(cfg, split="train")
+    item = pyd[0]
+    assert item.keys() == {"static_indices", "static_values", "dynamic"}
+    batch = pyd.collate([pyd[i] for i in range(2)])
+
+
 def test_task(tmp_path):
     MEDS_cohort_dir = tmp_path / "processed" / "final_cohort"
     shutil.copytree(Path("./tests/test_data"), MEDS_cohort_dir.parent)

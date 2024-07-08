@@ -99,3 +99,49 @@ class TripletEmbedder(nn.Module):
         embedding = self.get_embedding(batch)
         mask = batch["mask"]
         return embedding, mask
+
+
+class TextCodeEmbedder(nn.Module):
+    """TODO(teya): Add docstring."""
+
+    def __init__(self, cfg: DictConfig):
+        super().__init__()
+        self.cfg = cfg
+        # Define Triplet Embedders
+        self.date_embedder = CVE(cfg)
+        self.code_embedder = torch.nn.Embedding(
+            cfg.model.embedder.vocab_size, embedding_dim=cfg.model.embedder.token_dim
+        ) # Change this code_embedder to be a text model - do bert with a small sequence length like 128.
+        self.numerical_value_embedder = CVE(cfg)
+
+    def embed_func(self, embedder, x):
+        out = embedder.forward(x[None, :].transpose(2, 0)).permute(1, 2, 0)
+        return out
+
+    def get_embedding(self, batch):
+        static_mask = batch["static_mask"]
+        code_text = batch["code_text"]
+        code_text_mask = batch["code_text_mask"]
+        numerical_value = batch["numerical_value"]
+        time_delta_days = batch["time_delta_days"]
+        numerical_value_mask = batch["numerical_value_mask"]
+
+        # Embed times and mask static value times
+        time_emb = self.embed_func(self.date_embedder, time_delta_days) * ~static_mask.unsqueeze(dim=1)
+        # TODO(teya): Embed code_text and code_text_mask
+        code_emb = self.code_embedder.forward(code).permute(0, 2, 1)
+        # Embed numerical values and mask nan values
+        val_emb = self.embed_func(
+            self.numerical_value_embedder, numerical_value
+        ) * numerical_value_mask.unsqueeze(dim=1)
+
+        # Sum the (time, code, value) triplets and
+        embedding = time_emb + code_emb + val_emb
+
+        assert embedding.isfinite().all(), "Embedding is not finite"
+        return embedding
+
+    def embed(self, batch):
+        embedding = self.get_embedding(batch)
+        mask = batch["mask"]
+        return embedding, mask
