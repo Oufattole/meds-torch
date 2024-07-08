@@ -1,5 +1,7 @@
 # MEDS torch models  \[WIP\]
 
+Several Ideas are layed out in this [planning doc](https://docs.google.com/document/d/1AVzKPHi4pRMTjryl7uWNwT4zH8g0S0hwG-C6-wxfNHQ/edit)
+
 Pipeline:
 
 - [x] Takes a Nested Ragged Tensor file path (with it's corresponding schema file_path) as input
