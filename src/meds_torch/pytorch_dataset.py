@@ -1089,20 +1089,25 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         tokenized_time = cls.tokenize_batch(tokenizer, time_delta_days.astype(str).tolist(), padding=False)[
             "input_ids"
         ]
-
+        longest_value = max(len(x) for x in tokenized_values)
+        longest_time = max(len(x) for x in tokenized_time)
+        logger.debug(f"Longest value: {longest_value}")
+        logger.debug(f"Longest time: {longest_time}")
+        longest_event = 0
         tokenized_events = []
         for i, code_token in enumerate(code_tokens):
-            event = tokenized_sentence[0]
-            if len(code_token) > 0:
-                event += code_token
+            event = []
+            event += tokenized_sentence[0] + code_token
             if numerical_value_mask[i]:
                 event += tokenized_sentence[1] + tokenized_values[i]
             if static_mask[i]:
                 event += tokenized_sentence[2] + tokenized_time[i] + tokenized_sentence[3]
             event += tokenized_sentence[4]
+            longest_event = max(longest_event, len(event))
+
             tokenized_events.append(torch.tensor(event))
         # event_mask = [torch.ones(len(event)) for event in tokenized_events]
-
+        logger.debug(f"Longest event: {longest_event}")
         tokenized_events_padded = torch.nn.utils.rnn.pad_sequence(
             tokenized_events,
             batch_first=True,

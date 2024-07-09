@@ -3,6 +3,7 @@ import enum
 
 import polars as pl
 import torch
+from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 from torch import nn
 from transformers import BertModel
@@ -102,7 +103,7 @@ class TripletEmbedder(nn.Module):
         return embedding, mask
 
 
-class BERTCodeEmbedder(nn.Module):
+class BERTEmbedder(nn.Module):
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
@@ -111,9 +112,11 @@ class BERTCodeEmbedder(nn.Module):
         self.code_embedder = BertModel.from_pretrained(self.cfg.code_embedder.pretrained_model)
 
     def forward(self, x, mask):
+        logger.debug(f"x.shape: {x.shape}")
         batch_size, sequence_length, feature_dimension = x.shape
         x_reshaped = x.view(batch_size * sequence_length, feature_dimension)
         mask_reshaped = mask.view(batch_size * sequence_length, feature_dimension)
+        logger.debug(f"x_reshaped.shape: {x_reshaped.shape}")
         outputs = self.code_embedder(input_ids=x_reshaped, attention_mask=mask_reshaped)
         pooler_output = outputs["pooler_output"]
         pooler_output = pooler_output.view(batch_size, sequence_length, -1)
@@ -130,7 +133,7 @@ class TextCodeEmbedder(nn.Module):
         # Define Triplet Embedders
         self.date_embedder = CVE(cfg)
         # code embedder should be a text model like BERT
-        self.code_embedder = BERTCodeEmbedder(cfg)
+        self.code_embedder = BERTEmbedder(cfg)
         # Change this code_embedder to be a text model - do bert with a small sequence length like 128.
         self.numerical_value_embedder = CVE(cfg)
 
@@ -157,6 +160,29 @@ class TextCodeEmbedder(nn.Module):
 
         # Sum the (time, code, value) triplets and
         embedding = time_emb + code_emb + val_emb
+
+        assert embedding.isfinite().all(), "Embedding is not finite"
+        return embedding
+
+    def embed(self, batch):
+        embedding = self.get_embedding(batch)
+        mask = batch["mask"]
+        return embedding, mask
+
+
+class TextEventEmbedder(nn.Module):
+    """TODO(teya): Add docstring."""
+
+    def __init__(self, cfg: DictConfig):
+        super().__init__()
+        self.cfg = cfg
+        self.code_embedder = BERTEmbedder(cfg)
+
+    def get_embedding(self, batch):
+        event_tokens = batch["event_tokens"]
+        event_mask = batch["event_mask"]
+
+        embedding = self.code_embedder.forward(event_tokens, event_mask).permute(0, 2, 1)
 
         assert embedding.isfinite().all(), "Embedding is not finite"
         return embedding
