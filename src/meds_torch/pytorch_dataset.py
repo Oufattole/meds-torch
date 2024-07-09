@@ -1033,10 +1033,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         # change values so any // or _ is replaced with a space, check if value is not None
         # make sure this is actually what we want
         code_metadata = code_metadata.with_columns(
-            pl.col("code").str.replace_all("//", " ").str.replace_all("_", " ")
+            pl.col("code").fill_null("").str.replace_all("//", " ").str.replace_all("_", " ")
         )
         tokens = tokenizer(
-            code_metadata["code"].to_list(),
+            code_metadata.select("code").collect().to_series().to_list(),
             padding=True,
             truncation=True,
             return_tensors="pt",
@@ -1045,7 +1045,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         )
         return dict(
             zip(
-                code_metadata["code/vocab_index"].to_list(),
+                code_metadata.select("code/vocab_index").collect().to_series().to_list(),
                 zip(tokens["input_ids"], tokens["attention_mask"]),
             )
         )
