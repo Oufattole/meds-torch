@@ -156,41 +156,41 @@ def merge_task_with_static(task_df, static_dfs):
     Returns:
     - DataFrame: The merged DataFrame containing data from task_df and all static_dfs.
 
-    Example:
-    >>> from datetime import datetime
-    >>> import polars as pl
-    >>> task_df = pl.DataFrame({
-    ...     "patient_id": [1, 2],
-    ...     "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
-    ...     "end_time": [datetime(2020, 1, 2), datetime(2020, 1, 3)],
-    ...     "label": [0, 1]
-    ... })
-    >>> static_dfs = {
-    ...     'train/0': pl.DataFrame({
-    ...         "patient_id": [1, 2],
-    ...         "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
-    ...         "timestamp": [[datetime(2020, 1, 1, 1), datetime(2020, 1, 1, 3)],
-    ...                       [datetime(2020, 1, 2), datetime(2020, 1, 1, 2, 3)]]
-    ...     })
-    ... }
-    >>> merge_task_with_static(task_df, static_dfs)
-    shape: (2, 6)
-    ┌────────────┬────────────┬─────────────┬────────────┬────────────┬────────────┐
-    │ _row_index ┆ patient_id ┆ start_time  ┆ end_time   ┆ start_time ┆ timestamp  │
-    │ ---        ┆ ---        ┆ ---         ┆ ---        ┆ _global    ┆ ---        │
-    │ u32        ┆ i64        ┆ list[dateti ┆ list[datet ┆ ---        ┆ list[datet │
-    │            ┆            ┆ me[μs]]     ┆ ime[μs]]   ┆ datetime[μ ┆ ime[μs]]   │
-    │            ┆            ┆             ┆            ┆ s]         ┆            │
-    ╞════════════╪════════════╪═════════════╪════════════╪════════════╪════════════╡
-    │ 0          ┆ 1          ┆ [2020-01-01 ┆ [2020-01-0 ┆ 2020-01-01 ┆ [2020-01-0 │
-    │            ┆            ┆ 00:00:00]   ┆ 2          ┆ 00:00:00   ┆ 1          │
-    │            ┆            ┆             ┆ 00:00:00]  ┆            ┆ 01:00:00,  │
-    │            ┆            ┆             ┆            ┆            ┆ 2020-01-…  │
-    │ 1          ┆ 2          ┆ [2020-01-02 ┆ [2020-01-0 ┆ 2020-01-02 ┆ [2020-01-0 │
-    │            ┆            ┆ 00:00:00]   ┆ 3          ┆ 00:00:00   ┆ 2          │
-    │            ┆            ┆             ┆ 00:00:00]  ┆            ┆ 00:00:00,  │
-    │            ┆            ┆             ┆            ┆            ┆ 2020-01-…  │
-    └────────────┴────────────┴─────────────┴────────────┴────────────┴────────────┘
+    # Example:
+    # >>> from datetime import datetime
+    # >>> import polars as pl
+    # >>> task_df = pl.DataFrame({
+    # ...     "patient_id": [1, 2],
+    # ...     "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
+    # ...     "end_time": [datetime(2020, 1, 2), datetime(2020, 1, 3)],
+    # ...     "label": [0, 1]
+    # ... })
+    # >>> static_dfs = {
+    # ...     'train/0': pl.DataFrame({
+    # ...         "patient_id": [1, 2],
+    # ...         "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
+    # ...         "timestamp": [[datetime(2020, 1, 1, 1), datetime(2020, 1, 1, 3)],
+    # ...                       [datetime(2020, 1, 2), datetime(2020, 1, 1, 2, 3)]]
+    # ...     })
+    # ... }
+    # >>> merge_task_with_static(task_df, static_dfs)
+    # shape: (2, 6)
+    # ┌────────────┬────────────┬─────────────┬────────────┬────────────┬────────────┐
+    # │ _row_index ┆ patient_id ┆ start_time  ┆ end_time   ┆ start_time ┆ timestamp  │
+    # │ ---        ┆ ---        ┆ ---         ┆ ---        ┆ _global    ┆ ---        │
+    # │ u32        ┆ i64        ┆ list[dateti ┆ list[datet ┆ ---        ┆ list[datet │
+    # │            ┆            ┆ me[μs]]     ┆ ime[μs]]   ┆ datetime[μ ┆ ime[μs]]   │
+    # │            ┆            ┆             ┆            ┆ s]         ┆            │
+    # ╞════════════╪════════════╪═════════════╪════════════╪════════════╪════════════╡
+    # │ 0          ┆ 1          ┆ [2020-01-01 ┆ [2020-01-0 ┆ 2020-01-01 ┆ [2020-01-0 │
+    # │            ┆            ┆ 00:00:00]   ┆ 2          ┆ 00:00:00   ┆ 1          │
+    # │            ┆            ┆             ┆ 00:00:00]  ┆            ┆ 01:00:00,  │
+    # │            ┆            ┆             ┆            ┆            ┆ 2020-01-…  │
+    # │ 1          ┆ 2          ┆ [2020-01-02 ┆ [2020-01-0 ┆ 2020-01-02 ┆ [2020-01-0 │
+    # │            ┆            ┆ 00:00:00]   ┆ 3          ┆ 00:00:00   ┆ 2          │
+    # │            ┆            ┆             ┆ 00:00:00]  ┆            ┆ 00:00:00,  │
+    # │            ┆            ┆             ┆            ┆            ┆ 2020-01-…  │
+    # └────────────┴────────────┴─────────────┴────────────┴────────────┴────────────┘
     """
     task_df_joint = (
         task_df.select("patient_id", "start_time", "end_time")
@@ -869,7 +869,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return tensorized_batch
 
     @classmethod
-    def process_text_code(cls, item: dict, code_metadata: dict, tokenizer) -> dict:
+    def process_text_code(cls, item: dict, tokenized_codes: dict) -> dict:
         """Processes a single triplet of dynamic and static data.
 
         This function takes a dictionary containing dynamic and static data,
@@ -878,6 +878,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         Args:
             item: A dictionary containing 'dynamic' and 'static' data.
+            tokenized_codes: A dictionary containing the tokenized codes.
 
         Returns:
             A dictionary with the processed data including:
@@ -890,6 +891,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         Examples:
             >>> import numpy as np
             >>> import tempfile, json, os
+            >>> from torch import Tensor as tensor
             >>> from omegaconf import DictConfig
             >>> item =  {
             ...         'dynamic': JointNestedRaggedTensorDict({
@@ -900,9 +902,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...         'static_values': [70.0],
             ...         'static_indices': [2]
             ...     }
-            >>> code_metadata = {2: "A thing", 5: "Because", 6: "C", 1: "three in a row"}
-            >>> tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-            >>> text_code_item = PytorchDataset.process_text_code(item, code_metadata, tokenizer)
+            >>> tokenized_metadata = {
+            ...     2: (tensor([1037, 2518,    0,    0]), tensor([1, 1, 0, 0])),
+            ...     5: (tensor([2138,    0,    0,    0]), tensor([1, 0, 0, 0])),
+            ...     6: (tensor([1039,    0,    0,    0]), tensor([1, 0, 0, 0])),
+            ...     1: (tensor([2093, 1999, 1037, 5216]), tensor([1, 1, 1, 1]))}
+            >>> text_code_item = PytorchDataset.process_text_code(item, tokenized_metadata)
             >>> for each in sorted(list(text_code_item.keys())): print(each)
             code_mask
             code_tokens
@@ -914,16 +919,16 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> for key, value in text_code_item.items(): print(key, value);
             mask [ True  True  True  True  True]
             static_mask [ True False False False False]
-            code_tokens [[1037 2518    0    0]
-             [2138    0    0    0]
-             [1039    0    0    0]
-             [2093 1999 1037 5216]
-             [1037 2518    0    0]]
-            code_mask [[ True  True False False]
-             [ True False False False]
-             [ True False False False]
-             [ True  True  True  True]
-             [ True  True False False]]
+            code_tokens [[1037. 2518.    0.    0.]
+             [2138.    0.    0.    0.]
+             [1039.    0.    0.    0.]
+             [2093. 1999. 1037. 5216.]
+             [1037. 2518.    0.    0.]]
+            code_mask [[1. 1. 0. 0.]
+             [1. 0. 0. 0.]
+             [1. 0. 0. 0.]
+             [1. 1. 1. 1.]
+             [1. 1. 0. 0.]]
             numerical_value [70. 50. 60.  0.  0.]
             time_delta_days [ 0.  0.  0. 12. 12.]
             numerical_value_mask [ True  True  True False False]
@@ -936,23 +941,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         static_values = np.asarray(item["static_values"], dtype=raw_values[0].dtype)
         static_indices = np.asarray(item["static_indices"], dtype=raw_codes[0].dtype)
         code = np.concatenate([np.array(static_indices)] + raw_codes, dtype=np.int32, casting="unsafe")
-
-        code_text = [code_metadata.get(c, "") for c in code]
-        code_tokens = [tokenizer.encode(c, add_special_tokens=False) for c in code_text]
-        # pad code_tokens with 0 until they are all the same length and make a mask
-        max_len = max([len(c) for c in code_tokens])
-        # code_mask = np.zeros((len(code_tokens), max_len), dtype=bool)
-        # for i, c in enumerate(code_tokens):
-        #     code_mask[i, :len(c)] = True
-        code_tokens = [c + [0] * (max_len - len(c)) for c in code_tokens]
-
-        # code_mask = np.array(code_mask)
+        tokens = [tokenized_codes[c] for c in code]
+        code_tokens, code_mask = zip(*tokens)
         code_tokens = np.array(code_tokens)
-        code_mask = code_tokens != 0
-
-        # code_mask = np.zeros(len(code), dtype=bool)
-        # code_mask[: len(code)] = True
-
+        code_mask = np.array(code_mask)
         numerical_value = np.concatenate([np.array(static_values)] + raw_values)
         numerical_value_mask = ~np.isnan(numerical_value)
         # Replace NaNs with 0s
@@ -979,7 +971,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         )
 
     @classmethod
-    def collate_text_code(cls, code_metadata, tokenizer, batch: list[dict]) -> dict:
+    def collate_text_code(cls, tokenized_codes: dict, batch: list[dict]) -> dict:
         """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
 
         This function handles conversion of arrays to tensors and padding of elements within the batch across
@@ -995,18 +987,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             and 'time_delta_days'.
         """
         # TODO(teya)
-        # dict where code/vocab_index is key and value is code
-        # check if this is too slow --> should we move it somewhere else so we do it once and not per batch?
-        code_metadata = dict(
-            zip(code_metadata["code/vocab_index"].to_list(), code_metadata["code"].to_list())
-        )
-        # change values so any // or _ is replaced with a space, check if value is not None
-        code_metadata = {
-            k: (v.replace("//", " ").replace("_", " ") if v is not None else None)
-            for k, v in code_metadata.items()
-        }
-        # make sure this is actually what we want
-        processed_batch = [cls.process_text_code(item, code_metadata, tokenizer) for item in batch]
+
+        processed_batch = [cls.process_text_code(item, tokenized_codes) for item in batch]
         tensorized_batch = {
             k: torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x[k]) for x in processed_batch],
@@ -1019,6 +1001,54 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             if k not in ("dynamic", "static_values", "static_indices"):
                 tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
         return tensorized_batch
+
+    @classmethod
+    def tokenize_metadata(cls, tokenizer, code_metadata) -> dict:
+        """Tokenizes the metadata using the provided tokenizer.
+
+        Args:
+            tokenizer: The tokenizer to use.
+            metadata: The metadata to tokenize.
+
+        Returns:
+            A list of tokenized metadata.
+
+        Examples:
+        >>> from transformers import BertTokenizer
+        >>> import polars as pl
+        >>> tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+        >>> code_metadata = pl.DataFrame({
+        ...     "code": ["A//thing", "Because", "C", "three//in_a//row"],
+        ...     "code/vocab_index": [2, 5, 6, 1]
+        ...     })
+        >>> tokenized_metadata = PytorchDataset.tokenize_metadata(tokenizer, code_metadata)
+        >>> for each in tokenized_metadata.items(): print(each)
+        (2, (tensor([1037, 2518,    0,    0]), tensor([1, 1, 0, 0])))
+        (5, (tensor([2138,    0,    0,    0]), tensor([1, 0, 0, 0])))
+        (6, (tensor([1039,    0,    0,    0]), tensor([1, 0, 0, 0])))
+        (1, (tensor([2093, 1999, 1037, 5216]), tensor([1, 1, 1, 1])))
+        """
+        # dict where code/vocab_index is key and value is code
+        # check if this is too slow --> should we move it somewhere else so we do it once and not per batch?
+        # change values so any // or _ is replaced with a space, check if value is not None
+        # make sure this is actually what we want
+        code_metadata = code_metadata.with_columns(
+            pl.col("code").str.replace_all("//", " ").str.replace_all("_", " ")
+        )
+        tokens = tokenizer(
+            code_metadata["code"].to_list(),
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            return_token_type_ids=False,
+            add_special_tokens=False,
+        )
+        return dict(
+            zip(
+                code_metadata["code/vocab_index"].to_list(),
+                zip(tokens["input_ids"], tokens["attention_mask"]),
+            )
+        )
 
     def collate(self, batch: list[dict]) -> dict:
         """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
@@ -1038,9 +1068,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         elif collate_type == CollateType.triplet:
             return self.collate_triplet(batch)
         elif collate_type == CollateType.text_code:
-            code_metadata = pl.read_parquet(self.config.code_metadata_fp)
-            # probably we want to change this!!
-            tokenizer = BertTokenizer.from_pretrained(self.config.code_embedder.tokenizer)
-            return self.collate_text_code(code_metadata, tokenizer, batch)
+            if not hasattr(self, "tokenized_codes"):
+                tokenizer = BertTokenizer.from_pretrained(self.config.code_embedder.tokenizer)
+                self.tokenized_codes = self.tokenize_metadata(tokenizer, self.code_metadata)
+            return self.collate_text_code(self.tokenized_codes, batch)
         else:
             raise NotImplementedError(f"Unsupported collate type {collate_type}!")
