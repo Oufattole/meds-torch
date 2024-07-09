@@ -5,6 +5,7 @@ import polars as pl
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torch import nn
+from transformers import BertModel
 
 OmegaConf.register_new_resolver(
     "get_vocab_size",
@@ -101,6 +102,25 @@ class TripletEmbedder(nn.Module):
         return embedding, mask
 
 
+class BERTCodeEmbedder(nn.Module):
+    def __init__(self, cfg: DictConfig):
+        super().__init__()
+        self.cfg = cfg
+        # Define BERT tokenizer
+        # Define BERT model
+        self.code_embedder = BertModel.from_pretrained(self.cfg.code_embedder.pretrained_model)
+
+    def forward(self, x, mask):
+        batch_size, sequence_length, feature_dimension = x.shape
+        x_reshaped = x.view(batch_size * sequence_length, feature_dimension)
+        mask_reshaped = mask.view(batch_size * sequence_length, feature_dimension)
+        outputs = self.code_embedder(input_ids=x_reshaped, attention_mask=mask_reshaped)
+        pooler_output = outputs["pooler_output"]
+        pooler_output = pooler_output.view(batch_size, sequence_length, -1)
+
+        return pooler_output
+
+
 class TextCodeEmbedder(nn.Module):
     """TODO(teya): Add docstring."""
 
@@ -109,9 +129,9 @@ class TextCodeEmbedder(nn.Module):
         self.cfg = cfg
         # Define Triplet Embedders
         self.date_embedder = CVE(cfg)
-        self.code_embedder = torch.nn.Embedding(
-            cfg.model.embedder.vocab_size, embedding_dim=cfg.model.embedder.token_dim
-        ) # Change this code_embedder to be a text model - do bert with a small sequence length like 128.
+        # code embedder should be a text model like BERT
+        self.code_embedder = BERTCodeEmbedder(cfg)
+        # Change this code_embedder to be a text model - do bert with a small sequence length like 128.
         self.numerical_value_embedder = CVE(cfg)
 
     def embed_func(self, embedder, x):
@@ -120,8 +140,8 @@ class TextCodeEmbedder(nn.Module):
 
     def get_embedding(self, batch):
         static_mask = batch["static_mask"]
-        code_text = batch["code_text"]
-        code_text_mask = batch["code_text_mask"]
+        code_tokens = batch["code_tokens"]
+        code_mask = batch["code_mask"]
         numerical_value = batch["numerical_value"]
         time_delta_days = batch["time_delta_days"]
         numerical_value_mask = batch["numerical_value_mask"]
@@ -129,7 +149,7 @@ class TextCodeEmbedder(nn.Module):
         # Embed times and mask static value times
         time_emb = self.embed_func(self.date_embedder, time_delta_days) * ~static_mask.unsqueeze(dim=1)
         # TODO(teya): Embed code_text and code_text_mask
-        code_emb = self.code_embedder.forward(code).permute(0, 2, 1)
+        code_emb = self.code_embedder.forward(code_tokens, code_mask).permute(0, 2, 1)
         # Embed numerical values and mask nan values
         val_emb = self.embed_func(
             self.numerical_value_embedder, numerical_value

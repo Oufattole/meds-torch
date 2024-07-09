@@ -54,16 +54,27 @@ def test_text_code(tmp_path):
         "max_seq_len": 512,
         "model.embedder.token_dim": 4,
         "collate_type": "text_code",
+        "code_embedder.tokenizer": "bert-base-uncased",
+        "code_embedder.pretrained_model": "bert-base-uncased",
     }
 
     with initialize(version_base=None, config_path="../src/meds_torch/configs"):  # path to config.yaml
-        overrides = [f"{k}={v}" for k, v in kwargs.items()]
+        overrides = [f"++{k}={v}" for k, v in kwargs.items()]
         cfg = compose(config_name="pytorch_dataset", overrides=overrides)  # config.yaml
 
     pyd = PytorchDataset(cfg, split="train")
     item = pyd[0]
     assert item.keys() == {"static_indices", "static_values", "dynamic"}
     batch = pyd.collate([pyd[i] for i in range(2)])
+    assert batch.keys() == {
+        "mask",
+        "static_mask",
+        "code_tokens",
+        "code_mask",
+        "numerical_value",
+        "time_delta_days",
+        "numerical_value_mask",
+    }
 
 
 def test_task(tmp_path):
