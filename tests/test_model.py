@@ -33,10 +33,11 @@ def prep_embedding(tmp_path):
         "max_seq_len": 512,
         "model.embedder.token_dim": 4,
         "collate_type": "triplet",
+        "model.params.use_abs_pos_emb": False,
     }
 
     with initialize(version_base=None, config_path="../src/meds_torch/configs"):  # path to config.yaml
-        overrides = [f"{k}={v}" for k, v in kwargs.items()]
+        overrides = [f"++{k}={v}" for k, v in kwargs.items()]
         cfg = compose(config_name="pytorch_dataset", overrides=overrides)  # config.yaml
 
     # triplet collating
@@ -117,6 +118,7 @@ def test_train(tmp_path):
         "task_name": task_name,
         "model.train.batch_size": 2,
         "model.embedder.max_seq_len": 8,
+        "model.params.use_abs_pos_emb": False,
     }
 
     task_df = pl.DataFrame(
@@ -142,7 +144,7 @@ def test_train(tmp_path):
     task_df.write_parquet(tasks_dir / f"{task_name}.parquet")
 
     with initialize(version_base=None, config_path="../src/meds_torch/configs"):  # path to config.yaml
-        overrides = [f"{k}={v}" for k, v in kwargs.items()]
+        overrides = [f"++{k}={v}" for k, v in kwargs.items()]
         cfg = compose(config_name="pytorch_dataset", overrides=overrides)  # config.yaml
 
     # triplet collating
@@ -182,6 +184,7 @@ def test_text_code(tmp_path):
         "model.embedder.max_seq_len": 8,
         "code_embedder.tokenizer": "bert-base-uncased",
         "code_embedder.pretrained_model": "bert-base-uncased",
+        "model.params.use_abs_pos_emb": False,
     }
 
     task_df = pl.DataFrame(
@@ -243,9 +246,10 @@ def test_text_observation(tmp_path):
         "collate_type": "text_observation",
         "task_name": task_name,
         "model.train.batch_size": 2,
-        "model.embedder.max_seq_len": 8,
+        "model.embedder.max_seq_len": 50,
         "code_embedder.tokenizer": "bert-base-uncased",
         "code_embedder.pretrained_model": "bert-base-uncased",
+        "model.params.use_abs_pos_emb": True,
     }
 
     task_df = pl.DataFrame(

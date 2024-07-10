@@ -1033,31 +1033,53 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...     6: (tensor([1039,    0,    0,    0]), tensor([1, 0, 0, 0])),
             ...     1: (tensor([2093, 1999, 1037, 5216]), tensor([1, 1, 1, 1]))}
             >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
-            >>> text_code_item = PytorchDataset.process_text_observation(item, tokenized_metadata, tokenizer)
+            >>> tokenized_sentence = [[3642], [2038, 3643], [7594], [2044, 1996, 3025, 8089], [1012]]
+            >>> text_code_item = PytorchDataset.process_text_observation(item,
+            ...     tokenized_metadata, tokenized_sentence, tokenizer)
             >>> for each in sorted(list(text_code_item.keys())): print(each)
-            code_mask
-            code_tokens
             mask
-            numerical_value
-            numerical_value_mask
-            static_mask
-            time_delta_days
+            observation_mask
+            observation_tokens
             >>> for key, value in text_code_item.items(): print(key, value);
-            mask [ True  True  True  True  True]
-            static_mask [ True False False False False]
-            code_tokens [[1037. 2518.    0.    0.]
-             [2138.    0.    0.    0.]
-             [1039.    0.    0.    0.]
-             [2093. 1999. 1037. 5216.]
-             [1037. 2518.    0.    0.]]
-            code_mask [[1. 1. 0. 0.]
-             [1. 0. 0. 0.]
-             [1. 0. 0. 0.]
-             [1. 1. 1. 1.]
-             [1. 1. 0. 0.]]
-            numerical_value [70. 50. 60.  0.  0.]
-            time_delta_days [ 0.  0.  0. 12. 12.]
-            numerical_value_mask [ True  True  True False False]
+            mask tensor([True, True, True, True, True])
+            observation_tokens tensor([[3642., 1037., 2518.,    0.,    0., 2038., 3643., 3963., 1012., 1014.,
+                     7594., 1014., 1012., 1014., 2044., 1996., 3025., 8089., 1012.],
+                    [3642., 2138.,    0.,    0.,    0., 2038., 3643., 2753., 1012., 1014.,
+                     1012.,    0.,    0.,    0.,    0.,    0.,    0.,    0.,    0.],
+                    [3642., 1039.,    0.,    0.,    0., 2038., 3643., 3438., 1012., 1014.,
+                     1012.,    0.,    0.,    0.,    0.,    0.,    0.,    0.,    0.],
+                    [3642., 2093., 1999., 1037., 5216., 1012.,    0.,    0.,    0.,    0.,
+                        0.,    0.,    0.,    0.,    0.,    0.,    0.,    0.,    0.],
+                    [3642., 1037., 2518.,    0.,    0., 1012.,    0.,    0.,    0.,    0.,
+                        0.,    0.,    0.,    0.,    0.,    0.,    0.,    0.,    0.]])
+            observation_mask tensor([[1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
+                     1.],
+                    [1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0., 0.,
+                     0.],
+                    [1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0., 0.,
+                     0.],
+                    [1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                     0.],
+                    [1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                     0.]])
+            >>> all_text_items = PytorchDataset.process_text_observation(item,
+            ...         tokenized_metadata, tokenized_sentence, tokenizer, whole_observation=True)
+            >>> for each in sorted(list(all_text_items.keys())): print(each)
+            mask
+            observation_mask
+            observation_tokens
+            >>> for key, value in all_text_items.items(): print(key, value);
+            mask tensor([True])
+            observation_tokens tensor([[3642., 1037., 2518.,    0.,    0., 2038., 3643., 3963., 1012., 1014.,
+                     7594., 1014., 1012., 1014., 2044., 1996., 3025., 8089., 1012.,  102.,
+                     3642., 2138.,    0.,    0.,    0., 2038., 3643., 2753., 1012., 1014.,
+                     1012.,  102., 3642., 1039.,    0.,    0.,    0., 2038., 3643., 3438.,
+                     1012., 1014., 1012.,  102., 3642., 2093., 1999., 1037., 5216., 1012.,
+                      102., 3642., 1037., 2518.,    0.,    0., 1012.,  102.]])
+            observation_mask tensor([[1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
+                     1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
+                     1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
+                     1., 1., 1., 1.]])
         """
         dynamic_data = item["dynamic"]
         raw_codes = dynamic_data.tensors["dim1/code"]
@@ -1096,7 +1118,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         tokenized_observations = []
         for i, code_token in enumerate(code_tokens):
             observation = []
-            observation += tokenized_sentence[0] + code_token
+            observation += tokenized_sentence[0] + list(code_token)
             if numerical_value_mask[i]:
                 observation += tokenized_sentence[1] + tokenized_values[i]
             if static_mask[i]:
@@ -1125,7 +1147,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             padding_value=0,
         )
         return dict(
-            # mask=mask,
+            mask=observation_mask[:, 0].bool(),
             # static_mask=static_mask,
             observation_tokens=tokenized_observations_padded,
             observation_mask=observation_mask,
@@ -1180,16 +1202,16 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         >>> from transformers import AutoTokenizer
         >>> import polars as pl
         >>> tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-        >>> code_metadata = pl.DataFrame({
+        >>> code_metadata = pl.LazyFrame({
         ...     "code": ["A//thing", "Because", "C", "three//in_a//row"],
         ...     "code/vocab_index": [2, 5, 6, 1]
         ...     })
         >>> tokenized_metadata = PytorchDataset.tokenize_metadata(tokenizer, code_metadata)
         >>> for each in tokenized_metadata.items(): print(each)
-        (2, (tensor([1037, 2518,    0,    0]), tensor([1, 1, 0, 0])))
-        (5, (tensor([2138,    0,    0,    0]), tensor([1, 0, 0, 0])))
-        (6, (tensor([1039,    0,    0,    0]), tensor([1, 0, 0, 0])))
-        (1, (tensor([2093, 1999, 1037, 5216]), tensor([1, 1, 1, 1])))
+        (2, ([1037, 2518, 0, 0], [1, 1, 0, 0]))
+        (5, ([2138, 0, 0, 0], [1, 0, 0, 0]))
+        (6, ([1039, 0, 0, 0], [1, 0, 0, 0]))
+        (1, ([2093, 1999, 1037, 5216], [1, 1, 1, 1]))
         """
         # dict where code/vocab_index is key and value is code
         # check if this is too slow --> should we move it somewhere else so we do it once and not per batch?
@@ -1286,7 +1308,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 tokenizer = AutoTokenizer.from_pretrained(self.config.code_embedder.tokenizer)
                 self.tokenized_codes = self.tokenize_metadata(tokenizer, self.code_metadata)
             return self.collate_text_code(self.tokenized_codes, batch)
-        elif collate_type == CollateType.text_event:
+        elif collate_type == CollateType.text_observation:
             if not hasattr(self, "tokenized_codes"):
                 self.tokenizer = AutoTokenizer.from_pretrained(self.config.code_embedder.tokenizer)
                 self.tokenized_codes = self.tokenize_metadata(

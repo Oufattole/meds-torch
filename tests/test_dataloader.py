@@ -100,7 +100,7 @@ def test_text_observation(tmp_path):
     assert item.keys() == {"static_indices", "static_values", "dynamic"}
     batch = pyd.collate([pyd[i] for i in range(2)])
     assert batch.keys() == {
-        # "mask",
+        "mask",
         # "static_mask",
         "observation_tokens",
         "observation_mask",
@@ -133,7 +133,7 @@ def test_all_text(tmp_path):
     assert item.keys() == {"static_indices", "static_values", "dynamic"}
     batch = pyd.collate([pyd[i] for i in range(2)])
     assert batch.keys() == {
-        # "mask",
+        "mask",
         # "static_mask",
         "observation_tokens",
         "observation_mask",
