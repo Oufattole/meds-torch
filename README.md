@@ -13,7 +13,7 @@ Install the repo and it's dependancies with
 pip install .
 ```
 
-Run climber on some dummy meds data processed using the [meds_polars_repo]([url](https://github.com/mmcdermott/MEDS_polars_functions/tree/main)):
+Run clmbr on some dummy meds data processed using the [meds_polars_repo]([url](https://github.com/mmcdermott/MEDS_polars_functions/tree/main)):
 ```bash
 python scripts/launch_clmbr.py
 ```
