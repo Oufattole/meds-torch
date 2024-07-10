@@ -230,7 +230,7 @@ def test_text_code(tmp_path):
         )
 
 
-def test_text_event(tmp_path):
+def test_text_observation(tmp_path):
     MEDS_cohort_dir = tmp_path / "processed" / "final_cohort"
     shutil.copytree(Path("./tests/test_data"), MEDS_cohort_dir.parent)
 
@@ -240,7 +240,7 @@ def test_text_event(tmp_path):
         "MEDS_cohort_dir": str(MEDS_cohort_dir.resolve()),
         "max_seq_len": 512,
         "model.embedder.token_dim": 768,
-        "collate_type": "text_event",
+        "collate_type": "text_observation",
         "task_name": task_name,
         "model.train.batch_size": 2,
         "model.embedder.max_seq_len": 8,
@@ -276,7 +276,7 @@ def test_text_event(tmp_path):
 
     # triplet collating
     pyd = PytorchDataset(cfg, split="train")
-    embedder_module = embedder.TextEventEmbedder(cfg)
+    embedder_module = embedder.TextObservationEmbedder(cfg)
     # model = LstmModel(cfg)
     for model in [
         LstmModel(cfg),

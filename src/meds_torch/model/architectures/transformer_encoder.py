@@ -21,7 +21,7 @@ class TransformerEncoderModel(torch.nn.Module):
             num_tokens=cfg.model.embedder.token_dim,  # placeholder as this is not used
             max_seq_len=cfg.model.embedder.max_seq_len,
             emb_dropout=dropout,
-            use_abs_pos_emb=False,
+            use_abs_pos_emb=cfg.model.params.use_abs_pos_emb,
             attn_layers=Encoder(
                 dim=cfg.model.embedder.token_dim,
                 depth=cfg.model.params.n_layers,
@@ -103,7 +103,7 @@ class AttentionAveragedTransformerEncoderModel(torch.nn.Module):
             num_tokens=cfg.model.embedder.token_dim,  # placeholder as this is not used
             max_seq_len=cfg.model.embedder.max_seq_len,
             emb_dropout=dropout,
-            use_abs_pos_emb=False,
+            use_abs_pos_emb=cfg.model.params.use_abs_pos_emb,
             attn_layers=Encoder(
                 dim=cfg.model.embedder.token_dim,
                 depth=cfg.model.params.n_layers,

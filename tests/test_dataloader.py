@@ -77,7 +77,7 @@ def test_text_code(tmp_path):
     }
 
 
-def test_text_event(tmp_path):
+def test_text_observation(tmp_path):
     MEDS_cohort_dir = tmp_path / "processed" / "final_cohort"
     shutil.copytree(Path("./tests/test_data"), MEDS_cohort_dir.parent)
 
@@ -86,7 +86,7 @@ def test_text_event(tmp_path):
         "MEDS_cohort_dir": str(MEDS_cohort_dir.resolve()),
         "max_seq_len": 512,
         "model.embedder.token_dim": 4,
-        "collate_type": "text_event",
+        "collate_type": "text_observation",
         "code_embedder.tokenizer": "bert-base-uncased",
         "code_embedder.pretrained_model": "bert-base-uncased",
     }
@@ -100,13 +100,46 @@ def test_text_event(tmp_path):
     assert item.keys() == {"static_indices", "static_values", "dynamic"}
     batch = pyd.collate([pyd[i] for i in range(2)])
     assert batch.keys() == {
-        "mask",
-        "static_mask",
-        "event_tokens",
-        "event_mask",
-        "numerical_value",
-        "time_delta_days",
-        "numerical_value_mask",
+        # "mask",
+        # "static_mask",
+        "observation_tokens",
+        "observation_mask",
+        # "numerical_value",
+        # "time_delta_days",
+        # "numerical_value_mask",
+    }
+
+
+def test_all_text(tmp_path):
+    MEDS_cohort_dir = tmp_path / "processed" / "final_cohort"
+    shutil.copytree(Path("./tests/test_data"), MEDS_cohort_dir.parent)
+
+    kwargs = {
+        "raw_MEDS_cohort_dir": str(MEDS_cohort_dir.parent.resolve()),
+        "MEDS_cohort_dir": str(MEDS_cohort_dir.resolve()),
+        "max_seq_len": 512,
+        "model.embedder.token_dim": 4,
+        "collate_type": "all_text",
+        "code_embedder.tokenizer": "bert-base-uncased",
+        "code_embedder.pretrained_model": "bert-base-uncased",
+    }
+
+    with initialize(version_base=None, config_path="../src/meds_torch/configs"):  # path to config.yaml
+        overrides = [f"++{k}={v}" for k, v in kwargs.items()]
+        cfg = compose(config_name="pytorch_dataset", overrides=overrides)  # config.yaml
+
+    pyd = PytorchDataset(cfg, split="train")
+    item = pyd[0]
+    assert item.keys() == {"static_indices", "static_values", "dynamic"}
+    batch = pyd.collate([pyd[i] for i in range(2)])
+    assert batch.keys() == {
+        # "mask",
+        # "static_mask",
+        "observation_tokens",
+        "observation_mask",
+        # "numerical_value",
+        # "time_delta_days",
+        # "numerical_value_mask",
     }
 
 

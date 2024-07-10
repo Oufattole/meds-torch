@@ -25,3 +25,7 @@ split_shards_fp: ${raw_MEDS_cohort_dir}/splits.json
 schema_files_root: ${MEDS_cohort_dir}/tokenization/schemas
 tasks_root: ${MEDS_cohort_dir}/tasks
 tensorized_root: ${MEDS_cohort_dir}/tensorize
+
+code_embedder:
+  tokenizer: ???
+  pretrained_model: ???

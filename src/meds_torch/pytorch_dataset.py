@@ -16,7 +16,7 @@ from nested_ragged_tensors.ragged_numpy import (
     JointNestedRaggedTensorDict,
 )
 from omegaconf import DictConfig
-from transformers import BertTokenizer
+from transformers import AutoTokenizer
 
 IDX_COL = "_row_index"
 
@@ -25,7 +25,8 @@ class CollateType(Enum):
     event_stream = "event_stream"
     triplet = "triplet"
     text_code = "text_code"
-    text_event = "text_event"
+    text_observation = "text_observation"
+    all_text = "all_text"
 
 
 def count_or_proportion(N: int | pl.Expr | None, cnt_or_prop: int | float) -> int:
@@ -991,7 +992,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         )
 
     @classmethod
-    def process_text_event(cls, item: dict, tokenized_codes: dict, tokenized_sentence, tokenizer) -> dict:
+    def process_text_observation(
+        cls, item: dict, tokenized_codes: dict, tokenized_sentence, tokenizer, whole_observation=False
+    ) -> dict:
         """Processes a single triplet of dynamic and static data.
 
         This function takes a dictionary containing dynamic and static data,
@@ -1029,8 +1032,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...     5: (tensor([2138,    0,    0,    0]), tensor([1, 0, 0, 0])),
             ...     6: (tensor([1039,    0,    0,    0]), tensor([1, 0, 0, 0])),
             ...     1: (tensor([2093, 1999, 1037, 5216]), tensor([1, 1, 1, 1]))}
-            >>> tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-            >>> text_code_item = PytorchDataset.process_text_event(item, tokenized_metadata, tokenizer)
+            >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+            >>> text_code_item = PytorchDataset.process_text_observation(item, tokenized_metadata, tokenizer)
             >>> for each in sorted(list(text_code_item.keys())): print(each)
             code_mask
             code_tokens
@@ -1081,7 +1084,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         time_delta_days = np.repeat(
             np.concatenate([np.array([0], dtype=raw_times.dtype), raw_times]), lengths
         )
-        mask = np.ones(len(time_delta_days), dtype=bool)
+        # mask = np.ones(len(time_delta_days), dtype=bool)
 
         tokenized_values = cls.tokenize_batch(tokenizer, numerical_value.astype(str).tolist(), padding=False)[
             "input_ids"
@@ -1089,43 +1092,46 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         tokenized_time = cls.tokenize_batch(tokenizer, time_delta_days.astype(str).tolist(), padding=False)[
             "input_ids"
         ]
-        longest_value = max(len(x) for x in tokenized_values)
-        longest_time = max(len(x) for x in tokenized_time)
-        logger.debug(f"Longest value: {longest_value}")
-        logger.debug(f"Longest time: {longest_time}")
-        longest_event = 0
-        tokenized_events = []
-        for i, code_token in enumerate(code_tokens):
-            event = []
-            event += tokenized_sentence[0] + code_token
-            if numerical_value_mask[i]:
-                event += tokenized_sentence[1] + tokenized_values[i]
-            if static_mask[i]:
-                event += tokenized_sentence[2] + tokenized_time[i] + tokenized_sentence[3]
-            event += tokenized_sentence[4]
-            longest_event = max(longest_event, len(event))
 
-            tokenized_events.append(torch.tensor(event))
-        # event_mask = [torch.ones(len(event)) for event in tokenized_events]
-        logger.debug(f"Longest event: {longest_event}")
-        tokenized_events_padded = torch.nn.utils.rnn.pad_sequence(
-            tokenized_events,
+        tokenized_observations = []
+        for i, code_token in enumerate(code_tokens):
+            observation = []
+            observation += tokenized_sentence[0] + code_token
+            if numerical_value_mask[i]:
+                observation += tokenized_sentence[1] + tokenized_values[i]
+            if static_mask[i]:
+                observation += tokenized_sentence[2] + tokenized_time[i] + tokenized_sentence[3]
+            observation += tokenized_sentence[4]
+            tokenized_observations.append(torch.tensor(observation))
+        if whole_observation:
+            # tokenized_observations = [torch.cat(tokenized_observations
+            #  + [torch.tensor([tokenizer.sep_token_id])])]
+            tokenized_observations = [
+                torch.cat(
+                    [
+                        torch.cat([observation, torch.tensor([tokenizer.sep_token_id])])
+                        for observation in tokenized_observations
+                    ]
+                )
+            ]
+        tokenized_observations_padded = torch.nn.utils.rnn.pad_sequence(
+            tokenized_observations,
             batch_first=True,
             padding_value=0,
         )
-        event_mask = torch.nn.utils.rnn.pad_sequence(
-            [torch.ones(len(event)) for event in tokenized_events],
+        observation_mask = torch.nn.utils.rnn.pad_sequence(
+            [torch.ones(len(observation)) for observation in tokenized_observations],
             batch_first=True,
             padding_value=0,
         )
         return dict(
-            mask=mask,
-            static_mask=static_mask,
-            event_tokens=tokenized_events_padded,
-            event_mask=event_mask,
-            numerical_value=numerical_value,
-            time_delta_days=time_delta_days,
-            numerical_value_mask=numerical_value_mask,
+            # mask=mask,
+            # static_mask=static_mask,
+            observation_tokens=tokenized_observations_padded,
+            observation_mask=observation_mask,
+            # numerical_value=numerical_value,
+            # time_delta_days=time_delta_days,
+            # numerical_value_mask=numerical_value_mask,
         )
 
     @classmethod
@@ -1133,7 +1139,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
 
         This function handles conversion of arrays to tensors and padding of elements within the batch across
-        static data elements, sequence events, and dynamic data elements.
+        static data elements, sequence observations, and dynamic data elements.
 
         Args:
             code_metadata: A DataFrame containing the code metadata.
@@ -1171,9 +1177,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             A list of tokenized metadata.
 
         Examples:
-        >>> from transformers import BertTokenizer
+        >>> from transformers import AutoTokenizer
         >>> import polars as pl
-        >>> tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+        >>> tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
         >>> code_metadata = pl.DataFrame({
         ...     "code": ["A//thing", "Because", "C", "three//in_a//row"],
         ...     "code/vocab_index": [2, 5, 6, 1]
@@ -1207,11 +1213,13 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         )
 
     @classmethod
-    def collate_text_event(cls, batch: list[dict], tokenized_codes, tokenized_sentence, tokenizer) -> dict:
+    def collate_text_observation(
+        cls, batch: list[dict], tokenized_codes, tokenized_sentence, tokenizer, whole_observation=False
+    ) -> dict:
         """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
 
         This function handles conversion of arrays to tensors and padding of elements within the batch across
-        static data elements, sequence events, and dynamic data elements.
+        static data elements, sequence observations, and dynamic data elements.
 
         Args:
             batch: A list of dictionaries with dynamic and static data from `__getitem__` method outputs.
@@ -1222,7 +1230,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             and 'time_delta_days'.
         """
         processed_batch = [
-            cls.process_text_event(item, tokenized_codes, tokenized_sentence, tokenizer) for item in batch
+            cls.process_text_observation(
+                item, tokenized_codes, tokenized_sentence, tokenizer, whole_observation=whole_observation
+            )
+            for item in batch
         ]
 
         max_sizes = {}
@@ -1256,7 +1267,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
 
         This function handles conversion of arrays to tensors and padding of elements within the batch across
-        static data elements, sequence events, and dynamic data elements.
+        static data elements, sequence observations, and dynamic data elements.
 
         Args:
             batch: A list of `__getitem__` format output dictionaries.
@@ -1272,20 +1283,32 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         elif collate_type == CollateType.text_code:
             # check this
             if not hasattr(self, "tokenized_codes"):
-                tokenizer = BertTokenizer.from_pretrained(self.config.code_embedder.tokenizer)
+                tokenizer = AutoTokenizer.from_pretrained(self.config.code_embedder.tokenizer)
                 self.tokenized_codes = self.tokenize_metadata(tokenizer, self.code_metadata)
             return self.collate_text_code(self.tokenized_codes, batch)
         elif collate_type == CollateType.text_event:
             if not hasattr(self, "tokenized_codes"):
-                self.tokenizer = BertTokenizer.from_pretrained(self.config.code_embedder.tokenizer)
+                self.tokenizer = AutoTokenizer.from_pretrained(self.config.code_embedder.tokenizer)
                 self.tokenized_codes = self.tokenize_metadata(
                     self.tokenizer, self.code_metadata, padding=False
                 )
                 self.tokenized_sentence = self.tokenize_batch(
-                    self.tokenizer, ["Code", "has value", "measured", "after the last event", "."]
+                    self.tokenizer, ["Code", "has value", "measured", "after the previous observation", "."]
                 )["input_ids"]
-            return self.collate_text_event(
+            return self.collate_text_observation(
                 batch, self.tokenized_codes, self.tokenized_sentence, self.tokenizer
+            )
+        elif collate_type == CollateType.all_text:
+            if not hasattr(self, "tokenized_codes"):
+                self.tokenizer = AutoTokenizer.from_pretrained(self.config.code_embedder.tokenizer)
+                self.tokenized_codes = self.tokenize_metadata(
+                    self.tokenizer, self.code_metadata, padding=False
+                )
+                self.tokenized_sentence = self.tokenize_batch(
+                    self.tokenizer, ["Code", "has value", "measured", "after the previous observation", "."]
+                )["input_ids"]
+            return self.collate_text_observation(
+                batch, self.tokenized_codes, self.tokenized_sentence, self.tokenizer, whole_observation=True
             )
         else:
             raise NotImplementedError(f"Unsupported collate type {collate_type}!")

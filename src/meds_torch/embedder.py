@@ -6,7 +6,7 @@ import torch
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 from torch import nn
-from transformers import BertModel
+from transformers import AutoModel
 
 OmegaConf.register_new_resolver(
     "get_vocab_size",
@@ -103,13 +103,13 @@ class TripletEmbedder(nn.Module):
         return embedding, mask
 
 
-class BERTEmbedder(nn.Module):
+class AutoEmbedder(nn.Module):
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
-        # Define BERT tokenizer
-        # Define BERT model
-        self.code_embedder = BertModel.from_pretrained(self.cfg.code_embedder.pretrained_model)
+        # Define Auto tokenizer
+        # Define Auto model
+        self.code_embedder = AutoModel.from_pretrained(self.cfg.code_embedder.pretrained_model)
 
     def forward(self, x, mask):
         logger.debug(f"x.shape: {x.shape}")
@@ -132,9 +132,9 @@ class TextCodeEmbedder(nn.Module):
         self.cfg = cfg
         # Define Triplet Embedders
         self.date_embedder = CVE(cfg)
-        # code embedder should be a text model like BERT
-        self.code_embedder = BERTEmbedder(cfg)
-        # Change this code_embedder to be a text model - do bert with a small sequence length like 128.
+        # code embedder should be a text model like Auto
+        self.code_embedder = AutoEmbedder(cfg)
+        # Change this code_embedder to be a text model - do Auto with a small sequence length like 128.
         self.numerical_value_embedder = CVE(cfg)
 
     def embed_func(self, embedder, x):
@@ -170,19 +170,19 @@ class TextCodeEmbedder(nn.Module):
         return embedding, mask
 
 
-class TextEventEmbedder(nn.Module):
+class TextObservationEmbedder(nn.Module):
     """TODO(teya): Add docstring."""
 
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
-        self.code_embedder = BERTEmbedder(cfg)
+        self.code_embedder = AutoEmbedder(cfg)
 
     def get_embedding(self, batch):
-        event_tokens = batch["event_tokens"]
-        event_mask = batch["event_mask"]
+        observation_tokens = batch["observation_tokens"]
+        observation_mask = batch["observation_mask"]
 
-        embedding = self.code_embedder.forward(event_tokens, event_mask).permute(0, 2, 1)
+        embedding = self.code_embedder.forward(observation_tokens, observation_mask).permute(0, 2, 1)
 
         assert embedding.isfinite().all(), "Embedding is not finite"
         return embedding
