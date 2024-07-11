@@ -17,16 +17,31 @@ class SupervisedOutput(OutputBase):
     loss: torch.Tensor
 
 
+class IdentityArchitecture(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, mask):
+        return x.squeeze()
+
+
 class SupervisedModule(pl.LightningModule):
     def __init__(
-        self, cfg: DictConfig, embedder: nn.Module, architecture: nn.Module, projection: nn.Module = None
+        self,
+        cfg: DictConfig,
+        embedder: nn.Module,
+        architecture: nn.Module = None,
+        projection: nn.Module = None,
     ):
         super().__init__()
         self.cfg = cfg
         self.task_name = cfg.task_name
         # shared components
         self.embedder = embedder
-        self.model = architecture
+        if architecture is not None:
+            self.model = architecture
+        else:
+            self.model = IdentityArchitecture()
         if projection is not None:
             self.projection = projection
         else:
