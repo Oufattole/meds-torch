@@ -14,22 +14,24 @@ def load_data(data_path: str) -> pl.DataFrame:
         pl.DataFrame: A Polars DataFrame with the 'timestamp' column parsed to datetime.
 
     Examples:
-        >>> df = load_data("/home/aleksia/meds-torch/scripts/trash/tutorial_6/test.parquet")
+        >>> df = load_data("scripts/trash/tutorial_6/test.parquet")
         >>> isinstance(df, pl.DataFrame)
         True
         >>> df.schema()
         {'timestamp': pl.Datetime, ...}
     """
     df = pl.read_parquet(data_path)
-    df = df.with_column(pl.col("timestamp").str.strptime(pl.Datetime, fmt="%Y-%m-%d %H:%M:%S", strict=False))
+    df = df.with_columns(
+        pl.col("timestamp").str.strptime(pl.Datetime, format="%Y-%m-%d %H:%M:%S", strict=False)
+    )
     return df
 
 
 def calculate_quantiles(df: pl.DataFrame) -> pl.DataFrame:
-    """Calculate quantiles for the 'numerical_value' of each code.
+    """Calculate quantiles for the 'numeric_value' of each code.
 
     Args:
-        df: Input dataframe with at least 'code' and 'numerical_value' columns.
+        df: Input dataframe with at least 'code' and 'numeric_value' columns.
 
     Returns:
         The original DataFrame with an additional 'quantile' column indicating the quantile bin.
@@ -37,25 +39,25 @@ def calculate_quantiles(df: pl.DataFrame) -> pl.DataFrame:
     Examples:
         >>> df = pl.DataFrame({
         ...     "code": ["A", "A", "A", "A", "B", "B", "B", "C", "C"],
-        ...     "numerical_value": [10, 15, 20, 25, 5, 10, 15, 1, 2]
+        ...     "numeric_value": [10, 15, 20, 25, 5, 10, 15, 1, 2]
         ... })
         >>> df = calculate_quantiles(df)
         >>> df.to_dict(as_series=False)
         {'code': ['A', 'A', 'A', 'A', 'B', 'B', 'B', 'C', 'C'],
-        'numerical_value': [10, 15, 20, 25, 5, 10, 15, 1, 2],
+        'numeric_value': [10, 15, 20, 25, 5, 10, 15, 1, 2],
         'quantile': [1, 4, 7, 10, 1, 5, 10, 1, 10]}
     """
     df_quantiles = (
-        df.filter(pl.col("numerical_value").is_not_null())
+        df.filter(pl.col("numeric_value").is_not_null())
         .groupby("code")
-        .agg([pl.col("numerical_value").quantile(np.arange(0.1, 1.1, 0.1)).alias("quantiles")])
+        .agg([pl.col("numeric_value").quantile(np.arange(0.1, 1.1, 0.1)).alias("quantiles")])
         .explode("quantiles")
     )
 
     df = df.join(df_quantiles, on="code", how="left")
 
     def map_to_quantiles(row):
-        value = row["numerical_value"]
+        value = row["numeric_value"]
         quantiles = row["quantiles"]
         if value is None or quantiles is None:
             return None
@@ -64,9 +66,7 @@ def calculate_quantiles(df: pl.DataFrame) -> pl.DataFrame:
                 return i + 1  # Adjust indices to go from 1 to 10
         return len(quantiles) + 1
 
-    df = df.with_columns(
-        pl.struct(["numerical_value", "quantiles"]).apply(map_to_quantiles).alias("quantile")
-    )
+    df = df.with_columns(pl.struct(["numeric_value", "quantiles"]).apply(map_to_quantiles).alias("quantile"))
     df = df.drop("quantiles")
 
     return df
@@ -74,10 +74,10 @@ def calculate_quantiles(df: pl.DataFrame) -> pl.DataFrame:
 
 def create_code_tokens(df: pl.DataFrame) -> pl.DataFrame:
     """Create a column that combines 'code' with 'quantile' (formatted as 'Q1' to 'Q10') for rows where
-    'numerical_value' is not null.
+    'numeric_value' is not null.
 
     Args:
-        df: Input dataframe with 'code', 'numerical_value', and 'quantile' columns.
+        df: Input dataframe with 'code', 'numeric_value', and 'quantile' columns.
 
     Returns:
         Updated DataFrame with a 'code_token' column.
@@ -85,18 +85,18 @@ def create_code_tokens(df: pl.DataFrame) -> pl.DataFrame:
     Examples:
         >>> df = pl.DataFrame({
         ...     "code": ["A", "B", "C", "D", "E"],
-        ...     "numerical_value": [100, None, 50, 75, None],
+        ...     "numeric_value": [100, None, 50, 75, None],
         ...     "quantile": [1, None, 5, 8, None]
         ... })
         >>> df = create_code_tokens(df)
         >>> df.to_dict(as_series=False)
         {'code': ['A', 'B', 'C', 'D', 'E'],
-        'numerical_value': [100, None, 50, 75, None],
+        'numeric_value': [100, None, 50, 75, None],
         'quantile': [1, None, 5, 8, None],
         'code_token': ['A_Q1', 'B', 'C_Q5', 'D_Q8', 'E']}
     """
     token_expr = (
-        pl.when(pl.col("numerical_value").is_not_null())
+        pl.when(pl.col("numeric_value").is_not_null())
         .then(pl.concat_str([pl.col("code"), pl.lit("Q"), pl.col("quantile").cast(pl.Utf8)], separator="_"))
         .otherwise(pl.col("code"))
     )
