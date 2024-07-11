@@ -99,3 +99,44 @@ def test_task(tmp_path):
     for key in batch.keys() - {task_name}:
         assert batch[key].shape == torch.Size([2, 10])
     assert batch[task_name].shape == torch.Size([2])
+
+
+def test_everything_token(tmp_path):
+    MEDS_cohort_dir = tmp_path / "processed" / "final_cohort"
+    shutil.copytree(Path("./tests/test_data"), MEDS_cohort_dir.parent)
+
+    output_dir = MEDS_cohort_dir / "output"
+    meds_parquet_files = sorted(list(MEDS_cohort_dir.glob("*/*.parquet")))
+    for file in meds_parquet_files:
+        out_path = output_dir / file.relative_to(MEDS_cohort_dir)  # noqa
+        # TODO
+        # perform the everything is token transformation
+        # write to out_path
+
+    # make script like this: https://github.com/mmcdermott/MEDS_Tabular_AutoML/blob/main/src/MEDS_tabular_automl/scripts/describe_codes.py#L52 # noqa
+    # TODO(): modify the tests for the dataloader
+    # kwargs = {
+    #     "raw_MEDS_cohort_dir": str(MEDS_cohort_dir.parent.resolve()),
+    #     "MEDS_cohort_dir": str(MEDS_cohort_dir.resolve()),
+    #     "max_seq_len": 512,
+    #     "model.embedder.token_dim": 4,
+    #     "collate_type": "everything_token",
+    # }
+
+    # with initialize(version_base=None, config_path="../src/meds_torch/configs"):  # path to config.yaml
+    #     overrides = [f"{k}={v}" for k, v in kwargs.items()]
+    #     cfg = compose(config_name="pytorch_dataset", overrides=overrides)  # config.yaml
+
+    # pyd = PytorchDataset(cfg, split="train")
+    # item = pyd[0]
+    # assert item.keys() == {"static_indices", "static_values", "dynamic"}
+    # batch = pyd.collate([pyd[i] for i in range(2)])
+    # assert batch.keys() == {
+    #     "event_mask",
+    #     "dynamic_values_mask",
+    #     "time_delta_days",
+    #     "dynamic_indices",
+    #     "dynamic_values",
+    #     "static_indices",
+    #     "static_values",
+    # }
