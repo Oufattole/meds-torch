@@ -214,34 +214,34 @@ def calculate_time_intervals(events_df: pl.DataFrame) -> pl.DataFrame:
     # Time tokens
     time_interval_expr = (
         pl.when(pl.col("time_diff").is_null())
-        .then("No Previous Event")
+        .then(pl.lit("No Previous Event"))
         .when(pl.col("time_diff") < pl.duration(minutes=15))
-        .then("5m-15m")
+        .then(pl.lit("5m-15m"))
         .when((pl.col("time_diff") >= pl.duration(minutes=15)) & (pl.col("time_diff") < pl.duration(hours=1)))
-        .then("15m-1h")
+        .then(pl.lit("15m-1h"))
         .when((pl.col("time_diff") >= pl.duration(hours=1)) & (pl.col("time_diff") < pl.duration(hours=2)))
-        .then("1h-2h")
+        .then(pl.lit("1h-2h"))
         .when((pl.col("time_diff") >= pl.duration(hours=2)) & (pl.col("time_diff") < pl.duration(hours=6)))
-        .then("2h-6h")
+        .then(pl.lit("2h-6h"))
         .when((pl.col("time_diff") >= pl.duration(hours=6)) & (pl.col("time_diff") < pl.duration(hours=12)))
-        .then("6h-12h")
+        .then(pl.lit("6h-12h"))
         .when((pl.col("time_diff") >= pl.duration(hours=12)) & (pl.col("time_diff") < pl.duration(days=1)))
-        .then("12h-1d")
+        .then(pl.lit("12h-1d"))
         .when((pl.col("time_diff") >= pl.duration(days=1)) & (pl.col("time_diff") < pl.duration(days=3)))
-        .then("1d-3d")
+        .then(pl.lit("1d-3d"))
         .when((pl.col("time_diff") >= pl.duration(days=3)) & (pl.col("time_diff") < pl.duration(weeks=1)))
-        .then("3d-1w")
+        .then(pl.lit("3d-1w"))
         .when((pl.col("time_diff") >= pl.duration(weeks=1)) & (pl.col("time_diff") < pl.duration(weeks=2)))
-        .then("1w-2w")
+        .then(pl.lit("1w-2w"))
         .when((pl.col("time_diff") >= pl.duration(weeks=2)) & (pl.col("time_diff") < pl.duration(days=30)))
-        .then("2w-1m")
+        .then(pl.lit("2w-1m"))
         .when((pl.col("time_diff") >= pl.duration(days=30)) & (pl.col("time_diff") < pl.duration(days=90)))
-        .then("1m-3m")
+        .then(pl.lit("1m-3m"))
         .when((pl.col("time_diff") >= pl.duration(days=90)) & (pl.col("time_diff") < pl.duration(days=180)))
-        .then("3m-6m")
+        .then(pl.lit("3m-6m"))
         .when(pl.col("time_diff") >= pl.duration(days=180))
-        .then("6m+")
-        .otherwise("Unknown")
+        .then(pl.lit("6m+"))
+        .otherwise(pl.lit("Unknown"))
     )
 
     # Apply the expression to the DataFrame
@@ -274,16 +274,41 @@ def generate_patient_timeline(events_df: pl.DataFrame) -> pl.DataFrame:
         'timeline': [['TOKEN_A', '5m-15m', 'TOKEN_B', '15m-1h', 'TOKEN_C'], ['TOKEN_D', '15m-1h', 'TOKEN_E']]}
     """
 
-    def create_timeline(tokens):
-        timeline = []
-        for i in range(len(tokens["event_tokens"])):
-            if i > 0:
-                timeline.append(tokens["time_interval"][i])
-            timeline.extend(tokens["event_tokens"][i])
-        return timeline
+    # Shift the time intervals down to align with the subsequent event tokens
+    shifted_time_intervals = events_df.with_columns(
+        pl.col("time_interval").shift(-1).over("patient_id").alias("next_time_interval")
+    )
 
-    timeline_df = events_df.groupby("patient_id").agg(
-        [pl.struct(["event_tokens", "time_interval"]).apply(create_timeline).alias("timeline")]
+    # Create an expression to concatenate event tokens with subsequent time intervals
+    concat_expr = pl.concat_list(
+        [
+            pl.col("event_tokens_joint"),
+            pl.when(pl.col("next_time_interval").is_not_null())
+            .then(pl.concat_list([pl.col("next_time_interval")]))
+            .otherwise(pl.lit([])),
+        ]
+    )
+
+    # Group by patient_id and aggregate
+    timeline_df = (
+        shifted_time_intervals.group_by("patient_id")
+        .agg(
+            pl.col("event_tokens_joint").first().alias("start_token"),
+            pl.col("next_time_interval").first().alias("start_interval"),
+            pl.concat_list(concat_expr).alias("event_sequence"),
+        )
+        .with_columns(
+            pl.concat_list(
+                [
+                    pl.col("start_token"),
+                    pl.when(pl.col("start_interval").is_not_null())
+                    .then(pl.concat_list([pl.col("start_interval")]))
+                    .otherwise(pl.lit([])),
+                    pl.col("event_sequence").flatten(),
+                ]
+            ).alias("timeline")
+        )
+        .select(["patient_id", "timeline"])
     )
 
     return timeline_df
