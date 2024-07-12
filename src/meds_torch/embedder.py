@@ -107,8 +107,6 @@ class AutoEmbedder(nn.Module):
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
-        # Define Auto tokenizer
-        # Define Auto model
         self.code_embedder = AutoModel.from_pretrained(self.cfg.code_embedder.pretrained_model)
 
     def forward(self, x, mask):
@@ -118,10 +116,10 @@ class AutoEmbedder(nn.Module):
         mask_reshaped = mask.view(batch_size * sequence_length, feature_dimension)
         logger.debug(f"x_reshaped.shape: {x_reshaped.shape}")
         outputs = self.code_embedder(input_ids=x_reshaped, attention_mask=mask_reshaped)
-        pooler_output = outputs["pooler_output"]
-        pooler_output = pooler_output.view(batch_size, sequence_length, -1)
+        output = outputs[list(outputs.keys())[1]]
+        output = output.view(batch_size, sequence_length, -1)
 
-        return pooler_output
+        return output
 
 
 class TextCodeEmbedder(nn.Module):

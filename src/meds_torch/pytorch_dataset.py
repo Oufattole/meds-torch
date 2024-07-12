@@ -501,13 +501,17 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         Returns:
             A dictionary containing the tokenized batch.
         """
-        return tokenizer(
+        output = tokenizer(
             batch,
             padding=padding,
+            return_attention_mask=padding,
             # return_tensors="pt",
             return_token_type_ids=False,
             add_special_tokens=False,
         )
+        # if len(output.keys()) == 1:
+        #     return output[list(output.keys())[0]]
+        return output
 
     def set_inter_event_time_stats(self):
         """Sets the inter-event time statistics for the dataset."""
@@ -1108,12 +1112,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         )
         # mask = np.ones(len(time_delta_days), dtype=bool)
 
-        tokenized_values = cls.tokenize_batch(tokenizer, numerical_value.astype(str).tolist(), padding=False)[
-            "input_ids"
-        ]
-        tokenized_time = cls.tokenize_batch(tokenizer, time_delta_days.astype(str).tolist(), padding=False)[
-            "input_ids"
-        ]
+        tokenized_values = cls.tokenize_batch(tokenizer, numerical_value.astype(str).tolist(), padding=False)
+        tokenized_values = tokenized_values[list(tokenized_values.keys())[0]]
+        tokenized_time = cls.tokenize_batch(tokenizer, time_delta_days.astype(str).tolist(), padding=False)
+        tokenized_time = tokenized_time[list(tokenized_time.keys())[0]]
 
         tokenized_observations = []
         for i, code_token in enumerate(code_tokens):
@@ -1131,7 +1133,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             tokenized_observations = [
                 torch.cat(
                     [
-                        torch.cat([observation, torch.tensor([tokenizer.sep_token_id])])
+                        torch.cat([observation, torch.tensor(tokenized_sentence[5])])
                         for observation in tokenized_observations
                     ]
                 )
@@ -1227,10 +1229,13 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             return_token_type_ids=False,
             add_special_tokens=False,
         )
+        # get correct keys for tokens and mask from metadata
+        token_key = list(tokens.keys())[0]
+        mask_key = list(tokens.keys())[1]
         return dict(
             zip(
                 code_metadata.select("code/vocab_index").collect().to_series().to_list(),
-                zip(tokens["input_ids"], tokens["attention_mask"]),
+                zip(tokens[token_key], tokens[mask_key]),
             )
         )
 
@@ -1315,8 +1320,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                     self.tokenizer, self.code_metadata, padding=False
                 )
                 self.tokenized_sentence = self.tokenize_batch(
-                    self.tokenizer, ["Code", "has value", "measured", "after the previous observation", "."]
-                )["input_ids"]
+                    self.tokenizer,
+                    ["Code", "has value", "measured", "after the previous observation", ".", "\n"],
+                )
+                self.tokenized_sentence = self.tokenized_sentence[list(self.tokenized_sentence.keys())[0]]
             return self.collate_text_observation(
                 batch, self.tokenized_codes, self.tokenized_sentence, self.tokenizer
             )
@@ -1327,8 +1334,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                     self.tokenizer, self.code_metadata, padding=False
                 )
                 self.tokenized_sentence = self.tokenize_batch(
-                    self.tokenizer, ["Code", "has value", "measured", "after the previous observation", "."]
-                )["input_ids"]
+                    self.tokenizer,
+                    ["Code", "has value", "measured", "after the previous observation", ".", "\n"],
+                )
+                self.tokenized_sentence = self.tokenized_sentence[list(self.tokenized_sentence.keys())[0]]
             return self.collate_text_observation(
                 batch, self.tokenized_codes, self.tokenized_sentence, self.tokenizer, whole_observation=True
             )

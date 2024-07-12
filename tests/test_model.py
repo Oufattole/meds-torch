@@ -312,8 +312,8 @@ def test_all_text(tmp_path):
         "task_name": task_name,
         "model.train.batch_size": 2,
         "model.embedder.max_seq_len": 50,
-        "code_embedder.tokenizer": "bert-base-uncased",
-        "code_embedder.pretrained_model": "bert-base-uncased",
+        "code_embedder.tokenizer": "FacebookAI/roberta-base",
+        "code_embedder.pretrained_model": "FacebookAI/roberta-base",
         "model.params.use_abs_pos_emb": True,
     }
 
