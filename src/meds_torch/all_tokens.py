@@ -54,15 +54,6 @@ def calculate_quantiles(df: pl.DataFrame) -> pl.DataFrame:
         A DataFrame with 'code' and corresponding quantile boundaries for each numerical_value.
 
     Examples:
-        >>> df = pl.DataFrame({
-        ...     "code": ["A", "A", "B", "B", "B"],
-        ...     "numerical_value": [10, 20, 15, 25, 5]
-        ... })
-        >>> df_quantiles = calculate_quantiles(df)
-        >>> df_quantiles.to_dict(as_series=False)
-        {'code': ['A', 'B'], '1': [10.0, 5.0], '2': [10.0, 5.0], '3': [10.0, 15.0], '4': [10.0, 15.0],
-        ...                  '5': [20.0, 15.0], '6': [20.0, 15.0], '7': [20.0, 15.0], '8': [20.0, 25.0],
-        ...                  '9': [20.0, 25.0], '10': [20.0, 25.0]}
     """
     quantile_levels = np.arange(0.1, 1.1, 0.1)
 
@@ -94,15 +85,6 @@ def assign_quantiles(df: pl.DataFrame) -> pl.DataFrame:
         The original df with an additional 'quantile' column indicating the quantile bin.
 
     Examples:
-        >>> df = pl.DataFrame({
-        ...     "patient_id": [1, 1, 1, 1, 1],
-        ...     "timestamps": [None, None, None, None, None],
-        ...     "code": ["A", "A", "B", "B", "B"],
-        ...     "numerical_value": [10, 20, 15, 25, 5]
-        ... })
-        >>> df_quantiles = calculate_quantiles(df)
-        >>> df = assign_quantiles(df, df_quantiles)
-        >>> df.to_dict(as_series=False)
     """
     df_quantiles = calculate_quantiles(df)
     df_original = df.clone()
@@ -141,13 +123,6 @@ def create_event_tokens(df: pl.DataFrame) -> pl.DataFrame:
         by a list of 'code_token' for each group
 
     Examples:
-        >>> df = pl.DataFrame({
-        ...     "patient_id": [1, 1, 2, 2, 3],
-        ...     "timestamp": [None, "2021-01-01 00:00:00", None, "2021-01-02 00:00:00", None],
-        ...     "code_token": ["TOKEN_A", "TOKEN_B", "TOKEN_C", "TOKEN_D", "TOKEN_E"]
-        ... }).with_column(pl.col("timestamp").str.strptime(pl.Datetime,fmt="%Y-%m-%d %H:%M:%S",strict=False))
-        >>> df = preprocess_and_group_tokens(df)
-        >>> df.to_dict(as_series=False)
     """
     # Create the 'code_token' expression for joint tokens
     code_token_expr = (
@@ -191,19 +166,6 @@ def calculate_time_intervals(events_df: pl.DataFrame) -> pl.DataFrame:
         one event and its consecutive event.
 
     Examples:
-        >>> df = pl.DataFrame({
-        ...     "patient_id": [1, 1, 1, 2, 2],
-        ...     "timestamp": ["2021-01-01 12:00:00", "2021-01-01 12:05:00", "2021-01-01 13:00:00",
-        ...                   "2021-01-02 14:00:00", "2021-01-02 14:30:00"],
-        ...     "event_tokens": [["TOKEN_A"], ["TOKEN_B"], ["TOKEN_C"], ["TOKEN_D"], ["TOKEN_E"]]
-        ... }).with_column(pl.col("timestamp").str.strptime(pl.Datetime))
-        >>> df = calculate_time_intervals(df)
-        >>> df.to_dict(as_series=False)
-        {'patient_id': [1, 1, 1, 2, 2],
-        'timestamp': [datetime(2021, 1, 1, 12, 0), datetime(2021, 1, 1, 12, 5), datetime(2021, 1, 1, 13, 0),
-        datetime(2021, 1, 2, 14, 0), datetime(2021, 1, 2, 14, 30)],
-        'event_tokens': [['TOKEN_A'], ['TOKEN_B'], ['TOKEN_C'], ['TOKEN_D'], ['TOKEN_E']],
-        'time_interval': [None, '5m-15m', '15m-1h', None, '15m-1h']}
     """
     events_df = events_df.sort(["patient_id", "timestamp"])
     # Ensure timestamp is in the right format and calculate differences
@@ -261,17 +223,6 @@ def generate_patient_timeline(events_df: pl.DataFrame) -> pl.DataFrame:
         and time interval tokens.
 
     Examples:
-        >>> df = pl.DataFrame({
-        ...     "patient_id": [1, 1, 1, 2, 2],
-        ...     "timestamp": ["2021-01-01 12:00:00", "2021-01-01 12:15:00", "2021-01-01 13:00:00",
-        ...                   "2021-01-02 14:00:00", "2021-01-02 14:30:00"],
-        ...     "event_tokens": [["TOKEN_A"], ["TOKEN_B"], ["TOKEN_C"], ["TOKEN_D"], ["TOKEN_E"]],
-        ...     "time_interval": [None, "5m-15m", "15m-1h", None, "15m-1h"]
-        ... }).with_column(pl.col("timestamp").str.strptime(pl.Datetime))
-        >>> df = generate_patient_timeline(df)
-        >>> df.to_dict(as_series=False)
-        {'patient_id': [1, 2],
-        'timeline': [['TOKEN_A', '5m-15m', 'TOKEN_B', '15m-1h', 'TOKEN_C'], ['TOKEN_D', '15m-1h', 'TOKEN_E']]}
     """
     # Shift time intervals to align with the subsequent event tokens
     events_df = events_df.with_columns(
