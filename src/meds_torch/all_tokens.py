@@ -273,42 +273,38 @@ def generate_patient_timeline(events_df: pl.DataFrame) -> pl.DataFrame:
         {'patient_id': [1, 2],
         'timeline': [['TOKEN_A', '5m-15m', 'TOKEN_B', '15m-1h', 'TOKEN_C'], ['TOKEN_D', '15m-1h', 'TOKEN_E']]}
     """
-
-    # Shift the time intervals down to align with the subsequent event tokens
-    shifted_time_intervals = events_df.with_columns(
-        pl.col("time_interval").shift(-1).over("patient_id").alias("next_time_interval")
+    # Shift time intervals to align with the subsequent event tokens
+    events_df = events_df.with_columns(
+        pl.col("time_interval").shift(-1).over("patient_id").alias("next_time_interval"),
+        pl.col("timestamp").first().over("patient_id").alias("first_timestamp"),
     )
 
-    # Create an expression to concatenate event tokens with subsequent time intervals
-    concat_expr = pl.concat_list(
+    timeline_split_expr = (
+        pl.when(pl.col("next_time_interval").is_not_null())
+        .then(pl.concat_list([pl.col("event_tokens_split"), pl.col("next_time_interval").cast(pl.Utf8)]))
+        .otherwise(pl.concat_list(pl.col("event_tokens_split")))
+    )
+
+    timeline_joint_expr = (
+        pl.when(pl.col("next_time_interval").is_not_null())
+        .then(pl.concat_list([pl.col("event_tokens_joint"), pl.col("next_time_interval").cast(pl.Utf8)]))
+        .otherwise(pl.concat_list(pl.col("event_tokens_joint")))
+    )
+
+    events_df = events_df.with_columns(
         [
-            pl.col("event_tokens_joint"),
-            pl.when(pl.col("next_time_interval").is_not_null())
-            .then(pl.concat_list([pl.col("next_time_interval")]))
-            .otherwise(pl.lit([])),
+            timeline_split_expr.alias("split_quantile_timeline"),
+            timeline_joint_expr.alias("joint_quantile_timeline"),
         ]
     )
 
-    # Group by patient_id and aggregate
-    timeline_df = (
-        shifted_time_intervals.group_by("patient_id")
-        .agg(
-            pl.col("event_tokens_joint").first().alias("start_token"),
-            pl.col("next_time_interval").first().alias("start_interval"),
-            pl.concat_list(concat_expr).alias("event_sequence"),
-        )
-        .with_columns(
-            pl.concat_list(
-                [
-                    pl.col("start_token"),
-                    pl.when(pl.col("start_interval").is_not_null())
-                    .then(pl.concat_list([pl.col("start_interval")]))
-                    .otherwise(pl.lit([])),
-                    pl.col("event_sequence").flatten(),
-                ]
-            ).alias("timeline")
-        )
-        .select(["patient_id", "timeline"])
+    # Group by patient_id and aggregate sequences
+    timeline_df = events_df.group_by("patient_id").agg(
+        [
+            pl.col("first_timestamp"),
+            pl.col("split_quantile_timeline").flatten(),
+            pl.col("joint_quantile_timeline").flatten(),
+        ]
     )
 
     return timeline_df
