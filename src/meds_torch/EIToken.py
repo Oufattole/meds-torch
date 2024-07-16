@@ -11,8 +11,8 @@ def load_data(data_path: str) -> pl.DataFrame:
         data_path: The path pattern to load Parquet files from.
 
     Returns:
-        A Polars DataFrame with the 'timestamp' column parsed to datetime and filled
-        to first event for missing timestamps.
+        A Polars DataFrame in MEDS format with the 'timestamp' column parsed to datetime
+        and filled to first event for missing timestamps.
 
     Examples:
         >>> df = load_data("../../tests/test_data/final_cohort/train/0.parquet")
@@ -24,7 +24,7 @@ def load_data(data_path: str) -> pl.DataFrame:
         ...     ('numerical_value', Float64)])
     """
     df = pl.read_parquet(data_path)
-    # Calculate the minimum timestamp for each patient where timestamp is not null
+    # Find minimum timestamp for each patient where timestamp is not null
     min_timestamps = (
         df.filter(pl.col("timestamp").is_not_null())
         .group_by("patient_id")
@@ -48,12 +48,10 @@ def calculate_quantiles(df: pl.DataFrame) -> pl.DataFrame:
     """Calculate quantiles for the 'numerical_value' of each code.
 
     Args:
-        df: Input dataframe with the MEDS schema.
+        df: DataFrame with the MEDS format.
 
     Returns:
-        A DataFrame with 'code' and corresponding quantile boundaries for each numerical_value.
-
-    Examples:
+        A DataFrame with corresponding quantile boundaries for each numerical_value of a code.
     """
     quantile_levels = np.arange(0.1, 1.1, 0.1)
 
@@ -79,12 +77,10 @@ def assign_quantiles(df: pl.DataFrame) -> pl.DataFrame:
     """Assign quantile bins to each numerical value based on computed quantiles.
 
     Args:
-        df: Input dataframe with the MEDS schema.
+        df: DataFrame with the MEDS format.
 
     Returns:
-        The original df with an additional 'quantile' column indicating the quantile bin.
-
-    Examples:
+        The original DataFrame with an additional 'quantile' column indicating the quantile bin.
     """
     df_quantiles = calculate_quantiles(df)
     df_original = df.clone()
@@ -112,17 +108,18 @@ def assign_quantiles(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def create_event_tokens(df: pl.DataFrame) -> pl.DataFrame:
-    """Create a column that combines 'code' with 'quantile' (formatted as 'Q1' to 'Q10') for rows where
-    'numerical_value' is not null, then group by patient and timestamp.
+    """Create event tokens for 'code' and 'quantile' combinations.
+
+    Tokenizes events (or observations) by aggregating codes and quantiles, which can be split
+    as ('code', 'quantile') or joint as 'code_quantile'. Quantiles are formatted as 'Q1' to 'Q10'
+    for rows where 'numerical_value' is not null.
 
     Args:
-        df: Input dataframe with 'code', 'numerical_value', and 'quantile' columns.
+        df: DataFrame on MEDS format with the added 'quantile' column.
 
     Returns:
-        A df grouped by 'patient_id' and 'timestamp', with an 'event_tokens' column represented
-        by a list of 'code_token' for each group
-
-    Examples:
+        A DataFrame grouped by 'patient_id' and 'timestamp', with two event token columns, each
+        represented by a list of code tokens, one with joint quantiles and one with separate.
     """
     # Create the 'code_token' expression for joint tokens
     code_token_expr = (
@@ -159,13 +156,11 @@ def calculate_time_intervals(events_df: pl.DataFrame) -> pl.DataFrame:
     """Map time intervals between consecutive events for each patient.
 
     Args:
-        events_df: Grouped DataFrame with 'patient_id', 'timestamp', and 'event_tokens' columns.
+        events_df: DataFrame with 'patient_id', 'timestamp', and two event tokens' columns.
 
     Returns:
-        DataFrame with an additional 'time_interval' column indicating the time interval category between
+        A DataFrame with an additional 'time_interval' column indicating the time interval category between
         one event and its consecutive event.
-
-    Examples:
     """
     events_df = events_df.sort(["patient_id", "timestamp"])
     # Ensure timestamp is in the right format and calculate differences
@@ -206,7 +201,6 @@ def calculate_time_intervals(events_df: pl.DataFrame) -> pl.DataFrame:
         .otherwise(pl.lit("Unknown"))
     )
 
-    # Apply the expression to the DataFrame
     events_df = events_df.with_columns(time_interval_expr.alias("time_interval"))
 
     return events_df
@@ -219,15 +213,12 @@ def generate_patient_timeline(events_df: pl.DataFrame) -> pl.DataFrame:
         events_df: DataFrame with 'patient_id', 'timestamp', 'event_tokens', and 'time_interval' columns.
 
     Returns:
-        DataFrame with a single 'timeline' column for each patient containing the sequence of event
-        and time interval tokens.
-
-    Examples:
+        DataFrame with two timeline columns for each patient containing the sequence of event
+        and time interval tokens, with both code + quantile representations.
     """
     # Shift time intervals to align with the subsequent event tokens
     events_df = events_df.with_columns(
-        pl.col("time_interval").shift(-1).over("patient_id").alias("next_time_interval"),
-        pl.col("timestamp").first().over("patient_id").alias("first_timestamp"),
+        pl.col("time_interval").shift(-1).over("patient_id").alias("next_time_interval")
     )
 
     timeline_split_expr = (
@@ -252,7 +243,7 @@ def generate_patient_timeline(events_df: pl.DataFrame) -> pl.DataFrame:
     # Group by patient_id and aggregate sequences
     timeline_df = events_df.group_by("patient_id").agg(
         [
-            pl.col("first_timestamp"),
+            pl.col("timestamp").first(),
             pl.col("split_quantile_timeline").flatten(),
             pl.col("joint_quantile_timeline").flatten(),
         ]

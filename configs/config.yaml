@@ -1,0 +1,14 @@
+defaults:
+  - _self_
+
+# Default configurations
+data_path: null # must be overridden
+output_path: null # must be overridden
+timeline_type: joint # default timeline type
+
+# Different timeline types
+timeline_settings:
+  joint:
+    description: "Generate joint quantile timeline"
+  split:
+    description: "Generate split quantile timeline"
