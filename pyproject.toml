@@ -25,6 +25,7 @@ dependencies = [
 mamba = ["mamba-ssm", "causal-conv1d>=1.4.0"]
 dev = ["pre-commit","notebook"]
 tests = ["pytest", "pytest-cov[toml]", "rootutils", "pytest-sugar", "pytest-instafail", "pytest-xdist"]
+aces = ["es-aces"]
 
 [pytest]
 looponfailroots = ["tests"]
