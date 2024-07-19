@@ -1,14 +1,117 @@
 from pathlib import Path
 
+MAX_POLARS_THREADS = 1
+import numpy as np
 import polars as pl
 import torch
+from loguru import logger
 from mixins import SeedableMixin
-from nested_ragged_tensors.ragged_numpy import (
-    JointNestedRaggedTensorDict,
-)
+from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 from omegaconf import DictConfig
 
 from meds_torch.pytorch_dataset import PytorchDataset
+
+
+def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) -> pl.DataFrame:
+    """Computes the start and end indexes of time windows for each entry in the provided DataFrame. This
+    function assumes that the 'timestamp' in `timestamps_series` is sorted. It finds the index of timestamps
+    that fall between 'start' and 'end' times specified in `windows_df`.
+
+    Parameters:
+    - timeseries_df (pl.Series): A Polars dataframe containing sorted datetime values for each patient.
+    - windows_df (pl.DataFrame): A DataFrame with columns 'name', 'start', and 'end' specifying the time
+        windows.
+
+    Returns:
+    - pl.DataFrame: A DataFrame with the original columns of `windows_df` plus for each <COL_NAME>.start
+        and <COL_NAME>.end in windows_df, the column '<COL_NAME>.start_idx' and '<COL_NAME>.end_idx'
+        indicating the inclusive index range of timestamps within each window is added.
+
+    Example:
+    >>> timeseries_df = pl.DataFrame({
+    ...     "patient_id": [1, 2],
+    ...     "timestamp": [
+    ...         pl.Series(["1978-03-09 00:00:00", "2010-05-26 02:30:56", "2010-05-26 04:51:52"]
+    ...             ).str.strptime(pl.Datetime),
+    ...         pl.Series(["1970-03-09 00:00:00", "1972-05-26 02:30:56", "1975-05-26 04:51:52"]
+    ...             ).str.strptime(pl.Datetime)
+    ...     ]
+    ... })
+    >>> windows_df = pl.DataFrame({
+    ...     "patient_id": [1, 2],
+    ...     "pre.start": [["1978-03-09 00:00:00", "2010-05-26 02:30:56"], ["1969-05-26 02:30:56"]],
+    ...     "pre.end": [["2010-05-26 02:30:56", "2010-05-26 04:51:52"], ["1971-05-26 04:51:52"]],
+    ...     "post.start": [["1978-03-09 00:00:00", "2010-05-26 02:30:56"], ["1971-05-26 02:30:56"]],
+    ...     "post.end": [["2010-05-26 02:30:56", "2010-05-26 04:51:52"], ["1980-05-26 04:51:52"]],
+    ... }).with_columns([
+    ...     pl.col("pre.start").list.eval(pl.element().str.to_datetime()),
+    ...     pl.col("pre.end").list.eval(pl.element().str.to_datetime()),
+    ...     pl.col("post.start").list.eval(pl.element().str.to_datetime()),
+    ...     pl.col("post.end").list.eval(pl.element().str.to_datetime()),
+    ... ])
+    >>> timeseries_df
+    shape: (2, 2)
+    ┌────────────┬─────────────────────────────────┐
+    │ patient_id ┆ timestamp                       │
+    │ ---        ┆ ---                             │
+    │ i64        ┆ list[datetime[μs]]              │
+    ╞════════════╪═════════════════════════════════╡
+    │ 1          ┆ [1978-03-09 00:00:00, 2010-05-… │
+    │ 2          ┆ [1970-03-09 00:00:00, 1972-05-… │
+    └────────────┴─────────────────────────────────┘
+    >>> windows_df
+    shape: (2, 5)
+    ┌────────────┬─────────────────────┬─────────────────────┬────────────────────┬────────────────────┐
+    │ patient_id ┆ pre.start           ┆ pre.end             ┆ post.start         ┆ post.end           │
+    │ ---        ┆ ---                 ┆ ---                 ┆ ---                ┆ ---                │
+    │ i64        ┆ list[datetime[μs]]  ┆ list[datetime[μs]]  ┆ list[datetime[μs]] ┆ list[datetime[μs]] │
+    ╞════════════╪═════════════════════╪═════════════════════╪════════════════════╪════════════════════╡
+    │ 1          ┆ [1978-03-09         ┆ [2010-05-26         ┆ [1978-03-09        ┆ [2010-05-26        │
+    │            ┆ 00:00:00, 2010-05-… ┆ 02:30:56, 2010-05-… ┆ 00:00:00,          ┆ 02:30:56,          │
+    │            ┆                     ┆                     ┆ 2010-05-…          ┆ 2010-05-…          │
+    │ 2          ┆ [1969-05-26         ┆ [1971-05-26         ┆ [1971-05-26        ┆ [1980-05-26        │
+    │            ┆ 02:30:56]           ┆ 04:51:52]           ┆ 02:30:56]          ┆ 04:51:52]          │
+    └────────────┴─────────────────────┴─────────────────────┴────────────────────┴────────────────────┘
+    >>> get_window_indexes(
+    ...     timeseries_df, windows_df).select("patient_id", pl.col("^.*_idx$")).sort("patient_id")
+    shape: (2, 5)
+    ┌────────────┬───────────────┬─────────────┬────────────────┬──────────────┐
+    │ patient_id ┆ pre.start_idx ┆ pre.end_idx ┆ post.start_idx ┆ post.end_idx │
+    │ ---        ┆ ---           ┆ ---         ┆ ---            ┆ ---          │
+    │ i64        ┆ list[u32]     ┆ list[u32]   ┆ list[u32]      ┆ list[u32]    │
+    ╞════════════╪═══════════════╪═════════════╪════════════════╪══════════════╡
+    │ 1          ┆ [0, 1]        ┆ [1, 2]      ┆ [0, 1]         ┆ [1, 2]       │
+    │ 2          ┆ [0]           ┆ [1]         ┆ [1]            ┆ [3]          │
+    └────────────┴───────────────┴─────────────┴────────────────┴──────────────┘
+    """
+    datetime_cols = [col for col in windows_df.columns if col.endswith(".start") or col.endswith(".end")]
+    windows_df = windows_df.join(how="inner", other=timeseries_df, on="patient_id")
+    expr = [
+        pl.col("timestamp").explode().search_sorted(pl.col(col).explode()).alias(f"{col}_idx")
+        for col in datetime_cols
+    ]
+    windows_df.filter(pl.col("patient_id").eq(1195293)).select(pl.col("timestamp"))
+    return windows_df.groupby(pl.col("patient_id")).agg(expr)
+
+
+def cache_window_indexes(cfg: DictConfig, split: str, static_dfs) -> pl.DataFrame:
+    # TODO add support for windows between different patients
+    # Parse windows
+    window_df = pl.read_parquet(cfg.raw_windows_fp).rename({"subject_id": "patient_id"})
+    window_cols = [col for col in window_df.columns if col.endswith("_summary")]
+    col = "pre.start_summary"
+    exprs = [pl.col("patient_id")]
+    for col in window_cols:
+        for side in ("start", "end"):
+            parsed_col = col.split(".")[0] + f".{side}"
+            exprs.append(pl.col(col).struct.field(f"timestamp_at_{side}").alias(parsed_col))
+    window_df = window_df.select(exprs)
+    window_df = window_df.groupby("patient_id").agg(pl.all())
+    timeseries_df = pl.concat(static_dfs.values()).select("patient_id", "timestamp")
+    cached_window_df = get_window_indexes(timeseries_df, window_df)
+    cache_window_fp = Path(cfg.cached_windows_dir) / f"{split}.parquet"
+    cache_window_fp.parent.mkdir(parents=True, exist_ok=True)
+    cached_window_df.write_parquet(cache_window_fp)
 
 
 class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
@@ -26,7 +129,33 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         self.config = cfg
         self.split = split
         self.pytorch_dataset = PytorchDataset(cfg, split)
-        self.load_and_process_windows()
+        cached_windows_fp = Path(cfg.cached_windows_dir) / f"{split}.parquet"
+        if cached_windows_fp.exists():
+            window_df = pl.read_parquet(cached_windows_fp)
+        else:
+            logger.info("No cached windows found. Caching now.")
+            cache_window_indexes(cfg, split, self.pytorch_dataset.static_dfs)
+            window_df = pl.read_parquet(cached_windows_fp)
+        self.window_cols = sorted(
+            list({col.split(".")[0] for col in window_df.columns if col.endswith("_idx")})
+        )
+        if self.config.patient_level_sampling:
+            # index by patient_id
+            self.index = window_df.to_dicts()
+        else:
+            # index by windows
+            self.index = window_df.explode(
+                [col for col in window_df.columns if col.endswith("_idx")]
+            ).to_dicts()
+
+    def collate(self, batch: dict[str : np.array]) -> dict[str : torch.Tensor]:
+        out = {}
+        for col in self.window_cols:
+            out[col] = self.pytorch_dataset.collate([x[col] for x in batch])
+        for key in batch[0].keys():
+            if key not in self.window_cols:
+                out[key] = batch[key]
+        return out
 
     @property
     def patient_ids(self) -> list[int]:
@@ -42,41 +171,6 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
     @property
     def max_seq_len(self) -> int:
         return self.config.max_seq_len
-
-    def load_and_process_windows(self):
-        # Assume load_windows() fetches and converts time windows to index windows
-        window_df = pl.read_parquet(self.config.windows_fp)
-        window_dict = {}
-        for row in window_df.iter_rows():
-            pid = row[0]
-            if pid not in window_dict:
-                window_dict[pid] = {}
-            # Assuming multiple windows per patient can be delineated
-            windows = row[2:]
-            for w in windows:
-                window_name = w["window_name"]
-                start_idx = self.timestamp_to_index(pid, w["timestamp_at_start"])
-                end_idx = self.timestamp_to_index(pid, w["timestamp_at_end"])
-                if window_name not in window_dict[pid]:
-                    window_dict[pid][window_name] = {"start": [], "end": []}
-                window_dict[pid][window_name]["start"].append(start_idx)
-                window_dict[pid][window_name]["end"].append(end_idx)
-        self.window_dict = window_dict
-
-    def timestamp_to_index(self, patient_id, timestamp):
-        # converts from timestamps to nested ragged tensor indexes
-        shard = self.pytorch_dataset.subj_map[patient_id]
-        patient_idx = self.pytorch_dataset.subj_indices[patient_id]
-        out = JointNestedRaggedTensorDict.load_slice(
-            Path(self.config.tensorized_root) / f"{shard}.nrt", patient_idx
-        )
-        import pdb
-
-        pdb.set_trace()
-
-        raise NotImplementedError(
-            "Implement timestamp to nested ragged tensor index conversion -- similar to what we do for tasks"
-        )
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         """Returns a Returns a dictionary corresponding to a single subject's data.
@@ -109,16 +203,39 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         This function is a seedable version of `__getitem__`.
         """
-        patient_id, st, end = self.pytorch_dataset.index[idx]
+        if self.config.patient_level_sampling:
+            # index by patient_id
+            patient_data = self.index[idx]
+            num_windows = len(patient_data[f"{self.window_cols[0]}.start_idx"])
+            selected_window_idx = np.random.choice(num_windows)
+            patient_id = patient_data["patient_id"]
+            windows = {
+                col: [
+                    patient_data[f"{col}.start_idx"][selected_window_idx],
+                    patient_data[f"{col}.end_idx"][selected_window_idx],
+                ]
+                for col in self.window_cols
+            }
+        else:
+            # index by windows
+            patient_data = self.index[idx]
+            windows = {
+                col: [patient_data[f"{col}.start_idx"], patient_data[f"{col}.end_idx"]]
+                for col in self.window_cols
+            }
+            patient_id = patient_data["patient_id"]
 
         shard = self.pytorch_dataset.subj_map[patient_id]
         patient_idx = self.pytorch_dataset.subj_indices[patient_id]
-
         out = {}
-        out["dynamic"] = JointNestedRaggedTensorDict.load_slice(
-            Path(self.config.tensorized_root) / f"{shard}.nrt", patient_idx
-        )[st:end]
-        import pdb
+        for window in self.window_cols:
+            patient_dynamic_data = JointNestedRaggedTensorDict.load_slice(
+                Path(self.config.tensorized_root) / f"{shard}.nrt", patient_idx
+            )
+            out[window] = self.pytorch_dataset.load_patient(
+                patient_dynamic_data, patient_id, windows[window][0], windows[window][1]
+            )
 
-        pdb.set_trace()
-        # TODO
+        if self.config.do_include_patient_id:
+            out["patient_id"] = patient_id
+        return out

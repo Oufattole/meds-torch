@@ -137,9 +137,7 @@ windows:
 """
 
 
-# has:
-#     _ANY_EVENT: (1, None)
-def test_ebcl(tmp_path):
+def test_ebcl_patient_level(tmp_path):
     MEDS_cohort_dir = tmp_path / "processed" / "final_cohort"
     shutil.copytree(Path("./tests/test_data"), MEDS_cohort_dir.parent)
 
@@ -175,7 +173,9 @@ def test_ebcl(tmp_path):
         "max_seq_len": 512,
         "model.embedder.token_dim": 4,
         "collate_type": "triplet",
-        "windows_fp": str(windows_path.resolve()),
+        "raw_windows_fp": str(windows_path.resolve()),
+        "cached_windows_dir": str((windows_path.parent / "cached_windows").resolve()),
+        "patient_level_sampling": True,
     }
 
     with initialize(version_base=None, config_path="../src/meds_torch/configs"):  # path to config.yaml
@@ -183,13 +183,82 @@ def test_ebcl(tmp_path):
         cfg = compose(config_name="multiwindow_pytorch_dataset", overrides=overrides)  # config.yaml
 
     pyd = MultiWindowPytorchDataset(cfg, split="train")
-    # pyd[0]
-    # batch = pyd.collate([pyd[i] for i in range(2)])
-    # assert batch.keys() == {
-    #     "mask",
-    #     "static_mask",
-    #     "code",
-    #     "numerical_value",
-    #     "time_delta_days",
-    #     "numerical_value_mask",
-    # }
+    item = pyd[0]
+    assert item.keys() == {"pre", "post"}
+    assert item["pre"].keys() == {"static_indices", "static_values", "dynamic"}
+    assert item["post"].keys() == {"static_indices", "static_values", "dynamic"}
+
+    batch = pyd.collate([pyd[i] for i in range(2)])
+    assert batch.keys() == {"pre", "post"}
+    for window in ["pre", "post"]:
+        assert batch[window].keys() == {
+            "mask",
+            "static_mask",
+            "code",
+            "numerical_value",
+            "time_delta_days",
+            "numerical_value_mask",
+        }
+
+
+def test_ebcl_event_level(tmp_path):
+    MEDS_cohort_dir = tmp_path / "processed" / "final_cohort"
+    shutil.copytree(Path("./tests/test_data"), MEDS_cohort_dir.parent)
+
+    windows_path = tmp_path / "windows.parquet"
+
+    aces_task_cfg_path = tmp_path / "aces_config.yaml"
+
+    aces_task_cfg_path.write_text(RANDOM_EBCL_CFG)
+    aces_kwargs = {
+        "data.path": str((MEDS_cohort_dir / "*/*.parquet").resolve()),
+        "data.standard": "meds",
+        "cohort_dir": str(aces_task_cfg_path.parent.resolve()),
+        "cohort_name": "aces_config",
+        "output_filepath": str(windows_path.resolve()),
+        "hydra.verbose": True,
+    }
+
+    stderr, stdout = run_command("aces-cli", aces_kwargs, "extract_ebcl")
+
+    meds_df = pl.read_parquet(str((MEDS_cohort_dir / "*/*.parquet").resolve()))
+    # TODO: ACES is duplicating these outputs should be fixed
+    aces_df = pl.read_parquet(str(windows_path.resolve())).unique()
+
+    number_of_unique_event_times = (
+        meds_df.unique(["patient_id", "timestamp"]).drop_nulls("timestamp").shape[0]
+    )
+
+    assert number_of_unique_event_times == aces_df.shape[0]
+
+    kwargs = {
+        "raw_MEDS_cohort_dir": str(MEDS_cohort_dir.parent.resolve()),
+        "MEDS_cohort_dir": str(MEDS_cohort_dir.resolve()),
+        "max_seq_len": 512,
+        "model.embedder.token_dim": 4,
+        "collate_type": "triplet",
+        "raw_windows_fp": str(windows_path.resolve()),
+        "cached_windows_dir": str((windows_path.parent / "cached_windows").resolve()),
+    }
+
+    with initialize(version_base=None, config_path="../src/meds_torch/configs"):  # path to config.yaml
+        overrides = [f"{k}={v}" for k, v in kwargs.items()]
+        cfg = compose(config_name="multiwindow_pytorch_dataset", overrides=overrides)  # config.yaml
+
+    pyd = MultiWindowPytorchDataset(cfg, split="train")
+    item = pyd[0]
+    assert item.keys() == {"pre", "post"}
+    assert item["pre"].keys() == {"static_indices", "static_values", "dynamic"}
+    assert item["post"].keys() == {"static_indices", "static_values", "dynamic"}
+
+    batch = pyd.collate([pyd[i] for i in range(2)])
+    assert batch.keys() == {"pre", "post"}
+    for window in ["pre", "post"]:
+        assert batch[window].keys() == {
+            "mask",
+            "static_mask",
+            "code",
+            "numerical_value",
+            "time_delta_days",
+            "numerical_value_mask",
+        }
