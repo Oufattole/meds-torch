@@ -626,7 +626,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         patient_dynamic_data = JointNestedRaggedTensorDict.load_slice(
             Path(self.config.tensorized_root) / f"{shard}.nrt", patient_idx
         )
-        out = self.process_patient(patient_dynamic_data, patient_id, st, end)
+        out = self.load_patient(patient_dynamic_data, patient_id, st, end)
 
         if self.config.do_include_patient_id:
             out["patient_id"] = patient_id
