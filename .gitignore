@@ -168,3 +168,6 @@ lightning_logs/
 # test notebooks
 test.ipynb
 tests.ipynb
+
+data/*
+logs/*
