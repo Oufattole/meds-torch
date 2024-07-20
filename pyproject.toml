@@ -62,3 +62,6 @@ exclude_lines = [
 Homepage = "https://github.com/oufattole/meds-torch"
 Issues = "https://github.com/oufattole/meds-torch/issues"
 
+[project.scripts]
+meds-torch-train = "meds_torch.train:main"
+meds-torch-eval = "meds_torch.eval:main"
