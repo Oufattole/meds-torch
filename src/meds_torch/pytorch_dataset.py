@@ -5,6 +5,8 @@ from enum import Enum, StrEnum
 from pathlib import Path
 
 import numpy as np
+
+MAX_POLARS_THREADS = 1
 import polars as pl
 import torch
 from loguru import logger
@@ -565,14 +567,13 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return self._seeded_getitem(idx)
 
     @SeedableMixin.WithSeed
-    def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
+    def load_patient(
+        self, patient_dynamic_data, patient_id: int, st: int, end: int
+    ) -> dict[str, list[float]]:
         """Returns a Returns a dictionary corresponding to a single subject's data.
 
         This function is a seedable version of `__getitem__`.
         """
-
-        patient_id, st, end = self.index[idx]
-
         shard = self.subj_map[patient_id]
         patient_idx = self.subj_indices[patient_id]
         static_row = self.static_dfs[shard][patient_idx].to_dict()
@@ -581,9 +582,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             "static_indices": static_row["static_indices"].item().to_list(),
             "static_values": static_row["static_values"].item().to_list(),
         }
-
-        if self.config.do_include_patient_id:
-            out["patient_id"] = patient_id
 
         seq_len = end - st
         if seq_len > self.max_seq_len:
@@ -606,12 +604,32 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             out["start_idx"] = st
             out["end_idx"] = end
 
-        out["dynamic"] = JointNestedRaggedTensorDict.load_slice(
-            Path(self.config.tensorized_root) / f"{shard}.nrt", patient_idx
-        )[st:end]
+        out["dynamic"] = patient_dynamic_data[st:end]
 
         if self.config.do_include_start_time_min:
             out["start_time"] = static_row["timestamp"].item().to_list()[st]
+
+        return out
+
+    @SeedableMixin.WithSeed
+    def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
+        """Returns a Returns a dictionary corresponding to a single subject's data.
+
+        This function is a seedable version of `__getitem__`.
+        """
+
+        patient_id, st, end = self.index[idx]
+
+        shard = self.subj_map[patient_id]
+        patient_idx = self.subj_indices[patient_id]
+
+        patient_dynamic_data = JointNestedRaggedTensorDict.load_slice(
+            Path(self.config.tensorized_root) / f"{shard}.nrt", patient_idx
+        )
+        out = self.load_patient(patient_dynamic_data, patient_id, st, end)
+
+        if self.config.do_include_patient_id:
+            out["patient_id"] = patient_id
 
         for t, t_labels in self.labels.items():
             out[t] = t_labels[idx]
@@ -770,8 +788,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         raw_values = dynamic_data.tensors["dim1/numerical_value"]
         raw_times = dynamic_data.tensors["dim0/time_delta_days"]
 
-        static_values = np.asarray(item["static_values"], dtype=raw_values[0].dtype)
-        static_indices = np.asarray(item["static_indices"], dtype=raw_codes[0].dtype)
+        static_values = np.asarray(item["static_values"], dtype=np.float32)
+        static_indices = np.asarray(item["static_indices"], dtype=np.int32)
         code = np.concatenate([np.array(static_indices)] + raw_codes, dtype=np.int32, casting="unsafe")
         numerical_value = np.concatenate([np.array(static_values)] + raw_values)
         numerical_value_mask = ~np.isnan(numerical_value)
