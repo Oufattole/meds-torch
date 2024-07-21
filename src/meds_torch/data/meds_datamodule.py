@@ -4,6 +4,20 @@ import torch
 from lightning import LightningDataModule
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, random_split
 from torchvision import transforms
+from omegaconf import DictConfig, OmegaConf
+from meds_torch.data.components.pytorch_dataset import PytorchDataset
+from meds_torch.data.components.multiwindow_pytorch_dataset import MultiWindowPytorchDataset
+
+
+def get_dataset(cfg: DictConfig, split: str) -> PytorchDataset:
+    dataset_class_name = OmegaConf.to_container(cfg.hydra.runtime.choices)['data']
+    if dataset_class_name == "meds_multiwindow_pytorch_dataset":
+        return MultiWindowPytorchDataset(cfg.data, split)
+    elif dataset_class_name == "meds_pytorch_dataset":
+        return PytorchDataset(cfg.data, split)
+    else:
+        raise NotImplementedError(f"{dataset_class_name} not implemented!")
+        
 
 
 class MEDSDataModule(LightningDataModule):
@@ -48,11 +62,7 @@ class MEDSDataModule(LightningDataModule):
 
     def __init__(
         self,
-        data_dir: str = "data/",
-        train_val_test_split: Tuple[str, str, str] = ("train", "tuning", "held-out"),
-        batch_size: int = 64,
-        num_workers: int = 0,
-        pin_memory: bool = False,
+        cfg: DictConfig,
     ) -> None:
         """Initialize a `MNISTDataModule`.
 
@@ -63,21 +73,18 @@ class MEDSDataModule(LightningDataModule):
         :param pin_memory: Whether to pin memory. Defaults to `False`.
         """
         super().__init__()
+        self.cfg = cfg
 
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(logger=False)
 
-        # data transformations
-        self.transforms = transforms.Compose(
-            [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
-        )
-
         self.data_train: Optional[Dataset] = None
         self.data_val: Optional[Dataset] = None
         self.data_test: Optional[Dataset] = None
 
-        self.batch_size_per_device = batch_size
+        self.batch_size_per_device = cfg.data.dataloader.batch_size
+        
 
     @property
     def num_classes(self) -> int:
@@ -95,9 +102,7 @@ class MEDSDataModule(LightningDataModule):
 
         Do not use it to assign state (self.x = y).
         """
-        MNIST(self.hparams.data_dir, train=True, download=True)
-        MNIST(self.hparams.data_dir, train=False, download=True)
-
+        pass
     def setup(self, stage: Optional[str] = None) -> None:
         """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
 
@@ -117,15 +122,10 @@ class MEDSDataModule(LightningDataModule):
             self.batch_size_per_device = self.hparams.batch_size // self.trainer.world_size
 
         # load and split datasets only if not loaded already
-        if not self.data_train and not self.data_val and not self.data_test:
-            trainset = MNIST(self.hparams.data_dir, train=True, transform=self.transforms)
-            testset = MNIST(self.hparams.data_dir, train=False, transform=self.transforms)
-            dataset = ConcatDataset(datasets=[trainset, testset])
-            self.data_train, self.data_val, self.data_test = random_split(
-                dataset=dataset,
-                lengths=self.hparams.train_val_test_split,
-                generator=torch.Generator().manual_seed(42),
-            )
+        self.data_train = get_dataset(self.cfg, split="train")
+        self.data_val = get_dataset(self.cfg, split="tuning")
+        if stage in ["test", None]:
+            self.data_test = get_dataset(self.cfg, split="held-out")
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Create and return the train dataloader.
@@ -134,10 +134,9 @@ class MEDSDataModule(LightningDataModule):
         """
         return DataLoader(
             dataset=self.data_train,
-            batch_size=self.batch_size_per_device,
-            num_workers=self.hparams.num_workers,
-            pin_memory=self.hparams.pin_memory,
             shuffle=True,
+            collate_fn=self.data_train.collate,
+            **self.cfg.data.dataloader,
         )
 
     def val_dataloader(self) -> DataLoader[Any]:
@@ -147,10 +146,9 @@ class MEDSDataModule(LightningDataModule):
         """
         return DataLoader(
             dataset=self.data_val,
-            batch_size=self.batch_size_per_device,
-            num_workers=self.hparams.num_workers,
-            pin_memory=self.hparams.pin_memory,
             shuffle=False,
+            collate_fn=self.data_val.collate,
+            **self.cfg.data.dataloader,
         )
 
     def test_dataloader(self) -> DataLoader[Any]:
@@ -160,10 +158,9 @@ class MEDSDataModule(LightningDataModule):
         """
         return DataLoader(
             dataset=self.data_test,
-            batch_size=self.batch_size_per_device,
-            num_workers=self.hparams.num_workers,
-            pin_memory=self.hparams.pin_memory,
             shuffle=False,
+            collate_fn=self.data_test.collate,
+            **self.cfg.data.dataloader,
         )
 
     def teardown(self, stage: Optional[str] = None) -> None:

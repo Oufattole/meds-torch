@@ -384,8 +384,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 self.subj_seq_bounds[subj] = (0, n_events)
 
         if self.has_task:
-            task_df_fp = Path(self.config.tasks_root) / f"{self.config.task_name}.parquet"
-            task_info_fp = Path(self.config.tasks_root) / f"{self.config.task_name}_info.json"
+            task_df_fp = Path(self.config.task_label_path)
+            task_info_fp = Path(self.config.task_info_path)
 
             logger.info(f"Reading task constraints for {self.config.task_name} from {task_df_fp}")
             task_df = pl.read_parquet(task_df_fp, use_pyarrow=True)
@@ -490,6 +490,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
     def set_inter_event_time_stats(self):
         """Sets the inter-event time statistics for the dataset."""
+        if len(self.static_dfs) == 0:
+            raise ValueError(f"The {self.split} dataset is empty, there should be at least one static dataframe.")
         data_for_stats = pl.concat([x.lazy() for x in self.static_dfs.values()])
         stats = (
             data_for_stats.select(
@@ -513,8 +515,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 f"Bad Subject IDs: {', '.join(str(x) for x in bad_patient_ids)}",
                 f"Global min: {stats['min'].item()}",
             ]
-            if self.config.MEDS_cohort_dir is not None:
-                fp = Path(self.config.MEDS_cohort_dir) / f"malformed_data_{self.split}.parquet"
+            if self.config.meds_dir is not None:
+                fp = Path(self.config.meds_dir) / f"malformed_data_{self.split}.parquet"
                 bad_inter_event_times.write_parquet(fp)
                 warning_strs.append(f"Wrote malformed data records to {fp}")
             warning_strs.append("Removing malformed subjects")
@@ -696,7 +698,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                     out_labels[task] = collated[task].float()
                 case _:
                     raise TypeError(f"Don't know how to tensorify task of type {self.task_types[task]}!")
-        out_batch["supervised_labels"] = out_labels
+
+        # add task labels
+        for k in batch[0].keys():
+            if k not in ("dynamic", "static_values", "static_indices"):
+                out_batch[k] = torch.Tensor([item[k] for item in batch])
 
         return out_batch
 
@@ -880,6 +886,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             )
             for k in processed_batch[0].keys()
         }
+
+        # Add task labels to batch
         for k in batch[0].keys():
             if k not in ("dynamic", "static_values", "static_indices"):
                 tensorized_batch[k] = torch.Tensor([item[k] for item in batch])

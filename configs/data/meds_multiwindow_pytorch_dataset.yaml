@@ -1,6 +1,7 @@
-_target_: meds_torch.data.meds_datamodule.MEDSDataModule
-data_dir: ${paths.data_dir}
-batch_size: 128 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
-train_val_test_split: train,tuning,held-out
-num_workers: 0
-pin_memory: False
+defaults:
+  - meds_pytorch_dataset
+  - _self_
+
+patient_level_sampling: false
+cached_windows_dir: ???
+raw_windows_fp: ???
