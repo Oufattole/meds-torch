@@ -8,15 +8,13 @@ from omegaconf import DictConfig, OmegaConf
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
 from meds_torch.data.components.multiwindow_pytorch_dataset import MultiWindowPytorchDataset
 
-
-def get_dataset(cfg: DictConfig, split: str) -> PytorchDataset:
-    dataset_class_name = OmegaConf.to_container(cfg.hydra.runtime.choices)['data']
-    if dataset_class_name == "meds_multiwindow_pytorch_dataset":
-        return MultiWindowPytorchDataset(cfg.data, split)
-    elif dataset_class_name == "meds_pytorch_dataset":
-        return PytorchDataset(cfg.data, split)
+def get_dataset(cfg: DictConfig, split) -> PytorchDataset:
+    if cfg.name == "meds_multiwindow_pytorch_dataset":
+        return MultiWindowPytorchDataset(cfg, split)
+    elif cfg.name == "meds_pytorch_dataset":
+        return PytorchDataset(cfg, split)
     else:
-        raise NotImplementedError(f"{dataset_class_name} not implemented!")
+        raise NotImplementedError(f"{cfg.name} not implemented!")
         
 
 
@@ -62,7 +60,7 @@ class MEDSDataModule(LightningDataModule):
 
     def __init__(
         self,
-        cfg: DictConfig,
+        cfg: DictConfig=None,
     ) -> None:
         """Initialize a `MNISTDataModule`.
 
@@ -83,7 +81,7 @@ class MEDSDataModule(LightningDataModule):
         self.data_val: Optional[Dataset] = None
         self.data_test: Optional[Dataset] = None
 
-        self.batch_size_per_device = cfg.data.dataloader.batch_size
+        self.batch_size_per_device = cfg.dataloader.batch_size
         
 
     @property
@@ -136,7 +134,7 @@ class MEDSDataModule(LightningDataModule):
             dataset=self.data_train,
             shuffle=True,
             collate_fn=self.data_train.collate,
-            **self.cfg.data.dataloader,
+            **self.cfg.dataloader,
         )
 
     def val_dataloader(self) -> DataLoader[Any]:
@@ -148,7 +146,7 @@ class MEDSDataModule(LightningDataModule):
             dataset=self.data_val,
             shuffle=False,
             collate_fn=self.data_val.collate,
-            **self.cfg.data.dataloader,
+            **self.cfg.dataloader,
         )
 
     def test_dataloader(self) -> DataLoader[Any]:
@@ -160,7 +158,7 @@ class MEDSDataModule(LightningDataModule):
             dataset=self.data_test,
             shuffle=False,
             collate_fn=self.data_test.collate,
-            **self.cfg.data.dataloader,
+            **self.cfg.dataloader,
         )
 
     def teardown(self, stage: Optional[str] = None) -> None:
@@ -186,7 +184,11 @@ class MEDSDataModule(LightningDataModule):
         :param state_dict: The datamodule state returned by `self.state_dict()`.
         """
         pass
+    
+    @classmethod
+    def initialize_from_kwargs(cls, **kwargs: Dict[str, Any]) -> "MEDSDataModule":
+        return cls(DictConfig(kwargs))
 
 
 if __name__ == "__main__":
-    _ = MNISTDataModule()
+    _ = MEDSDataModule()

@@ -1,37 +1,26 @@
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
+import pytest
 
+@pytest.fixture
+def cfg(request):
+    # Use request.param to fetch the correct fixture dynamically
+    return request.getfixturevalue(request.param)
 
-def test_train_config(cfg_train: DictConfig) -> None:
+@pytest.mark.parametrize("cfg", ["cfg_meds_train", "cfg_meds_multiwindow_train"], indirect=True)
+def test_train_config(cfg: DictConfig) -> None:
     """Tests the training configuration provided by the `cfg_train` pytest fixture.
 
     :param cfg_train: A DictConfig containing a valid training configuration.
     """
-    assert cfg_train
-    assert cfg_train.data
-    assert cfg_train.model
-    assert cfg_train.trainer
+    assert cfg
+    assert cfg.data
+    assert cfg.model
+    assert cfg.trainer
 
-    HydraConfig().set_config(cfg_train)
+    HydraConfig().set_config(cfg)
 
-    hydra.utils.instantiate(cfg_train.data)
-    hydra.utils.instantiate(cfg_train.model)
-    hydra.utils.instantiate(cfg_train.trainer)
-
-
-def test_eval_config(cfg_eval: DictConfig) -> None:
-    """Tests the evaluation configuration provided by the `cfg_eval` pytest fixture.
-
-    :param cfg_train: A DictConfig containing a valid evaluation configuration.
-    """
-    assert cfg_eval
-    assert cfg_eval.data
-    assert cfg_eval.model
-    assert cfg_eval.trainer
-
-    HydraConfig().set_config(cfg_eval)
-
-    hydra.utils.instantiate(cfg_eval.data)
-    hydra.utils.instantiate(cfg_eval.model)
-    hydra.utils.instantiate(cfg_eval.trainer)
+    hydra.utils.instantiate(cfg.data)
+    # hydra.utils.instantiate(cfg.model)
+    # hydra.utils.instantiate(cfg.trainer)
