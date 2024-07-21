@@ -117,10 +117,9 @@ def cache_window_indexes(cfg: DictConfig, split: str, static_dfs) -> pl.DataFram
 class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
     """A Multi Window PyTorch Dataset class, enabling contrastive learning pretraining.
 
-    Args:
-        config: Configuration options for the dataset, in an `omegaconf.DictConfig` object.
-        split: The split of data which should be used in this dataset (e.g., ``'train'``, ``'tuning'``,
-            ``'held_out'``). This will dictate where the system looks for files.
+    Args:     config: Configuration options for the dataset, in an `omegaconf.DictConfig` object.     split:
+    The split of data which should be used in this dataset (e.g., ``'train'``, ``'tuning'``, ``'held_out'``).
+    This will dictate where the system looks for files.
     """
 
     def __init__(self, cfg: DictConfig, split: str):
@@ -176,24 +175,17 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         """Returns a Returns a dictionary corresponding to a single subject's data.
 
         The output of this will not be tensorized as that work will need to be re-done in the collate function
-        regardless. The output will have structure:
-        ``
-        {
-            'time_delta_days': [seq_len],
-            'dynamic_indices': [seq_len, n_data_per_event] (ragged),
-            'dynamic_values': [seq_len, n_data_per_event] (ragged),
-            'static_indices': [seq_len, n_data_per_event] (ragged),
-        }
-        ``
+        regardless. The output will have structure: `` {     'time_delta_days': [seq_len], 'dynamic_indices':
+        [seq_len, n_data_per_event] (ragged),     'dynamic_values': [seq_len, n_data_per_event] (ragged),
+        'static_indices': [seq_len, n_data_per_event] (ragged), } ``
 
-        1. ``time_delta_days`` captures the time between each event and the subsequent event in days.
-        2. ``dynamic_indices`` captures the categorical metadata elements listed in `self.data_cols` in a
-           unified vocabulary space spanning all metadata vocabularies.
-        3. ``dynamic_values`` captures the numerical metadata elements listed in `self.data_cols`. If no
-           numerical elements are listed in `self.data_cols` for a given categorical column, the according
-           index in this output will be `np.NaN`.
-        5. ``static_indices`` captures the categorical metadata elements listed in `self.static_cols` in a
-           unified vocabulary.
+        1. ``time_delta_days`` captures the time between each event and the subsequent event in days. 2.
+        ``dynamic_indices`` captures the categorical metadata elements listed in `self.data_cols` in a unified
+        vocabulary space spanning all metadata vocabularies. 3. ``dynamic_values`` captures the numerical
+        metadata elements listed in `self.data_cols`. If no    numerical elements are listed in
+        `self.data_cols` for a given categorical column, the according    index in this output will be
+        `np.NaN`. 5. ``static_indices`` captures the categorical metadata elements listed in
+        `self.static_cols` in a    unified vocabulary.
         """
         return self._seeded_getitem(idx)
 

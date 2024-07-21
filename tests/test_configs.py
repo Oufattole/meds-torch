@@ -1,12 +1,14 @@
 import hydra
+import pytest
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
-import pytest
+
 
 @pytest.fixture
 def cfg(request):
     # Use request.param to fetch the correct fixture dynamically
     return request.getfixturevalue(request.param)
+
 
 @pytest.mark.parametrize("cfg", ["cfg_meds_train", "cfg_meds_multiwindow_train"], indirect=True)
 def test_train_config(cfg: DictConfig) -> None:

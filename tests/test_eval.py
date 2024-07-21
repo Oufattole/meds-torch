@@ -11,8 +11,7 @@ from meds_torch.train import train
 
 @pytest.mark.slow
 def test_train_eval(tmp_path: Path, cfg_train: DictConfig, cfg_eval: DictConfig) -> None:
-    """Tests training and evaluation by training for 1 epoch with `train.py` then evaluating with
-    `eval.py`.
+    """Tests training and evaluation by training for 1 epoch with `train.py` then evaluating with `eval.py`.
 
     :param tmp_path: The temporary logging path.
     :param cfg_train: A DictConfig containing a valid training configuration.

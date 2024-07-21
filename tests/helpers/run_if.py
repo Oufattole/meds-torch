@@ -4,7 +4,7 @@ https://github.com/PyTorchLightning/pytorch-lightning/blob/master/tests/helpers/
 """
 
 import sys
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pytest
 import torch
@@ -32,20 +32,16 @@ class RunIf:
 
     Example:
 
-    ```python
-        @RunIf(min_torch="1.8")
-        @pytest.mark.parametrize("arg1", [1.0, 2.0])
-        def test_wrapper(arg1):
-            assert arg1 > 0
-    ```
+    ```python     @RunIf(min_torch="1.8")     @pytest.mark.parametrize("arg1", [1.0, 2.0])     def
+    test_wrapper(arg1):         assert arg1 > 0 ```
     """
 
     def __new__(
         cls,
         min_gpus: int = 0,
-        min_torch: Optional[str] = None,
-        max_torch: Optional[str] = None,
-        min_python: Optional[str] = None,
+        min_torch: str | None = None,
+        max_torch: str | None = None,
+        min_python: str | None = None,
         skip_windows: bool = False,
         sh: bool = False,
         tpu: bool = False,
@@ -55,7 +51,7 @@ class RunIf:
         neptune: bool = False,
         comet: bool = False,
         mlflow: bool = False,
-        **kwargs: Dict[Any, Any],
+        **kwargs: dict[Any, Any],
     ) -> MarkDecorator:
         """Creates a new `@RunIf` `MarkDecorator` decorator.
 
@@ -92,9 +88,7 @@ class RunIf:
             reasons.append(f"torch<{max_torch}")
 
         if min_python:
-            py_version = (
-                f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-            )
+            py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
             conditions.append(Version(py_version) < Version(min_python))
             reasons.append(f"python>={min_python}")
 

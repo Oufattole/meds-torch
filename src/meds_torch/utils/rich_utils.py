@@ -1,5 +1,5 @@
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import rich
 import rich.syntax
@@ -33,7 +33,7 @@ def print_config_tree(
 
     :param cfg: A DictConfig composed by Hydra.
     :param print_order: Determines in what order config components are printed. Default is ``("data", "model",
-    "callbacks", "logger", "trainer", "paths", "extras")``.
+        "callbacks", "logger", "trainer", "paths", "extras")``.
     :param resolve: Whether to resolve reference fields of DictConfig. Default is ``False``.
     :param save_to_file: Whether to export config to the hydra output folder. Default is ``False``.
     """

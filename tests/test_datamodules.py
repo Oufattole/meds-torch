@@ -2,25 +2,23 @@ import rootutils
 
 root = rootutils.setup_root(__file__, dotenv=True, pythonpath=True, cwd=True)
 
-import shutil
-import subprocess
-from datetime import datetime
 from pathlib import Path
 
 import polars as pl
-import torch
-from hydra import compose, initialize
-from omegaconf import open_dict
 import pytest
+from omegaconf import open_dict
 from torch.utils.data import DataLoader
 
-from meds_torch.data.components.multiwindow_pytorch_dataset import MultiWindowPytorchDataset
+from meds_torch.data.components.multiwindow_pytorch_dataset import (
+    MultiWindowPytorchDataset,
+)
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
 from meds_torch.data.meds_datamodule import MEDSDataModule
+
 # from meds_torch.data.components.pytorch_dataset
 from tests.conftest import SUPERVISED_TASK_NAME
-from tests.helpers.run_if import RunIf
-from tests.helpers.run_sh_command import run_sh_command, run_command
+from tests.helpers.run_sh_command import run_command
+
 
 @pytest.mark.parametrize("collate_type", ["triplet", "event_stream"])
 def test_meds_pytorch_dataset(cfg_meds_train, collate_type):
@@ -43,15 +41,16 @@ def test_meds_pytorch_dataset(cfg_meds_train, collate_type):
         }
     elif collate_type == "triplet":
         assert batch.keys() == {
-        "mask",
-        "static_mask",
-        "code",
-        "numerical_value",
-        "time_delta_days",
-        "numerical_value_mask",
-    }
+            "mask",
+            "static_mask",
+            "code",
+            "numerical_value",
+            "time_delta_days",
+            "numerical_value_mask",
+        }
     else:
         raise NotImplementedError(f"{collate_type} not implemented")
+
 
 @pytest.mark.parametrize("collate_type", ["triplet", "event_stream"])
 def test_meds_pytorch_dataset_with_supervised_task(cfg_meds_train, collate_type):
@@ -79,16 +78,17 @@ def test_meds_pytorch_dataset_with_supervised_task(cfg_meds_train, collate_type)
         }
     elif collate_type == "triplet":
         assert batch.keys() == {
-        "mask",
-        "static_mask",
-        "code",
-        "numerical_value",
-        "time_delta_days",
-        "numerical_value_mask",
-        SUPERVISED_TASK_NAME,
-    }
+            "mask",
+            "static_mask",
+            "code",
+            "numerical_value",
+            "time_delta_days",
+            "numerical_value_mask",
+            SUPERVISED_TASK_NAME,
+        }
     else:
         raise NotImplementedError(f"{collate_type} not implemented")
+
 
 RANDOM_LOCAL_WINDOWS = """
 predicates:
@@ -110,10 +110,13 @@ windows:
         end_inclusive: True
 """
 
+
 @pytest.mark.parametrize("patient_level_sampling", [False, True])
 @pytest.mark.parametrize("window_config", [RANDOM_LOCAL_WINDOWS])
 @pytest.mark.parametrize("collate_type", ["triplet"])
-def test_contrastive_windows(cfg_meds_multiwindow_train, tmp_path, window_config, patient_level_sampling, collate_type):
+def test_contrastive_windows(
+    cfg_meds_multiwindow_train, tmp_path, window_config, patient_level_sampling, collate_type
+):
     cfg = cfg_meds_multiwindow_train
     cfg.data.collate_type = collate_type
     cfg.data.patient_level_sampling = patient_level_sampling
@@ -168,9 +171,13 @@ def test_meds_datamodule(cfg_meds_train):
     dm.prepare_data()
 
     assert not dm.data_train and not dm.data_val and not dm.data_test
-    
+
     dm.setup(stage="fit")
-    assert isinstance(dm.data_train, PytorchDataset) and isinstance(dm.data_val, PytorchDataset) and (dm.data_test is None)
+    assert (
+        isinstance(dm.data_train, PytorchDataset)
+        and isinstance(dm.data_val, PytorchDataset)
+        and (dm.data_test is None)
+    )
     assert isinstance(dm.train_dataloader(), DataLoader) and isinstance(dm.val_dataloader(), DataLoader)
 
     num_datapoints = len(dm.data_train)

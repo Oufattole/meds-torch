@@ -274,10 +274,9 @@ def get_task_indexes(task_df_joint) -> list[tuple[int, int, int]]:
 class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
     """A PyTorch Dataset class.
 
-    Args:
-        config: Configuration options for the dataset, in an `omegaconf.DictConfig` object.
-        split: The split of data which should be used in this dataset (e.g., ``'train'``, ``'tuning'``,
-            ``'held_out'``). This will dictate where the system looks for files.
+    Args:     config: Configuration options for the dataset, in an `omegaconf.DictConfig` object.     split:
+    The split of data which should be used in this dataset (e.g., ``'train'``, ``'tuning'``, ``'held_out'``).
+    This will dictate where the system looks for files.
     """
 
     TYPE_CHECKERS = {
@@ -298,16 +297,13 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
     def normalize_task(cls, col: pl.Expr, dtype: pl.DataType) -> tuple[str, pl.Expr]:
         """Normalizes the task labels in `col` of dtype `dtype` to a common format.
 
-        Args:
-            col: The column containing the task labels, in polars expression format.
-            dtype: The polars data type of the task labels.
+        Args:     col: The column containing the task labels, in polars expression format.     dtype: The
+        polars data type of the task labels.
 
-        Returns:
-            The task type (a string key into the `TYPE_CHECKERS` dictionary) and the normalized column
-            expression.
+        Returns:     The task type (a string key into the `TYPE_CHECKERS` dictionary) and the normalized
+        column     expression.
 
-        Raises:
-            TypeError: If the task labels are not of a supported type.
+        Raises:     TypeError: If the task labels are not of a supported type.
         """
         for task_type, checkers in cls.TYPE_CHECKERS.items():
             for valid_dtypes, normalize_fn in checkers:
@@ -491,7 +487,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
     def set_inter_event_time_stats(self):
         """Sets the inter-event time statistics for the dataset."""
         if len(self.static_dfs) == 0:
-            raise ValueError(f"The {self.split} dataset is empty, there should be at least one static dataframe.")
+            raise ValueError(
+                f"The {self.split} dataset is empty, there should be at least one static dataframe."
+            )
         data_for_stats = pl.concat([x.lazy() for x in self.static_dfs.values()])
         stats = (
             data_for_stats.select(
@@ -547,24 +545,17 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         """Returns a Returns a dictionary corresponding to a single subject's data.
 
         The output of this will not be tensorized as that work will need to be re-done in the collate function
-        regardless. The output will have structure:
-        ``
-        {
-            'time_delta_days': [seq_len],
-            'dynamic_indices': [seq_len, n_data_per_event] (ragged),
-            'dynamic_values': [seq_len, n_data_per_event] (ragged),
-            'static_indices': [seq_len, n_data_per_event] (ragged),
-        }
-        ``
+        regardless. The output will have structure: `` {     'time_delta_days': [seq_len], 'dynamic_indices':
+        [seq_len, n_data_per_event] (ragged),     'dynamic_values': [seq_len, n_data_per_event] (ragged),
+        'static_indices': [seq_len, n_data_per_event] (ragged), } ``
 
-        1. ``time_delta_days`` captures the time between each event and the subsequent event in days.
-        2. ``dynamic_indices`` captures the categorical metadata elements listed in `self.data_cols` in a
-           unified vocabulary space spanning all metadata vocabularies.
-        3. ``dynamic_values`` captures the numerical metadata elements listed in `self.data_cols`. If no
-           numerical elements are listed in `self.data_cols` for a given categorical column, the according
-           index in this output will be `np.NaN`.
-        5. ``static_indices`` captures the categorical metadata elements listed in `self.static_cols` in a
-           unified vocabulary.
+        1. ``time_delta_days`` captures the time between each event and the subsequent event in days. 2.
+        ``dynamic_indices`` captures the categorical metadata elements listed in `self.data_cols` in a unified
+        vocabulary space spanning all metadata vocabularies. 3. ``dynamic_values`` captures the numerical
+        metadata elements listed in `self.data_cols`. If no    numerical elements are listed in
+        `self.data_cols` for a given categorical column, the according    index in this output will be
+        `np.NaN`. 5. ``static_indices`` captures the categorical metadata elements listed in
+        `self.static_cols` in a    unified vocabulary.
         """
         return self._seeded_getitem(idx)
 
@@ -712,11 +703,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         This function handles conversion of arrays to tensors and padding of elements within the batch across
         static data elements, sequence events, and dynamic data elements.
 
-        Args:
-            batch: A list of `__getitem__` format output dictionaries.
+        Args:     batch: A list of `__getitem__` format output dictionaries.
 
-        Returns:
-            A fully collated, tensorized, and padded batch.
+        Returns:     A fully collated, tensorized, and padded batch.
         """
 
         out_batch = self.__dynamic_only_collate(batch)
@@ -899,11 +888,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         This function handles conversion of arrays to tensors and padding of elements within the batch across
         static data elements, sequence events, and dynamic data elements.
 
-        Args:
-            batch: A list of `__getitem__` format output dictionaries.
+        Args:     batch: A list of `__getitem__` format output dictionaries.
 
-        Returns:
-            A fully collated, tensorized, and padded batch.
+        Returns:     A fully collated, tensorized, and padded batch.
         """
         collate_type = CollateType[self.config.collate_type]
         if collate_type == CollateType.event_stream:

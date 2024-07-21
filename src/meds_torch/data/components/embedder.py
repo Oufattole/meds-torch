@@ -41,8 +41,7 @@ def sequence_mask(lengths, maxlen, dtype=torch.bool):
 class CVE(nn.Module):
     """Continuous Value Encoder (CVE) module.
 
-    Assumes input is a single continuous value, and encodes it
-    as an `output_dim` size embedding vector.
+    Assumes input is a single continuous value, and encodes it as an `output_dim` size embedding vector.
     """
 
     def __init__(self, cfg):

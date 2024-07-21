@@ -1,17 +1,18 @@
 """This file prepares config fixtures for other tests."""
 
-from pathlib import Path
 import shutil
 from datetime import datetime
+from pathlib import Path
 
+import polars as pl
 import pytest
 import rootutils
 from hydra import compose, initialize
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, open_dict
-import polars as pl
 
 SUPERVISED_TASK_NAME = "supervised_task"
+
 
 @pytest.fixture(scope="package")
 def cfg_train_global() -> DictConfig:
@@ -70,7 +71,7 @@ def meds_dir(tmp_path_factory) -> Path:
     meds_dir = tmp_path_factory.mktemp("meds_data")
     # copy test data to temporary directory
     shutil.copytree(Path("./tests/test_data"), meds_dir, dirs_exist_ok=True)
-    
+
     # Store Test Task labels
     task_df = pl.DataFrame(
         {
@@ -95,15 +96,20 @@ def meds_dir(tmp_path_factory) -> Path:
     task_df.write_parquet(tasks_dir / f"{SUPERVISED_TASK_NAME}.parquet")
     return meds_dir
 
+
 @pytest.fixture(scope="package")
 def cfg_meds_multiwindow_train_global(meds_dir: Path) -> DictConfig:
-    """A pytest fixture for setting up a default Hydra DictConfig for training.
-    All tests share the test data directory
+    """A pytest fixture for setting up a default Hydra DictConfig for training. All tests share the test data
+    directory.
 
     :return: A DictConfig object containing a default Hydra configuration for training.
     """
     with initialize(version_base="1.3", config_path="../configs"):
-        cfg = compose(config_name="meds_train.yaml", return_hydra_config=True, overrides=["data=meds_multiwindow_pytorch_dataset"])
+        cfg = compose(
+            config_name="meds_train.yaml",
+            return_hydra_config=True,
+            overrides=["data=meds_multiwindow_pytorch_dataset"],
+        )
 
         # set defaults for all tests
         with open_dict(cfg):
@@ -127,10 +133,11 @@ def cfg_meds_multiwindow_train_global(meds_dir: Path) -> DictConfig:
 
     return cfg
 
+
 @pytest.fixture(scope="package")
 def cfg_meds_train_global(meds_dir: Path) -> DictConfig:
-    """A pytest fixture for setting up a default Hydra DictConfig for training.
-    All tests share the test data directory
+    """A pytest fixture for setting up a default Hydra DictConfig for training. All tests share the test data
+    directory.
 
     :return: A DictConfig object containing a default Hydra configuration for training.
     """
@@ -157,16 +164,17 @@ def cfg_meds_train_global(meds_dir: Path) -> DictConfig:
 
     return cfg
 
+
 @pytest.fixture(scope="function")
 def cfg_meds_train(cfg_meds_train_global: DictConfig, tmp_path: Path) -> DictConfig:
-    """A pytest fixture built on top of the `cfg_train_global()` fixture, which accepts a temporary
-    logging path `tmp_path` for generating a temporary logging path.
+    """A pytest fixture built on top of the `cfg_train_global()` fixture, which accepts a temporary logging
+    path `tmp_path` for generating a temporary logging path.
 
-    This is called by each test which uses the `cfg_train` arg. Each test generates its own temporary logging path.
+    This is called by each test which uses the `cfg_train` arg. Each test generates its own temporary logging
+    path.
 
     :param cfg_train_global: The input DictConfig object to be modified.
     :param tmp_path: The temporary logging path.
-
     :return: A DictConfig with updated output and log directories corresponding to `tmp_path`.
     """
     cfg = cfg_meds_train_global.copy()
@@ -179,16 +187,17 @@ def cfg_meds_train(cfg_meds_train_global: DictConfig, tmp_path: Path) -> DictCon
 
     GlobalHydra.instance().clear()
 
+
 @pytest.fixture(scope="function")
 def cfg_meds_multiwindow_train(cfg_meds_multiwindow_train_global: DictConfig, tmp_path: Path) -> DictConfig:
-    """A pytest fixture built on top of the `cfg_train_global()` fixture, which accepts a temporary
-    logging path `tmp_path` for generating a temporary logging path.
+    """A pytest fixture built on top of the `cfg_train_global()` fixture, which accepts a temporary logging
+    path `tmp_path` for generating a temporary logging path.
 
-    This is called by each test which uses the `cfg_train` arg. Each test generates its own temporary logging path.
+    This is called by each test which uses the `cfg_train` arg. Each test generates its own temporary logging
+    path.
 
     :param cfg_train_global: The input DictConfig object to be modified.
     :param tmp_path: The temporary logging path.
-
     :return: A DictConfig with updated output and log directories corresponding to `tmp_path`.
     """
     cfg = cfg_meds_multiwindow_train_global.copy()
@@ -201,16 +210,17 @@ def cfg_meds_multiwindow_train(cfg_meds_multiwindow_train_global: DictConfig, tm
 
     GlobalHydra.instance().clear()
 
+
 @pytest.fixture(scope="function")
 def cfg_train(cfg_train_global: DictConfig, tmp_path: Path) -> DictConfig:
-    """A pytest fixture built on top of the `cfg_train_global()` fixture, which accepts a temporary
-    logging path `tmp_path` for generating a temporary logging path.
+    """A pytest fixture built on top of the `cfg_train_global()` fixture, which accepts a temporary logging
+    path `tmp_path` for generating a temporary logging path.
 
-    This is called by each test which uses the `cfg_train` arg. Each test generates its own temporary logging path.
+    This is called by each test which uses the `cfg_train` arg. Each test generates its own temporary logging
+    path.
 
     :param cfg_train_global: The input DictConfig object to be modified.
     :param tmp_path: The temporary logging path.
-
     :return: A DictConfig with updated output and log directories corresponding to `tmp_path`.
     """
     cfg = cfg_train_global.copy()
@@ -226,14 +236,14 @@ def cfg_train(cfg_train_global: DictConfig, tmp_path: Path) -> DictConfig:
 
 @pytest.fixture(scope="function")
 def cfg_eval(cfg_eval_global: DictConfig, tmp_path: Path) -> DictConfig:
-    """A pytest fixture built on top of the `cfg_eval_global()` fixture, which accepts a temporary
-    logging path `tmp_path` for generating a temporary logging path.
+    """A pytest fixture built on top of the `cfg_eval_global()` fixture, which accepts a temporary logging
+    path `tmp_path` for generating a temporary logging path.
 
-    This is called by each test which uses the `cfg_eval` arg. Each test generates its own temporary logging path.
+    This is called by each test which uses the `cfg_eval` arg. Each test generates its own temporary logging
+    path.
 
     :param cfg_train_global: The input DictConfig object to be modified.
     :param tmp_path: The temporary logging path.
-
     :return: A DictConfig with updated output and log directories corresponding to `tmp_path`.
     """
     cfg = cfg_eval_global.copy()

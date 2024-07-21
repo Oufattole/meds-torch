@@ -31,7 +31,6 @@ token_dim: 32
 subsequence_sampling_strategy: random
 seq_padding_side: right
 
-
 dataloader:
   batch_size: 128 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
   num_workers: 0

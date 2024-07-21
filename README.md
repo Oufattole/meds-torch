@@ -35,7 +35,6 @@ Key features include:
 
 The goal of this project is to push the boundaries of what's possible in healthcare machine learning by providing a flexible, robust, and scalable platform that accommodates a wide range of research and operational needs. Whether you're conducting academic research, developing clinical applications, or exploring new machine learning methodologies, this repository offers the tools and flexibility needed to innovate and excel in the field of medical data analysis.
 
-
 ## Installation
 
 #### Pip
@@ -55,7 +54,6 @@ conda activate meds-torch
 # install requirements
 pip install -e .
 ```
-
 
 ## How to run
 
@@ -130,10 +128,10 @@ The configuration setup is built with simple lightning training in mind. You mig
 ❌ Might not support your workflow <br>
 For example, you can't resume hydra-based multirun or hyperparameter search.
 
-
 ## Loggers
 
 By default `wandb` logger is installed with the repo. Please install a different logger below if you wish to use it:
+
 ```python
 # neptune-client
 # mlflow
