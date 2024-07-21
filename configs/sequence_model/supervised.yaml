@@ -1,0 +1,23 @@
+defaults:
+  - backbone: transformer_decoder
+  - _self_
+_target_: meds_torch.sequence_models.supervised_model.SupervisedModule.initialize
+
+optimizer:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: 0.001
+  weight_decay: 0.0
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+  _partial_: true
+  mode: min
+  factor: 0.1
+  patience: 10
+
+get_last_token: true
+get_representations: false
+
+# compile model for faster training with pytorch 2.0
+compile: false

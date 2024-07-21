@@ -1,0 +1,4 @@
+_target_: meds_torch.sequence_models.components.lstm.initialize
+nheads: 2
+n_layers: 2
+dropout: 0.1
