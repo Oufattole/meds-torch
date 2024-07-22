@@ -167,7 +167,7 @@ def test_contrastive_windows(
 def test_meds_datamodule(cfg_meds_train):
     cfg = cfg_meds_train.copy()
     cfg.data.dataloader.batch_size = 1
-    dm = MEDSDataModule(cfg)
+    dm = MEDSDataModule(cfg.data)
     dm.prepare_data()
 
     assert not dm.data_train and not dm.data_val and not dm.data_test
