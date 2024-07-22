@@ -8,23 +8,24 @@ import torch
 from omegaconf import DictConfig
 from torch import nn
 
-from meds_torch.model.architectures.utils import get_last_token
+from meds_torch.sequence_models.components.utils import get_last_token
+from meds_torch.utils.module_class import Module
 
 
-class LstmModel(torch.nn.Module):
+class LstmModel(torch.nn.Module, Module):
     """Wrapper of Encoder Transformer for use in MEDS with triplet token embeddings."""
 
     def __init__(self, cfg: DictConfig):
         super().__init__()
-        dropout = cfg.model.params.dropout
+        dropout = cfg.dropout
         self.model = nn.LSTM(
-            cfg.model.embedder.token_dim,
-            cfg.model.embedder.token_dim,
-            num_layers=cfg.model.params.n_layers,
+            cfg.token_dim,
+            cfg.token_dim,
+            num_layers=cfg.n_layers,
             batch_first=True,
             dropout=dropout,
         )
-        self.get_last_token = cfg.model.get_last_token
+        self.get_last_token = cfg.get_last_token
 
     def forward(self, batch, mask=None):
         # pass tokens and attention mask to the lstm

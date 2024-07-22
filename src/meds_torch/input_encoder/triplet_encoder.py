@@ -1,20 +1,11 @@
 import dataclasses
 import enum
 
-import polars as pl
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from torch import nn
 
-OmegaConf.register_new_resolver(
-    "get_vocab_size",
-    lambda code_metadata_fp: pl.scan_parquet(code_metadata_fp)
-    .select("code/vocab_index")
-    .max()
-    .collect()
-    .item()
-    + 1,
-)
+from meds_torch.utils.module_class import Module
 
 
 @dataclasses.dataclass
@@ -46,13 +37,13 @@ class CVE(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
-        self.layer = nn.Linear(1, cfg.model.embedder.token_dim)
+        self.layer = nn.Linear(1, cfg.token_dim)
 
     def forward(self, x):
         return self.layer(x)
 
 
-class TripletEmbedder(nn.Module):
+class TripletEncoder(nn.Module, Module):
     """Container module with an encoder, a recurrent or transformer module, and a decoder.
 
     Copied from: https://github.com/pytorch/examples/blob/main/word_language_model/model.py
@@ -63,9 +54,7 @@ class TripletEmbedder(nn.Module):
         self.cfg = cfg
         # Define Triplet Embedders
         self.date_embedder = CVE(cfg)
-        self.code_embedder = torch.nn.Embedding(
-            cfg.model.embedder.vocab_size, embedding_dim=cfg.model.embedder.token_dim
-        )
+        self.code_embedder = torch.nn.Embedding(cfg.vocab_size, embedding_dim=cfg.token_dim)
         self.numerical_value_embedder = CVE(cfg)
 
     def embed_func(self, embedder, x):
@@ -98,7 +87,3 @@ class TripletEmbedder(nn.Module):
         embedding = self.get_embedding(batch)
         mask = batch["mask"]
         return embedding, mask
-
-    @classmethod
-    def initialize(cls, **kwargs: dict) -> "TripletEmbedder":
-        return cls(DictConfig(kwargs))

@@ -8,6 +8,7 @@ from meds_torch.data.components.multiwindow_pytorch_dataset import (
     MultiWindowPytorchDataset,
 )
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
+from meds_torch.utils.module_class import Module
 
 
 def get_dataset(cfg: DictConfig, split) -> PytorchDataset:
@@ -19,7 +20,7 @@ def get_dataset(cfg: DictConfig, split) -> PytorchDataset:
         raise NotImplementedError(f"{cfg.name} not implemented!")
 
 
-class MEDSDataModule(LightningDataModule):
+class MEDSDataModule(LightningDataModule, Module):
     """`LightningDataModule` for the MEDS pytorch dataset.
 
     TODO: Add documentation
@@ -165,10 +166,6 @@ class MEDSDataModule(LightningDataModule):
 
         :param state_dict: The datamodule state returned by `self.state_dict()`.
         """
-
-    @classmethod
-    def initialize_from_kwargs(cls, **kwargs: dict[str, Any]) -> "MEDSDataModule":
-        return cls(DictConfig(kwargs))
 
 
 if __name__ == "__main__":

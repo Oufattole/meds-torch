@@ -11,6 +11,10 @@ from hydra import compose, initialize
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, open_dict
 
+from meds_torch.utils.resolvers import setup_resolvers
+
+setup_resolvers()
+
 SUPERVISED_TASK_NAME = "supervised_task"
 
 
@@ -97,21 +101,11 @@ def meds_dir(tmp_path_factory) -> Path:
     return meds_dir
 
 
-@pytest.fixture(scope="package")
-def cfg_meds_multiwindow_train_global(meds_dir: Path) -> DictConfig:
-    """A pytest fixture for setting up a default Hydra DictConfig for training. All tests share the test data
-    directory.
-
-    :return: A DictConfig object containing a default Hydra configuration for training.
-    """
+def create_cfg(overrides, meds_dir: Path) -> DictConfig:
+    """Helper function to create Hydra DictConfig with given overrides and common settings."""
     with initialize(version_base="1.3", config_path="../configs"):
-        cfg = compose(
-            config_name="meds_train.yaml",
-            return_hydra_config=True,
-            overrides=["data=meds_multiwindow_pytorch_dataset"],
-        )
+        cfg = compose(config_name="meds_train.yaml", return_hydra_config=True, overrides=overrides)
 
-        # set defaults for all tests
         with open_dict(cfg):
             cfg.paths.root_dir = str(rootutils.find_root(indicator=".project-root"))
             cfg.paths.data_dir = str(meds_dir)
@@ -128,10 +122,23 @@ def cfg_meds_multiwindow_train_global(meds_dir: Path) -> DictConfig:
             cfg.extras.enforce_tags = False
             cfg.logger = None
             cfg.data.collate_type = "triplet"
-            cfg.data.cached_windows_dir = str(meds_dir / "cached_windows")
-            cfg.data.raw_windows_fp = str(meds_dir / "raw_windows.parquet")
+
+            # Additional settings for specific fixtures
+            if "data=meds_multiwindow_pytorch_dataset" in overrides:
+                cfg.data.cached_windows_dir = str(meds_dir / "cached_windows")
+                cfg.data.raw_windows_fp = str(meds_dir / "raw_windows.parquet")
 
     return cfg
+
+
+@pytest.fixture(scope="package")
+def cfg_meds_multiwindow_train_global(meds_dir: Path) -> DictConfig:
+    """A pytest fixture for setting up a default Hydra DictConfig for training. All tests share the test data
+    directory.
+
+    :return: A DictConfig object containing a default Hydra configuration for training.
+    """
+    return create_cfg(overrides=["data=meds_multiwindow_pytorch_dataset"], meds_dir=meds_dir)
 
 
 @pytest.fixture(scope="package")
@@ -141,28 +148,7 @@ def cfg_meds_train_global(meds_dir: Path) -> DictConfig:
 
     :return: A DictConfig object containing a default Hydra configuration for training.
     """
-    with initialize(version_base="1.3", config_path="../configs"):
-        cfg = compose(config_name="meds_train.yaml", return_hydra_config=True, overrides=[])
-
-        # set defaults for all tests
-        with open_dict(cfg):
-            cfg.paths.root_dir = str(rootutils.find_root(indicator=".project-root"))
-            cfg.paths.data_dir = str(meds_dir)
-            cfg.paths.meds_dir = str(meds_dir / "final_cohort")
-            cfg.trainer.max_epochs = 1
-            cfg.trainer.limit_train_batches = 0.01
-            cfg.trainer.limit_val_batches = 0.1
-            cfg.trainer.limit_test_batches = 0.1
-            cfg.trainer.accelerator = "cpu"
-            cfg.trainer.devices = 1
-            cfg.data.num_workers = 0
-            cfg.data.pin_memory = False
-            cfg.extras.print_config = False
-            cfg.extras.enforce_tags = False
-            cfg.logger = None
-            cfg.data.collate_type = "triplet"
-
-    return cfg
+    return create_cfg(overrides=[], meds_dir=meds_dir)
 
 
 @pytest.fixture(scope="function")

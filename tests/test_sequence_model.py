@@ -10,14 +10,16 @@ import torch
 from hydra import compose, initialize
 
 from meds_torch import embedder
-from meds_torch.model.architectures.lstm import LstmModel
-from meds_torch.model.architectures.transformer_decoder import TransformerDecoderModel
-from meds_torch.model.architectures.transformer_encoder import (
+from meds_torch.data.components.pytorch_dataset import PytorchDataset
+from meds_torch.sequence_models.components.lstm import LstmModel
+from meds_torch.sequence_models.components.transformer_decoder import (
+    TransformerDecoderModel,
+)
+from meds_torch.sequence_models.components.transformer_encoder import (
     AttentionAveragedTransformerEncoderModel,
     TransformerEncoderModel,
 )
-from meds_torch.model.supervised_model import SupervisedModule
-from meds_torch.pytorch_dataset import PytorchDataset
+from meds_torch.sequence_models.supervised_model import SupervisedModule
 
 IN_GITHUB_ACTIONS = os.getenv("GITHUB_ACTIONS") == "true"
 
@@ -96,7 +98,7 @@ def test_transformer_decoder(prep_embedding):
 @pytest.mark.skipif(IN_GITHUB_ACTIONS, reason="Test does not work in Github Actions due to Mamba setup.")
 def test_mamba(prep_embedding):
     embedding, mask, cfg = prep_embedding
-    from meds_torch.model.architectures.mamba import MambaModel
+    from meds_torch.sequence_models.components.mamba import MambaModel
 
     model = MambaModel(cfg).cuda()
     output = model(embedding.cuda(), mask.cuda())

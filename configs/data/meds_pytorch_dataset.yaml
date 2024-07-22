@@ -1,4 +1,4 @@
-_target_: meds_torch.data.meds_datamodule.MEDSDataModule.initialize_from_kwargs
+_target_: meds_torch.data.meds_datamodule.MEDSDataModule.initialize
 name: meds_pytorch_dataset
 # Path params
 data_dir: ${paths.data_dir}

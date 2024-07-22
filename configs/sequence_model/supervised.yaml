@@ -1,5 +1,5 @@
 defaults:
-  - backbone: transformer_decoder
+  - backbone: lstm
   - _self_
 _target_: meds_torch.sequence_models.supervised_model.SupervisedModule.initialize
 
@@ -16,8 +16,7 @@ scheduler:
   factor: 0.1
   patience: 10
 
-get_last_token: true
-get_representations: false
+token_dim: ${input_encoder.token_dim}
 
 # compile model for faster training with pytorch 2.0
 compile: false

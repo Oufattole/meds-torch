@@ -7,7 +7,8 @@ from loguru import logger
 from omegaconf import DictConfig
 from torch import nn
 
-from meds_torch.model.utils import OutputBase
+from meds_torch.sequence_models.utils import OutputBase
+from meds_torch.utils.module_class import Module
 
 
 @dataclasses.dataclass
@@ -17,20 +18,19 @@ class SupervisedOutput(OutputBase):
     loss: torch.Tensor
 
 
-class SupervisedModule(pl.LightningModule):
+class SupervisedModule(pl.LightningModule, Module):
     def __init__(
-        self, cfg: DictConfig, embedder: nn.Module, architecture: nn.Module, projection: nn.Module = None
+        self,
+        cfg: DictConfig,  # , embedder: nn.Module, architecture: nn.Module, projection: nn.Module = None
     ):
         super().__init__()
         self.cfg = cfg
-        self.task_name = cfg.task_name
+        # self.task_name = cfg.task_name
         # shared components
-        self.embedder = embedder
-        self.model = architecture
-        if projection is not None:
-            self.projection = projection
-        else:
-            self.projection = nn.Linear(cfg.model.embedder.token_dim, 1)
+        self.optimizer = cfg.optimizer
+        self.scheduler = cfg.scheduler
+        self.model = cfg.backbone
+        self.projection = nn.Linear(cfg.token_dim, 1)
 
         # finetune metrics
         self.train_acc = torchmetrics.Accuracy(task="binary")

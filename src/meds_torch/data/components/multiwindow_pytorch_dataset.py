@@ -90,7 +90,6 @@ def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) ->
         pl.col("timestamp").explode().search_sorted(pl.col(col).explode()).alias(f"{col}_idx")
         for col in datetime_cols
     ]
-    windows_df.filter(pl.col("patient_id").eq(1195293)).select(pl.col("timestamp"))
     return windows_df.groupby(pl.col("patient_id")).agg(expr)
 
 
