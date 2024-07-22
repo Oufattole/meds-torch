@@ -3,8 +3,8 @@
 
 import dataclasses
 
+import lightning as L
 import numpy as np
-import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
@@ -47,7 +47,7 @@ def top_k_logits(logits, k):
     return torch.where(logits < min_values, torch.ones_like(logits, dtype=logits.dtype) * -1e10, logits)
 
 
-class TripletGPTModel(pl.LightningModule):
+class TripletGPTModel(L.LightningModule):
     """Triplet based GPT Forecasting Model."""
 
     def __init__(self, cfg: DictConfig):

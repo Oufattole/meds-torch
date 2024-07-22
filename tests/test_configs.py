@@ -1,8 +1,8 @@
 import hydra
 import pytest
 from hydra.core.hydra_config import HydraConfig
+from lightning import LightningModule
 from omegaconf import DictConfig
-from pytorch_lightning import LightningModule
 
 
 @pytest.fixture
@@ -24,15 +24,15 @@ from meds_torch.sequence_models.components.transformer_encoder import (
 from meds_torch.sequence_models.components.transformer_encoder_attn_avg import (
     AttentionAveragedTransformerEncoderModel,
 )
-from tests.conftest import create_cfg
+from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 
 
 @pytest.mark.parametrize("data", ["meds_pytorch_dataset", "meds_multiwindow_pytorch_dataset"])
 @pytest.mark.parametrize("input_encoder", ["triplet_encoder"])
 @pytest.mark.parametrize(
     "backbone",
-    ["lstm", "transformer_decoder", "mamba", "transformer_encoder", "transformer_encoder_attn_avg"],
-)
+    ["lstm", "transformer_decoder", "transformer_encoder", "transformer_encoder_attn_avg"],
+)  # TODO: add mamba unittest with a runIF conditional
 @pytest.mark.parametrize("model", ["supervised"])
 def test_train_config(
     data: str, input_encoder: str, backbone: str, model: str, meds_dir
@@ -44,21 +44,23 @@ def test_train_config(
     # input_encoder=input_encoder
     overrides = [
         f"data={data}",
-        f"input_encoder={input_encoder}",
+        f"sequence_model/input_encoder={input_encoder}",
         f"sequence_model/backbone={backbone}",
         f"sequence_model={model}",
     ]
+    if model == "supervised":
+        overrides.append(f"data.task_name={SUPERVISED_TASK_NAME}")
     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
     assert isinstance(cfg, DictConfig)
     assert isinstance(cfg.data, DictConfig)
-    assert isinstance(cfg.input_encoder, DictConfig)
+    assert isinstance(cfg.sequence_model.input_encoder, DictConfig)
     assert isinstance(cfg.sequence_model.backbone, DictConfig)
     assert isinstance(cfg.sequence_model, DictConfig)
 
     HydraConfig().set_config(cfg)
 
     assert isinstance(hydra.utils.instantiate(cfg.data), MEDSDataModule)
-    assert isinstance(hydra.utils.instantiate(cfg.input_encoder), TripletEncoder)
+    assert isinstance(hydra.utils.instantiate(cfg.sequence_model.input_encoder), TripletEncoder)
     backbone_model = hydra.utils.instantiate(cfg.sequence_model.backbone)
     if backbone == "lstm":
         assert isinstance(backbone_model, LstmModel)

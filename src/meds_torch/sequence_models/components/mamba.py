@@ -8,6 +8,11 @@ try:
 except ImportError:
     logger.warning("Please install mamba-ssm to use this model.")
 
+from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
+from meds_torch.sequence_models import (
+    SEQUENCE_MODEL_EMBEDDINGS_KEY,
+    SEQUENCE_MODEL_TOKENS_KEY,
+)
 from meds_torch.sequence_models.components.utils import get_last_token
 from meds_torch.utils.module_class import Module
 
@@ -30,9 +35,9 @@ class MambaModel(torch.nn.Module, Module):
         self.model = model
         self.get_last_token = cfg.get_last_token
 
-    def forward(self, batch, mask):
-        output = self.model(batch.transpose(1, 2))
-        if self.get_last_token:
-            return get_last_token(output.logits, mask)
-        else:
-            return output
+    def forward(self, batch):
+        input_data, mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
+        output = self.model(input_data.transpose(1, 2))
+        batch[SEQUENCE_MODEL_TOKENS_KEY] = output
+        batch[SEQUENCE_MODEL_EMBEDDINGS_KEY] = get_last_token(output, mask)
+        return batch

@@ -105,7 +105,8 @@ class MEDSDataModule(LightningDataModule, Module):
 
         # load and split datasets only if not loaded already
         self.data_train = get_dataset(self.cfg, split="train")
-        self.data_val = get_dataset(self.cfg, split="tuning")
+        if stage != "train":  # TODO: remove this after we have more test data
+            self.data_val = get_dataset(self.cfg, split="tuning")
         if stage in ["test", None]:
             self.data_test = get_dataset(self.cfg, split="held-out")
 

@@ -1,5 +1,0 @@
-_target_: meds_torch.input_encoder.triplet_encoder.TripletEncoder.initialize
-collate_style: triplet
-max_seq_len: 512
-token_dim: 4
-vocab_size: ${get_vocab_size:${data.code_metadata_fp}}

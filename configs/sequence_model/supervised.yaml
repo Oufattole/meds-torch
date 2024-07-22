@@ -1,4 +1,5 @@
 defaults:
+  - input_encoder: triplet_encoder
   - backbone: lstm
   - _self_
 _target_: meds_torch.sequence_models.supervised_model.SupervisedModule.initialize
@@ -16,7 +17,12 @@ scheduler:
   factor: 0.1
   patience: 10
 
-token_dim: ${input_encoder.token_dim}
+max_seq_len: 512
+token_dim: 4
+vocab_size: ${get_vocab_size:${data.code_metadata_fp}}
+get_representations: false
+task_name: ${data.task_name}
+batch_size: ${data.dataloader.batch_size}
 
 # compile model for faster training with pytorch 2.0
 compile: false

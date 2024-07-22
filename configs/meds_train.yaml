@@ -5,7 +5,6 @@
 defaults:
   - _self_
   - data: meds_pytorch_dataset
-  - input_encoder: triplet_encoder
   - sequence_model: supervised
   - callbacks: default
   - logger: null # set logger here or use command line (e.g. `python train.py logger=tensorboard`)

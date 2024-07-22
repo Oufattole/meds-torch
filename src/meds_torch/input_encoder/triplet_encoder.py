@@ -5,6 +5,7 @@ import torch
 from omegaconf import DictConfig
 from torch import nn
 
+from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.utils.module_class import Module
 
 
@@ -85,5 +86,6 @@ class TripletEncoder(nn.Module, Module):
 
     def forward(self, batch):
         embedding = self.get_embedding(batch)
-        mask = batch["mask"]
-        return embedding, mask
+        batch[INPUT_ENCODER_MASK_KEY] = batch["mask"]
+        batch[INPUT_ENCODER_TOKENS_KEY] = embedding
+        return batch
