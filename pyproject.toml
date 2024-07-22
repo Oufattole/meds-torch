@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meds-torch"
-version = "0.0.1"
+version = "0.0.1a1"
 authors = [
   {name="Matthew McDermott", email="mattmcdermott8@gmail.com"},
   {name="Nassim Oufattole", email="noufattole@gmail.com"},
