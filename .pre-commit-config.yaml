@@ -19,7 +19,20 @@ repos:
       - id: check-case-conflict
       - id: check-added-large-files
         args: [--maxkb, "800"]
-
+  # Python docstring formatting
+  - repo: https://github.com/PyCQA/docformatter
+    rev: v1.7.5
+    hooks:
+      - id: docformatter
+        name: docformatter
+        args:
+          [
+            "-i",
+            "--black",
+            "--wrap-descriptions=110",
+            "--wrap-summaries=110",
+            "--force-wrap",
+          ]
   # python code formatting
   - repo: https://github.com/psf/black
     rev: 23.7.0
