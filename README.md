@@ -6,13 +6,13 @@
   <a href="https://hydra.cc/"><img alt="Config: Hydra" src="https://img.shields.io/badge/Config-Hydra-89b8cd"></a>
   <a href="https://github.com/ashleve/lightning-hydra-template"><img alt="Template" src="https://img.shields.io/badge/-Lightning--Hydra--Template-017F2F?style=flat&logo=github&labelColor=gray"></a><br>
   <a href="https://www.python.org/downloads/release/python-3100/"><img alt="Python" src="https://img.shields.io/badge/-Python_3.12+-blue?logo=python&logoColor=white"></a>
-  <a href="https://pypi.org/project/meds-torch/"><img alt="PyPI" src="https://img.shields.io/badge/PyPI-v0.2.5-orange?logoColor=orange"></a>
+  <a href="https://pypi.org/project/meds-torch/"><img alt="PyPI" src="https://img.shields.io/badge/PyPI-v0.0.1a1-blue?logoColor=blue"></a>
   <a href="https://hydra.cc/"><img alt="Hydra" src="https://img.shields.io/badge/Config-Hydra_1.3-89b8cd"></a>
-  <a href="https://codecov.io/gh/oufattole/meds-torch"><img alt="Codecov" src="https://codecov.io/gh/mmcdermott/MEDS_Tabular_AutoML/graph/badge.svg?token=6GD05EDQ39"></a>
+  <a href="https://codecov.io/github/Oufattole/meds-torch"><img src="https://codecov.io/github/Oufattole/meds-torch/graph/badge.svg?token=BV119L5JQJ"/></a>
   <a href="https://github.com/Oufattole/meds-torch/actions/workflows/tests.yaml"><img alt="Tests" src="https://github.com/Oufattole/meds-torch/actions/workflows/tests.yaml/badge.svg"></a>
   <a href="https://github.com/Oufattole/meds-torch/actions/workflows/code-quality-main.yaml"><img alt="Code Quality" src="https://github.com/Oufattole/meds-torch/actions/workflows/code-quality-main.yaml/badge.svg"></a>
-  <a href='https://meds-torch.readthedocs.io/en/latest/?badge=latest'><img src='https://readthedocs.org/projects/meds-torch/badge/?version=latest' alt='Documentation Status' /></a>
-  <a href="https://github.com/Oufattole/meds-torch/graphs/contributors"><img alt="Contributors" src="https://img.shields.io/github/contributors/mmcdermott/MEDS_Tabular_AutoML.svg"></a>
+<!--   <a href='https://meds-torch.readthedocs.io/en/latest/?badge=latest'><img src='https://readthedocs.org/projects/meds-torch/badge/?version=latest' alt='Documentation Status' /></a> -->
+  <a href="https://github.com/Oufattole/meds-torch/graphs/contributors"><img alt="Contributors" src="https://img.shields.io/github/contributors/oufattole/meds-torch.svg"></a>
   <a href="https://github.com/Oufattole/meds-torch/pulls"><img alt="Pull Requests" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg"></a>
   <a href="https://github.com/Oufattole/meds-torch#license"><img alt="License" src="https://img.shields.io/badge/License-MIT-green.svg?labelColor=gray"></a>
 </p>
@@ -23,7 +23,7 @@
 
 ## Description
 
-This repository provides a comprehensive suite for advanced machine learning over Electronic Health Records (EHR) using PyTorch, PyTorch Lightning, and Hydra for configuration management. The project leverages MEDS-Tab, a robust system for transforming EHR data into a structured, tabular format that enhances the accessibility and analyzability of medical datasets. By employing a variety of tokenization strategies and neural network architectures, this framework facilitates the development and testing of models that can predict, generate, and understand complex medical trajectories.
+This repository provides a comprehensive suite for advanced machine learning over Electronic Health Records (EHR) using PyTorch, PyTorch Lightning, and Hydra for configuration management. The project leverages MEDS_Polars, a robust system for transforming EHR data into a structured, tabular format that enhances the accessibility and analyzability of medical datasets. By employing a variety of tokenization strategies and neural network architectures, this framework facilitates the development and testing of models that can predict, generate, and understand complex medical trajectories.
 
 Key features include:
 
