@@ -11,7 +11,7 @@ import pytest
 from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 
 
-@pytest.mark.parametrize("data", ["meds_pytorch_dataset"])
+@pytest.mark.parametrize("data", ["pytorch_dataset"])
 @pytest.mark.parametrize("input_encoder", ["triplet_encoder"])
 @pytest.mark.parametrize(
     "backbone",

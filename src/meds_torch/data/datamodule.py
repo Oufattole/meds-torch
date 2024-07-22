@@ -12,9 +12,9 @@ from meds_torch.utils.module_class import Module
 
 
 def get_dataset(cfg: DictConfig, split) -> PytorchDataset:
-    if cfg.name == "meds_multiwindow_pytorch_dataset":
+    if cfg.name == "multiwindow_pytorch_dataset":
         return MultiWindowPytorchDataset(cfg, split)
-    elif cfg.name == "meds_pytorch_dataset":
+    elif cfg.name == "pytorch_dataset":
         return PytorchDataset(cfg, split)
     else:
         raise NotImplementedError(f"{cfg.name} not implemented!")

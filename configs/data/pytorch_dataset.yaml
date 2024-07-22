@@ -1,5 +1,5 @@
-_target_: meds_torch.data.meds_datamodule.MEDSDataModule.initialize
-name: meds_pytorch_dataset
+_target_: meds_torch.data.datamodule.MEDSDataModule.initialize
+name: pytorch_dataset
 # Path params
 data_dir: ${paths.data_dir}
 meds_dir: ${paths.meds_dir}

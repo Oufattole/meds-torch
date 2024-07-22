@@ -13,7 +13,7 @@ from meds_torch.data.components.multiwindow_pytorch_dataset import (
     MultiWindowPytorchDataset,
 )
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
-from meds_torch.data.meds_datamodule import MEDSDataModule
+from meds_torch.data.datamodule import MEDSDataModule
 
 # from meds_torch.data.components.pytorch_dataset
 from tests.conftest import SUPERVISED_TASK_NAME
@@ -21,8 +21,8 @@ from tests.helpers.run_sh_command import run_command
 
 
 @pytest.mark.parametrize("collate_type", ["triplet", "event_stream"])
-def test_meds_pytorch_dataset(cfg_meds_train, collate_type):
-    cfg = cfg_meds_train
+def test_pytorch_dataset(cfg_train, collate_type):
+    cfg = cfg_train
     cfg.data.collate_type = collate_type
     pyd = PytorchDataset(cfg.data, split="train")
     assert not pyd.has_task
@@ -53,8 +53,8 @@ def test_meds_pytorch_dataset(cfg_meds_train, collate_type):
 
 
 @pytest.mark.parametrize("collate_type", ["triplet", "event_stream"])
-def test_meds_pytorch_dataset_with_supervised_task(cfg_meds_train, collate_type):
-    cfg = cfg_meds_train
+def test_pytorch_dataset_with_supervised_task(cfg_train, collate_type):
+    cfg = cfg_train
     cfg.data.collate_type = collate_type
     with open_dict(cfg):
         cfg.data.task_name = SUPERVISED_TASK_NAME
@@ -115,9 +115,9 @@ windows:
 @pytest.mark.parametrize("window_config", [RANDOM_LOCAL_WINDOWS])
 @pytest.mark.parametrize("collate_type", ["triplet"])
 def test_contrastive_windows(
-    cfg_meds_multiwindow_train, tmp_path, window_config, patient_level_sampling, collate_type
+    cfg_multiwindow_train, tmp_path, window_config, patient_level_sampling, collate_type
 ):
-    cfg = cfg_meds_multiwindow_train
+    cfg = cfg_multiwindow_train
     cfg.data.collate_type = collate_type
     cfg.data.patient_level_sampling = patient_level_sampling
     assert cfg.data.cached_windows_dir
@@ -164,8 +164,8 @@ def test_contrastive_windows(
         }
 
 
-def test_meds_datamodule(cfg_meds_train):
-    cfg = cfg_meds_train.copy()
+def test_datamodule(cfg_train):
+    cfg = cfg_train.copy()
     cfg.data.dataloader.batch_size = 1
     dm = MEDSDataModule(cfg.data)
     dm.prepare_data()

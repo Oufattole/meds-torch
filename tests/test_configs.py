@@ -11,7 +11,7 @@ def cfg(request):
     return request.getfixturevalue(request.param)
 
 
-from meds_torch.data.meds_datamodule import MEDSDataModule
+from meds_torch.data.datamodule import MEDSDataModule
 from meds_torch.input_encoder.triplet_encoder import TripletEncoder
 from meds_torch.sequence_models.components.lstm import LstmModel
 from meds_torch.sequence_models.components.mamba import MambaModel
@@ -27,7 +27,7 @@ from meds_torch.sequence_models.components.transformer_encoder_attn_avg import (
 from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 
 
-@pytest.mark.parametrize("data", ["meds_pytorch_dataset", "meds_multiwindow_pytorch_dataset"])
+@pytest.mark.parametrize("data", ["pytorch_dataset", "multiwindow_pytorch_dataset"])
 @pytest.mark.parametrize("input_encoder", ["triplet_encoder"])
 @pytest.mark.parametrize(
     "backbone",
