@@ -17,7 +17,8 @@ scheduler:
   factor: 0.1
   patience: 10
 
-max_seq_len: 512
+early_fusion: true
+max_seq_len: ${data.max_seq_len} # doubled if early fusion
 token_dim: 4
 vocab_size: ${get_vocab_size:${data.code_metadata_fp}}
 get_representations: false

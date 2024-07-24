@@ -1,10 +1,12 @@
 import dataclasses
 
 import torch
+import torch.nn.functional as F
 import torchmetrics
 from omegaconf import DictConfig
 from torch import nn
 
+from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models import (
     BACKBONE_EMBEDDINGS_KEY,
     MODEL_EMBEDDINGS_KEY,
@@ -26,6 +28,10 @@ class OCPPretrainOutput(OutputBase):
 
 class OCPModule(BaseModule):
     def __init__(self, cfg: DictConfig):
+        if cfg.early_fusion:
+            # double the sequence length for early fusion as we concatenate the pre and post tokens
+            cfg = cfg.copy()
+            cfg.max_seq_len = cfg.max_seq_len * 2
         super().__init__(cfg)
 
         # pretrain metrics
@@ -36,32 +42,76 @@ class OCPModule(BaseModule):
         self.val_auc = torchmetrics.AUROC(num_classes=cfg.batch_size, task="binary")
 
         # pretraining model components
-        self.projection = nn.Linear(cfg.token_dim * 2, 1)
+        if cfg.early_fusion:
+            self.projection = nn.Linear(cfg.token_dim, 1)
+        else:
+            self.projection = nn.Linear(cfg.token_dim * 2, 1)
         self.criterion = torch.nn.BCEWithLogitsLoss()
 
+    @classmethod
+    def early_fusion_pad(cls, pre, post):
+        """Determines the maximum sequence length and pad the sequences to it."""
+        max_length = max(pre.size(-1), post.size(-1))
+        pre_padded = F.pad(pre, (0, max_length - pre.size(-1)))
+        post_padded = F.pad(post, (0, max_length - post.size(-1)))
+        return pre_padded, post_padded
+
+    @classmethod
+    def shuffled_concat(cls, pre, post, random_flips):
+        """Shuffles the pre and post sequences and concatenates them."""
+        shuffled_pre_data = torch.where(random_flips, post, pre)
+        shuffled_post_data = torch.where(random_flips, pre, post)
+        shuffled_data = torch.concat([shuffled_pre_data, shuffled_post_data], dim=-1)
+        return shuffled_data
+
     def forward(self, batch):
-        pre_batch = batch[self.cfg.pre_window_name]
-        pre_batch = self.input_encoder(pre_batch)
-        pre_batch = self.model(pre_batch)
-        pre_outputs = pre_batch[BACKBONE_EMBEDDINGS_KEY]
+        if self.cfg.early_fusion:
+            pre_batch = batch[self.cfg.pre_window_name]
+            pre_batch = self.input_encoder(pre_batch)
+            post_batch = batch[self.cfg.post_window_name]
+            post_batch = self.input_encoder(post_batch)
 
-        post_batch = batch[self.cfg.post_window_name]
-        post_batch = self.input_encoder(post_batch)
-        post_batch = self.model(post_batch)
-        post_outputs = post_batch[BACKBONE_EMBEDDINGS_KEY]
+            random_flips = torch.randint(0, 2, (pre_batch[INPUT_ENCODER_MASK_KEY].shape[0], 1)).bool()
 
-        random_flips = torch.randint(0, 2, (pre_outputs.shape[0], 1)).bool()
-        shuffled_pre_outputs = torch.where(random_flips, post_outputs, pre_outputs)
-        shuffled_post_outputs = torch.where(random_flips, pre_outputs, post_outputs)
-        classifier_inputs = torch.concat([shuffled_pre_outputs, shuffled_post_outputs], dim=1)
+            pre_padded_mask, post_padded_mask = self.early_fusion_pad(
+                pre_batch[INPUT_ENCODER_MASK_KEY], post_batch[INPUT_ENCODER_MASK_KEY]
+            )
+            fusion_mask = self.shuffled_concat(pre_padded_mask, post_padded_mask, random_flips)
 
+            pre_padded_tokens, post_padded_tokens = self.early_fusion_pad(
+                pre_batch[INPUT_ENCODER_TOKENS_KEY], post_batch[INPUT_ENCODER_TOKENS_KEY]
+            )
+            fusion_tokens = self.shuffled_concat(
+                pre_padded_tokens, post_padded_tokens, random_flips.unsqueeze(-1)
+            )
+
+            # Repeat the same procedure for the token embeddings
+            fused_batch = {INPUT_ENCODER_MASK_KEY: fusion_mask, INPUT_ENCODER_TOKENS_KEY: fusion_tokens}
+            batch = self.model(fused_batch)
+            output = batch
+            classifier_inputs = batch[BACKBONE_EMBEDDINGS_KEY]
+        else:
+            pre_batch = batch[self.cfg.pre_window_name]
+            pre_batch = self.input_encoder(pre_batch)
+            pre_batch = self.model(pre_batch)
+            pre_outputs = pre_batch[BACKBONE_EMBEDDINGS_KEY]
+
+            post_batch = batch[self.cfg.post_window_name]
+            post_batch = self.input_encoder(post_batch)
+            post_batch = self.model(post_batch)
+            post_outputs = post_batch[BACKBONE_EMBEDDINGS_KEY]
+
+            random_flips = torch.randint(0, 2, (pre_outputs.shape[0], 1)).bool()
+            shuffled_pre_outputs = torch.where(random_flips, post_outputs, pre_outputs)
+            shuffled_post_outputs = torch.where(random_flips, pre_outputs, post_outputs)
+            classifier_inputs = torch.concat([shuffled_pre_outputs, shuffled_post_outputs], dim=1)
+            output = dict(
+                pre=pre_batch,
+                post=post_batch,
+            )
         logits = self.projection(classifier_inputs)
         loss = self.criterion(logits, random_flips.float())
 
-        output = dict(
-            pre=pre_batch,
-            post=post_batch,
-        )
         output[MODEL_EMBEDDINGS_KEY] = classifier_inputs
         output[MODEL_TOKENS_KEY] = None
         output[MODEL_LOSS_KEY] = loss

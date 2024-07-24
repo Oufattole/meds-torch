@@ -50,7 +50,7 @@ def test_train(
     "backbone",
     ["transformer_decoder"],
 )
-@pytest.mark.parametrize("model", ["ebcl", "ocp"])  # "token_forecasting", "value_forecasting"
+@pytest.mark.parametrize("model", ["ebcl"])  # "token_forecasting", "value_forecasting"
 def test_ebcl_train(
     data: str, input_encoder: str, backbone: str, model: str, meds_dir
 ) -> None:  # cfg: DictConfig,
@@ -65,6 +65,40 @@ def test_ebcl_train(
         f"model/backbone={backbone}",
         f"model={model}",
         f"data.task_name={SUPERVISED_TASK_NAME}",
+    ]
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
+    assert Path(cfg.data.task_label_path).exists()
+    dm = hydra.utils.instantiate(cfg.data)
+    dm.setup(stage="train")
+    train_dataloader = dm.train_dataloader()
+    lightning.Trainer(accelerator="cpu", fast_dev_run=True).fit(
+        model=hydra.utils.instantiate(cfg.model),
+        train_dataloaders=train_dataloader,
+    )
+
+
+@pytest.mark.parametrize("data", ["multiwindow_pytorch_dataset"])
+@pytest.mark.parametrize("input_encoder", ["triplet_encoder"])
+@pytest.mark.parametrize(
+    "backbone",
+    ["transformer_decoder"],
+)
+@pytest.mark.parametrize("early_fusion", ["true", "false"])  # "token_forecasting", "value_forecasting"
+def test_ocp_train(
+    data: str, input_encoder: str, backbone: str, early_fusion: str, meds_dir
+) -> None:  # cfg: DictConfig,
+    """Tests the training configuration provided by the `cfg_train` pytest fixture.
+
+    :param cfg_train: A DictConfig containing a valid training configuration.
+    """
+    # input_encoder=input_encoder
+    overrides = [
+        f"data={data}",
+        f"model/input_encoder={input_encoder}",
+        f"model/backbone={backbone}",
+        "model=ocp",
+        f"data.task_name={SUPERVISED_TASK_NAME}",
+        f"model.early_fusion={early_fusion}",
     ]
     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
     assert Path(cfg.data.task_label_path).exists()
