@@ -3,15 +3,15 @@
 
 import dataclasses
 
-import lightning as L
 import numpy as np
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch import nn
 
-from meds_torch.model.architectures.transformer_decoder import TransformerDecoderModel
-from meds_torch.model.supervised_model import OutputBase
+from meds_torch.models.base_model import BaseModule
+from meds_torch.models.components.transformer_decoder import TransformerDecoderModel
+from meds_torch.models.utils import OutputBase
 
 # from meds_torch.model.architectures.mamba import MambaModel
 
@@ -47,29 +47,22 @@ def top_k_logits(logits, k):
     return torch.where(logits < min_values, torch.ones_like(logits, dtype=logits.dtype) * -1e10, logits)
 
 
-class TripletGPTModel(L.LightningModule):
+class TripletTokenForecastingModule(BaseModule):
     """Triplet based GPT Forecasting Model."""
 
     def __init__(self, cfg: DictConfig):
-        super().__init__()
-        self.cfg = cfg
-        self.model = _load_gpt_model(cfg)
+        super().__init__(cfg)
         self.cont_val_head = nn.Linear(
-            cfg.model_config.embed_size,
-            cfg.dataset_config.n_variable - cfg.dataset_config.n_cat_variable,
-            bias=False,
-        )
-        self.cat_val_head = nn.Linear(
-            cfg.model_config.embed_size,
-            cfg.dataset_config.n_cat_value + cfg.model_config.token_offset,
+            cfg.token_dim,
+            cfg.vocab_size,
             bias=False,
         )
         self.var_head = nn.Linear(
-            cfg.model_config.embed_size,
-            cfg.dataset_config.n_variable + cfg.model_config.token_offset,
+            cfg.token_dim,
+            cfg.vocab_size,
             bias=False,
         )
-        self.time_head = nn.Linear(cfg.model_config.embed_size, 1, bias=False)
+        self.time_head = nn.Linear(cfg.token_dim, 1, bias=False)
 
         self.temperature = 1
         self.top_k = 0
@@ -176,14 +169,6 @@ class TripletGPTModel(L.LightningModule):
         assert not torch.isnan(output.loss), "Loss is NaN"
         return output.loss
 
-    def configure_optimizers(self):
-        if self.cfg.model_config.half_dtype:
-            eps = 1e-4
-        else:
-            eps = 1e-8
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.cfg.model_config.lr, eps=eps)
-        return optimizer
-
     def generate(self, batch, length=3, sample=False):
         context = {
             "date": batch["early_fusion"]["date"].clone(),
@@ -249,12 +234,3 @@ class TripletGPTModel(L.LightningModule):
             "values": np.concatenate(generated_values),
         }
         return results
-
-    @classmethod
-    def initialize_pretrain(cls, cfg):
-        return cls(cfg)
-
-    @classmethod
-    def initialize_finetune(cls, cfg, ckpt_path: str):
-        assert not cfg.pretrain
-        return cls.load_from_checkpoint(ckpt_path, cfg=cfg)

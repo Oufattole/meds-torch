@@ -17,7 +17,7 @@ from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
     "backbone",
     ["transformer_decoder"],
 )
-@pytest.mark.parametrize("model", ["supervised"])
+@pytest.mark.parametrize("model", ["supervised", "ebcl", "ocp", "token_forecasting", "value_forecasting"])
 def test_train(
     data: str, input_encoder: str, backbone: str, model: str, meds_dir
 ) -> None:  # cfg: DictConfig,

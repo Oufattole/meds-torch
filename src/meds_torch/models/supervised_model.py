@@ -1,6 +1,5 @@
 import dataclasses
 
-import lightning as L
 import torch
 import torchmetrics
 from loguru import logger
@@ -8,8 +7,8 @@ from omegaconf import DictConfig
 from torch import nn
 
 from meds_torch.models import model_EMBEDDINGS_KEY
+from meds_torch.models.base_model import BaseModule
 from meds_torch.models.utils import OutputBase
-from meds_torch.utils.module_class import Module
 
 
 @dataclasses.dataclass
@@ -19,22 +18,17 @@ class SupervisedOutput(OutputBase):
     loss: torch.Tensor
 
 
-class SupervisedModule(L.LightningModule, Module):
+class SupervisedModule(BaseModule):
     def __init__(
         self,
         cfg: DictConfig,  # , embedder: nn.Module, architecture: nn.Module, projection: nn.Module = None
     ):
-        super().__init__()
-        self.cfg = cfg
+        super().__init__(cfg)
         self.task_name = cfg.task_name
         if cfg.task_name is None:
             raise ValueError("task name must be specified")
         # shared components
-        self.optimizer = cfg.optimizer
-        self.scheduler = cfg.scheduler
-        self.model = cfg.backbone
         self.projection = nn.Linear(cfg.token_dim, 1)
-        self.input_encoder = cfg.input_encoder
 
         # metrics
         self.train_acc = torchmetrics.Accuracy(task="binary")
@@ -177,7 +171,3 @@ class SupervisedModule(L.LightningModule, Module):
             "test_apr",
             self.test_apr.compute(),
         )
-
-    def configure_optimizers(self):
-        optimizer = self.optimizer(self.parameters())
-        return optimizer

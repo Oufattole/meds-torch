@@ -29,7 +29,7 @@ from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
     "backbone",
     ["lstm", "transformer_decoder", "transformer_encoder", "transformer_encoder_attn_avg"],
 )  # TODO: add mamba unittest with a runIF conditional
-@pytest.mark.parametrize("model", ["supervised"])
+@pytest.mark.parametrize("model", ["supervised", "ebcl", "ocp", "token_forecasting", "value_forecasting"])
 def test_train_config(
     data: str, input_encoder: str, backbone: str, model: str, meds_dir
 ) -> None:  # cfg: DictConfig,
@@ -71,29 +71,3 @@ def test_train_config(
     else:
         raise NotImplementedError(f"Unsupported backbone {backbone}!")
     assert isinstance(hydra.utils.instantiate(cfg.model), LightningModule)
-
-
-# @pytest.mark.parametrize("model", ["supervised"]) # "transformer_decoder"
-# def test_train_config(data: str, input_encoder: str, backbone: str, meds_dir) -> None: # cfg: DictConfig,
-#     """Tests the training configuration provided by the `cfg_train` pytest fixture.
-
-#     :param cfg_train: A DictConfig containing a valid training configuration.
-#     """
-#     # input_encoder=input_encoder
-#     overrides = [f"data={data}", f"input_encoder={input_encoder}", f"model/backbone={backbone}"]
-#     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
-
-#     HydraConfig().set_config(cfg)
-#     backbone_model = hydra.utils.instantiate(cfg.model.backbone)
-#     if backbone == "lstm":
-#         assert isinstance(backbone_model, LstmModel)
-#     elif backbone == "transformer_decoder":
-#         assert isinstance(backbone_model, TransformerDecoderModel)
-#     elif backbone == "mamba":
-#         assert isinstance(backbone_model, MambaModel)
-#     elif backbone == "transformer_encoder":
-#         assert isinstance(backbone_model, TransformerEncoderModel)
-#     elif backbone == "transformer_encoder_attn_avg":
-#         assert isinstance(backbone_model, AttentionAveragedTransformerEncoderModel)
-#     else:
-#         raise NotImplementedError(f"Unsupported backbone {backbone}!")
