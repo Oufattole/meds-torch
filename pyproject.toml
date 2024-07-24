@@ -4,10 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meds-torch"
-version = "0.0.1"
+version = "0.0.1a1"
 authors = [
   {name="Matthew McDermott", email="mattmcdermott8@gmail.com"},
   {name="Nassim Oufattole", email="noufattole@gmail.com"},
+  {name="Teya Bergamaschi", email="teyabergamaschi@gmail.com"},
+  {name="Aleksia Kolo", email="aleksiakolo@gmail.com"},
 ]
 description = "A MEDS PyTorch Dataset, leveraging a on-the-fly retrieval strategy for flexible, efficient data loading."
 readme = "README.md"
@@ -18,17 +20,48 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "polars", "pyarrow", "nested_ragged_tensors", "loguru", "numpy", "ml-mixins", "torch", "omegaconf", "hydra-core", "lightning", "x-transformers", "transformers",
+    "es-aces", "polars", "pyarrow", "nested_ragged_tensors", "loguru", "numpy", "ml-mixins", "torch", "omegaconf", "hydra-core", "lightning", "x-transformers", "rich", "hydra-colorlog", "hydra-optuna-sweeper", "wandb", "torchmetrics", "torchvision",
 ]
 
 [project.optional-dependencies]
 mamba = ["mamba-ssm", "causal-conv1d>=1.4.0"]
-dev = ["pre-commit","notebook"]
-tests = ["pytest", "pytest-cov[toml]", "rootutils", "pytest-sugar", "pytest-instafail", "pytest-xdist"]
+dev = ["pre-commit","notebook", "pdbpp"]
+tests = ["pytest", "pytest-cov[toml]", "rootutils", "pytest-sugar", "pytest-instafail", "pytest-xdist", "sh"]
+aces = ["es-aces"]
 
 [pytest]
 looponfailroots = ["tests"]
 
+[tool.pytest.ini_options]
+addopts = [
+  "--color=yes",
+  "--durations=0",
+  "--strict-markers",
+  "--doctest-modules",
+]
+filterwarnings = [
+  "ignore::DeprecationWarning",
+  "ignore::UserWarning",
+]
+log_cli = "True"
+markers = [
+  "slow: slow tests",
+]
+minversion = "6.0"
+testpaths = "tests/"
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: nocover",
+    "raise NotImplementedError",
+    "raise NotImplementedError()",
+    "if __name__ == .__main__.:",
+]
+
 [project.urls]
 Homepage = "https://github.com/oufattole/meds-torch"
 Issues = "https://github.com/oufattole/meds-torch/issues"
+
+[project.scripts]
+meds-torch-train = "meds_torch.train:main"
+meds-torch-eval = "meds_torch.eval:main"
