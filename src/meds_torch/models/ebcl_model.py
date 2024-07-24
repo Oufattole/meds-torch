@@ -1,6 +1,3 @@
-import dataclasses
-import enum
-
 import torch
 import torchmetrics
 from omegaconf import DictConfig
@@ -14,28 +11,6 @@ from meds_torch.models import (
     MODEL_TOKENS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
-from meds_torch.models.utils import OutputBase
-
-
-class SupervisedView(enum.Enum):
-    PRE = "pre"
-    POST = "post"
-    PRE_AND_POST = "pre_and_post"
-
-
-@dataclasses.dataclass
-class EBCLOutput(OutputBase):
-    loss: float
-    logits_per_pre: torch.Tensor
-    logits_per_post: torch.Tensor
-    post_embeds: torch.Tensor
-    pre_embeds: torch.Tensor
-    pre_norm_embeds: torch.Tensor
-    post_norm_embeds: torch.Tensor
-    post_model_output: torch.Tensor
-    pre_model_output: torch.Tensor
-    pre_attn: torch.Tensor = None
-    post_attn: torch.Tensor = None
 
 
 class EBCLModule(BaseModule):
@@ -67,12 +42,12 @@ class EBCLModule(BaseModule):
         self.criterion = torch.nn.CrossEntropyLoss()
 
     def forward(self, batch):
-        pre_batch = batch[SupervisedView.PRE.value]
+        pre_batch = batch[self.cfg.pre_window_name]
         pre_batch = self.input_encoder(pre_batch)
         pre_batch = self.pre_model(pre_batch)
         pre_outputs = pre_batch[BACKBONE_EMBEDDINGS_KEY]
 
-        post_batch = batch[SupervisedView.POST.value]
+        post_batch = batch[self.cfg.post_window_name]
         post_batch = self.input_encoder(post_batch)
         post_batch = self.pre_model(post_batch)
         post_outputs = post_batch[BACKBONE_EMBEDDINGS_KEY]
@@ -94,8 +69,8 @@ class EBCLModule(BaseModule):
         loss_pre = self.criterion(logits_per_pre, labels)
         loss = (loss_pre + loss_post) / 2
         output = dict(
-            pre=pre_outputs,
-            post=post_outputs,
+            pre=pre_batch,
+            post=post_batch,
         )
         output[MODEL_EMBEDDINGS_KEY] = torch.concat([pre_norm_embeds, post_norm_embeds], dim=0)
         output[MODEL_TOKENS_KEY] = None
@@ -119,7 +94,7 @@ class EBCLModule(BaseModule):
         return output[MODEL_LOSS_KEY]
 
     def validation_step(self, batch):
-        output: EBCLOutput = self.forward(batch)
+        output = self.forward(batch)
         # pretrain metrics
         # pre metrics
         labels = torch.arange(self.cfg.batch_size, device=output[MODEL_LOGITS_KEY].device)
@@ -133,7 +108,7 @@ class EBCLModule(BaseModule):
         return output[MODEL_LOSS_KEY]
 
     def test_step(self, batch):
-        output: EBCLOutput = self.forward(batch)
+        output = self.forward(batch)
         # pretrain metrics
         # pre metrics
         labels = torch.arange(self.cfg.batch_size, device=output[MODEL_LOGITS_KEY].device)

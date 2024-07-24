@@ -1,19 +1,19 @@
 import dataclasses
-import enum
 
 import torch
 import torchmetrics
 from omegaconf import DictConfig
 from torch import nn
 
+from meds_torch.models import (
+    BACKBONE_EMBEDDINGS_KEY,
+    MODEL_EMBEDDINGS_KEY,
+    MODEL_LOGITS_KEY,
+    MODEL_LOSS_KEY,
+    MODEL_TOKENS_KEY,
+)
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.utils import OutputBase
-
-
-class SupervisedView(enum.Enum):
-    PRE = "pre"
-    POST = "post"
-    PRE_AND_POST = "pre_and_post"
 
 
 @dataclasses.dataclass
@@ -29,103 +29,122 @@ class OCPModule(BaseModule):
         super().__init__(cfg)
 
         # pretrain metrics
-        self.train_pretrain_acc = torchmetrics.Accuracy(num_classes=cfg.batch_size, task="binary")
-        self.train_pretrain_auc = torchmetrics.AUROC(num_classes=cfg.batch_size, task="binary")
+        self.train_acc = torchmetrics.Accuracy(num_classes=cfg.batch_size, task="binary")
+        self.train_auc = torchmetrics.AUROC(num_classes=cfg.batch_size, task="binary")
 
-        self.val_pretrain_acc = torchmetrics.Accuracy(num_classes=cfg.batch_size, task="binary")
-        self.val_pretrain_auc = torchmetrics.AUROC(num_classes=cfg.batch_size, task="binary")
+        self.val_acc = torchmetrics.Accuracy(num_classes=cfg.batch_size, task="binary")
+        self.val_auc = torchmetrics.AUROC(num_classes=cfg.batch_size, task="binary")
 
         # pretraining model components
-        self.pretrain_projection = nn.Linear(cfg.token_dim, 1)
-        self.pretrain_criterion = torch.nn.BCEWithLogitsLoss()
+        self.projection = nn.Linear(cfg.token_dim * 2, 1)
+        self.criterion = torch.nn.BCEWithLogitsLoss()
 
-    def pretrain_forward(self, batch):
-        outputs = self.pre_model(batch[SupervisedView.EARLY_FUSION.value]).rep
+    def forward(self, batch):
+        pre_batch = batch[self.cfg.pre_window_name]
+        pre_batch = self.input_encoder(pre_batch)
+        pre_batch = self.model(pre_batch)
+        pre_outputs = pre_batch[BACKBONE_EMBEDDINGS_KEY]
 
-        logits = self.pretrain_projection(outputs)
-        loss = self.pretrain_criterion(logits.squeeze(), batch["flip"].float())
+        post_batch = batch[self.cfg.post_window_name]
+        post_batch = self.input_encoder(post_batch)
+        post_batch = self.model(post_batch)
+        post_outputs = post_batch[BACKBONE_EMBEDDINGS_KEY]
 
-        return OCPPretrainOutput(
-            logits=logits,
-            loss=loss,
-            outputs=outputs,
+        random_flips = torch.randint(0, 2, (pre_outputs.shape[0], 1)).bool()
+        shuffled_pre_outputs = torch.where(random_flips, post_outputs, pre_outputs)
+        shuffled_post_outputs = torch.where(random_flips, pre_outputs, post_outputs)
+        classifier_inputs = torch.concat([shuffled_pre_outputs, shuffled_post_outputs], dim=1)
+
+        logits = self.projection(classifier_inputs)
+        loss = self.criterion(logits, random_flips.float())
+
+        output = dict(
+            pre=pre_batch,
+            post=post_batch,
         )
+        output[MODEL_EMBEDDINGS_KEY] = classifier_inputs
+        output[MODEL_TOKENS_KEY] = None
+        output[MODEL_LOSS_KEY] = loss
+        output[MODEL_LOGITS_KEY] = logits
+        output["MODEL//LABELS"] = random_flips
 
-    def pretrain_training_step(self, batch):
+        return output
+
+    def training_step(self, batch):
         output: OCPPretrainOutput = self.forward(batch)
         # pretrain metrics
         # pre metrics
-        labels = batch["flip"].float()
-        self.train_pretrain_acc.update(output.logits.squeeze(), labels)
-        self.train_pretrain_auc.update(output.logits.squeeze(), labels)
-        return output
+        labels = output["MODEL//LABELS"].float()
+        self.train_acc.update(output[MODEL_LOGITS_KEY], labels)
+        self.train_auc.update(output[MODEL_LOGITS_KEY], labels)
+        output[MODEL_LOSS_KEY]
 
-    def pretrain_validation_step(self, batch):
+    def validation_step(self, batch):
         output: OCPPretrainOutput = self.forward(batch)
         # pretrain metrics
-        labels = batch["flip"].float()
-        self.val_pretrain_acc.update(output.logits.squeeze(), labels)
-        self.val_pretrain_auc.update(output.logits.squeeze(), labels)
-        return output
+        labels = output["MODEL//LABELS"].float()
+        self.val_acc.update(output[MODEL_LOGITS_KEY], labels)
+        self.val_auc.update(output[MODEL_LOGITS_KEY], labels)
+        output[MODEL_LOSS_KEY]
 
-    def pretrain_test_step(self, batch):
+    def test_step(self, batch):
         output: OCPPretrainOutput = self.forward(batch)
         # pretrain metrics
-        labels = batch["flip"].float()
-        self.test_pretrain_acc.update(output.logits.squeeze(), labels)
-        self.test_pretrain_auc.update(output.logits.squeeze(), labels)
-        return output
+        labels = output["MODEL//LABELS"].float()
+        self.test_acc.update(output[MODEL_LOGITS_KEY], labels)
+        self.test_auc.update(output[MODEL_LOGITS_KEY], labels)
+        return output[MODEL_LOSS_KEY]
 
-    def pretrain_on_train_epoch_end(self):
+    def on_train_epoch_end(self):
         self.log(
-            "train_pretrain_acc",
-            self.train_pretrain_acc,
+            "train_acc",
+            self.train_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "train_pretrain_auc",
-            self.train_pretrain_auc,
+            "train_auc",
+            self.train_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
 
-    def pretrain_on_val_epoch_end(self):
+    def on_val_epoch_end(self):
         self.log(
-            "val_pretrain_acc",
-            self.val_pretrain_acc,
+            "val_acc",
+            self.val_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "val_pretrain_auc",
-            self.val_pretrain_auc,
+            "val_auc",
+            self.val_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         print(
-            "val_pretrain_acc",
-            self.val_pretrain_acc.compute(),
-            "val_pretrain_auc",
-            self.val_pretrain_auc.compute(),
+            "val_acc",
+            self.val_acc.compute(),
+            "val_auc",
+            self.val_auc.compute(),
         )
 
-    def pretrain_on_test_epoch_end(self):
+    def on_test_epoch_end(self):
         self.log(
-            "test_pretrain_acc",
-            self.test_pretrain_acc,
+            "test_acc",
+            self.test_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "test_pretrain_auc",
-            self.test_pretrain_auc,
+            "test_auc",
+            self.test_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         print(
-            "test_pretrain_acc",
-            self.test_pretrain_acc.compute(),
-            "test_pretrain_auc",
-            self.test_pretrain_auc.compute(),
+            "test_acc",
+            self.test_acc.compute(),
+            "test_auc",
+            self.test_auc.compute(),
         )
