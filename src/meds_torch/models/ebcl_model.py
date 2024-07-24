@@ -6,6 +6,13 @@ import torchmetrics
 from omegaconf import DictConfig
 from torch import nn
 
+from meds_torch.models import (
+    BACKBONE_EMBEDDINGS_KEY,
+    MODEL_EMBEDDINGS_KEY,
+    MODEL_LOGITS_KEY,
+    MODEL_LOSS_KEY,
+    MODEL_TOKENS_KEY,
+)
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.utils import OutputBase
 
@@ -37,6 +44,8 @@ class EBCLModule(BaseModule):
         batch_size = cfg.batch_size
         self.optimizer = cfg.optimizer
         self.scheduler = cfg.scheduler
+        self.pre_model = self.model
+        self.post_model = self.model
         #  metrics
         self.train_pre_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
         self.train_pre_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
@@ -50,12 +59,23 @@ class EBCLModule(BaseModule):
         self.val_post_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
         self.val_post_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
 
+        # Model components
+        self.pre_projection = nn.Linear(cfg.token_dim, cfg.token_dim)
+        self.post_projection = nn.Linear(cfg.token_dim, cfg.token_dim)
+
         self.t = nn.Linear(1, 1)
         self.criterion = torch.nn.CrossEntropyLoss()
 
     def forward(self, batch):
-        pre_outputs = self.pre_model(batch[SupervisedView.PRE.value]).rep
-        post_outputs = self.post_model(batch[SupervisedView.POST.value]).rep
+        pre_batch = batch[SupervisedView.PRE.value]
+        pre_batch = self.input_encoder(pre_batch)
+        pre_batch = self.pre_model(pre_batch)
+        pre_outputs = pre_batch[BACKBONE_EMBEDDINGS_KEY]
+
+        post_batch = batch[SupervisedView.POST.value]
+        post_batch = self.input_encoder(post_batch)
+        post_batch = self.pre_model(post_batch)
+        post_outputs = post_batch[BACKBONE_EMBEDDINGS_KEY]
 
         pre_embeds = self.pre_projection(pre_outputs)
         post_embeds = self.post_projection(post_outputs)
@@ -73,56 +93,58 @@ class EBCLModule(BaseModule):
         loss_post = self.criterion(logits_per_post, labels)
         loss_pre = self.criterion(logits_per_pre, labels)
         loss = (loss_pre + loss_post) / 2
-        return EBCLOutput(
-            logits_per_pre=logits_per_pre,
-            logits_per_post=logits_per_post,
-            post_embeds=post_embeds,
-            pre_embeds=pre_embeds,
-            pre_norm_embeds=pre_norm_embeds,
-            post_norm_embeds=post_norm_embeds,
-            post_model_output=post_outputs,
-            pre_model_output=pre_outputs,
-            loss=loss,
+        output = dict(
+            pre=pre_outputs,
+            post=post_outputs,
         )
+        output[MODEL_EMBEDDINGS_KEY] = torch.concat([pre_norm_embeds, post_norm_embeds], dim=0)
+        output[MODEL_TOKENS_KEY] = None
+        output[MODEL_LOSS_KEY] = loss
+        output[MODEL_LOGITS_KEY] = logits
+        return output
 
     def training_step(self, batch):
-        output: EBCLOutput = self.forward(batch)
+        output = self.forward(batch)
         # pretrain metrics
         # pre metrics
-        labels = torch.arange(self.cfg.batch_size, device=output.logits_per_pre.device)
-        self.train_pre_acc.update(output.logits_per_pre, labels)
-        self.train_pre_auc.update(output.logits_per_pre, labels)
+        labels = torch.arange(self.cfg.batch_size, device=output[MODEL_LOGITS_KEY].device)
+        self.train_pre_acc.update(output[MODEL_LOGITS_KEY], labels)
+        self.train_pre_auc.update(output[MODEL_LOGITS_KEY], labels)
 
         # post metrics
-        self.train_post_acc.update(output.logits_per_post, labels)
-        self.train_post_auc.update(output.logits_per_post, labels)
-        return output
+        self.train_post_acc.update(output[MODEL_LOGITS_KEY].T, labels)
+        self.train_post_auc.update(output[MODEL_LOGITS_KEY].T, labels)
+
+        self.log("train_loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_LOSS_KEY]
 
     def validation_step(self, batch):
         output: EBCLOutput = self.forward(batch)
         # pretrain metrics
         # pre metrics
-        labels = torch.arange(self.cfg.batch_size, device=output.logits_per_pre.device)
-        self.val_pre_acc.update(output.logits_per_pre, labels)
-        self.val_pre_auc.update(output.logits_per_pre, labels)
+        labels = torch.arange(self.cfg.batch_size, device=output[MODEL_LOGITS_KEY].device)
+        self.val_pre_acc.update(output[MODEL_LOGITS_KEY], labels)
+        self.val_pre_auc.update(output[MODEL_LOGITS_KEY], labels)
 
         # post metrics
-        self.val_post_acc.update(output.logits_per_post, labels)
-        self.val_post_auc.update(output.logits_per_post, labels)
-        return output
+        self.val_post_acc.update(output[MODEL_LOGITS_KEY].T, labels)
+        self.val_post_auc.update(output[MODEL_LOGITS_KEY].T, labels)
+        self.log("val_loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_LOSS_KEY]
 
     def test_step(self, batch):
         output: EBCLOutput = self.forward(batch)
         # pretrain metrics
         # pre metrics
-        labels = torch.arange(self.cfg.batch_size, device=output.logits_per_pre.device)
-        self.test_pre_acc.update(output.logits_per_pre, labels)
-        self.test_pre_auc.update(output.logits_per_pre, labels)
+        labels = torch.arange(self.cfg.batch_size, device=output[MODEL_LOGITS_KEY].device)
+        self.test_pre_acc.update(output[MODEL_LOGITS_KEY], labels)
+        self.test_pre_auc.update(output[MODEL_LOGITS_KEY], labels)
 
         # post metrics
-        self.test_post_acc.update(output.logits_per_post, labels)
-        self.test_post_auc.update(output.logits_per_post, labels)
-        return output
+        self.test_post_acc.update(output[MODEL_LOGITS_KEY].T, labels)
+        self.test_post_auc.update(output[MODEL_LOGITS_KEY].T, labels)
+        self.log("test_loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_LOSS_KEY]
 
     def on_train_epoch_end(self):
         self.log(

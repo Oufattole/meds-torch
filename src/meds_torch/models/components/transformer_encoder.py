@@ -10,7 +10,7 @@ from torch import nn
 from x_transformers import Encoder, TransformerWrapper
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
-from meds_torch.models import model_EMBEDDINGS_KEY, model_TOKENS_KEY
+from meds_torch.models import BACKBONE_EMBEDDINGS_KEY, BACKBONE_TOKENS_KEY
 from meds_torch.utils.module_class import Module
 
 
@@ -47,6 +47,6 @@ class TransformerEncoderModel(torch.nn.Module, Module):
         output = self.model(input_data, mask=mask)
         # extract the representation token's embedding
         rep = output[:, 0, :]
-        batch[model_TOKENS_KEY] = output
-        batch[model_EMBEDDINGS_KEY] = rep
+        batch[BACKBONE_TOKENS_KEY] = output
+        batch[BACKBONE_EMBEDDINGS_KEY] = rep
         return batch

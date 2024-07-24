@@ -119,6 +119,7 @@ class MEDSDataModule(LightningDataModule, Module):
             dataset=self.data_train,
             shuffle=True,
             collate_fn=self.data_train.collate,
+            drop_last=True,
             **self.cfg.dataloader,
         )
 

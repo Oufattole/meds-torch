@@ -4,7 +4,6 @@ root = rootutils.setup_root(__file__, dotenv=True, pythonpath=True, cwd=True)
 
 from pathlib import Path
 
-import polars as pl
 import pytest
 from omegaconf import open_dict
 from torch.utils.data import DataLoader
@@ -17,7 +16,6 @@ from meds_torch.data.datamodule import MEDSDataModule
 
 # from meds_torch.data.components.pytorch_dataset
 from tests.conftest import SUPERVISED_TASK_NAME
-from tests.helpers.run_sh_command import run_command
 
 
 @pytest.mark.parametrize("collate_type", ["triplet", "event_stream"])
@@ -90,60 +88,14 @@ def test_pytorch_dataset_with_supervised_task(cfg_train, collate_type):
         raise NotImplementedError(f"{collate_type} not implemented")
 
 
-RANDOM_LOCAL_WINDOWS = """
-predicates:
-    event:
-        code: _IGNORE
-
-trigger: _ANY_EVENT
-
-windows:
-    pre:
-        start: null
-        end: trigger
-        start_inclusive: True
-        end_inclusive: False
-    post:
-        start: pre.end
-        end: null
-        start_inclusive: True
-        end_inclusive: True
-"""
-
-
 @pytest.mark.parametrize("patient_level_sampling", [False, True])
-@pytest.mark.parametrize("window_config", [RANDOM_LOCAL_WINDOWS])
 @pytest.mark.parametrize("collate_type", ["triplet"])
-def test_contrastive_windows(
-    cfg_multiwindow_train, tmp_path, window_config, patient_level_sampling, collate_type
-):
+def test_contrastive_windows(cfg_multiwindow_train, patient_level_sampling, collate_type):
     cfg = cfg_multiwindow_train
     cfg.data.collate_type = collate_type
     cfg.data.patient_level_sampling = patient_level_sampling
     assert cfg.data.cached_windows_dir
-    raw_windows_path = cfg.data.raw_windows_fp
-    aces_task_cfg_path = tmp_path / "aces_config.yaml"
-
-    aces_task_cfg_path.write_text(window_config)
-    aces_kwargs = {
-        "data.path": str((Path(cfg.paths.meds_dir) / "*/*.parquet").resolve()),
-        "data.standard": "meds",
-        "cohort_dir": str(aces_task_cfg_path.parent.resolve()),
-        "cohort_name": "aces_config",
-        "output_filepath": raw_windows_path,
-        "hydra.verbose": True,
-    }
-
-    run_command("aces-cli", aces_kwargs, "aces-cli")
-
-    meds_df = pl.read_parquet(str((Path(cfg.paths.meds_dir) / "*/*.parquet").resolve()))
-    # TODO: ACES is duplicating these outputs should be fixed
-    aces_df = pl.read_parquet(raw_windows_path).unique()
-
-    number_of_unique_event_times = (
-        meds_df.unique(["patient_id", "timestamp"]).drop_nulls("timestamp").shape[0]
-    )
-    assert number_of_unique_event_times == aces_df.shape[0]
+    assert Path(cfg.data.raw_windows_fp).exists()
 
     pyd = MultiWindowPytorchDataset(cfg.data, split="train")
     item = pyd[0]

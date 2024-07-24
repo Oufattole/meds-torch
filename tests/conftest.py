@@ -95,6 +95,7 @@ def create_cfg(overrides, meds_dir: Path) -> DictConfig:
             cfg.extras.enforce_tags = False
             cfg.logger = None
             cfg.data.collate_type = "triplet"
+            cfg.data.dataloader.batch_size = 2
 
             # Additional settings for specific fixtures
             if "data=multiwindow_pytorch_dataset" in overrides:

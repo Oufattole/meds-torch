@@ -6,7 +6,7 @@ from loguru import logger
 from omegaconf import DictConfig
 from torch import nn
 
-from meds_torch.models import model_EMBEDDINGS_KEY
+from meds_torch.models import BACKBONE_EMBEDDINGS_KEY
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.utils import OutputBase
 
@@ -48,7 +48,7 @@ class SupervisedModule(BaseModule):
     def forward(self, batch) -> OutputBase:
         batch = self.input_encoder(batch)
         batch = self.model(batch)
-        embeddings = batch[model_EMBEDDINGS_KEY]
+        embeddings = batch[BACKBONE_EMBEDDINGS_KEY]
         logits = self.projection(embeddings)
         if self.cfg.get_representations:
             loss = None

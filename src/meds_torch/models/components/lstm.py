@@ -9,7 +9,7 @@ from omegaconf import DictConfig
 from torch import nn
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
-from meds_torch.models import model_EMBEDDINGS_KEY, model_TOKENS_KEY
+from meds_torch.models import BACKBONE_EMBEDDINGS_KEY, BACKBONE_TOKENS_KEY
 from meds_torch.models.components.utils import get_last_token
 from meds_torch.utils.module_class import Module
 
@@ -34,6 +34,6 @@ class LstmModel(torch.nn.Module, Module):
         # pass tokens and attention mask to the lstm
         output = self.model(input_data.transpose(1, 2))[0]
         # extract the representation token's embedding
-        batch[model_TOKENS_KEY] = output
-        batch[model_EMBEDDINGS_KEY] = get_last_token(output, mask)
+        batch[BACKBONE_TOKENS_KEY] = output
+        batch[BACKBONE_EMBEDDINGS_KEY] = get_last_token(output, mask)
         return batch
