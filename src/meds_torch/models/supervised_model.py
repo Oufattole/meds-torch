@@ -7,8 +7,8 @@ from loguru import logger
 from omegaconf import DictConfig
 from torch import nn
 
-from meds_torch.sequence_models import SEQUENCE_MODEL_EMBEDDINGS_KEY
-from meds_torch.sequence_models.utils import OutputBase
+from meds_torch.models import model_EMBEDDINGS_KEY
+from meds_torch.models.utils import OutputBase
 from meds_torch.utils.module_class import Module
 
 
@@ -54,7 +54,7 @@ class SupervisedModule(L.LightningModule, Module):
     def forward(self, batch) -> OutputBase:
         batch = self.input_encoder(batch)
         batch = self.model(batch)
-        embeddings = batch[SEQUENCE_MODEL_EMBEDDINGS_KEY]
+        embeddings = batch[model_EMBEDDINGS_KEY]
         logits = self.projection(embeddings)
         if self.cfg.get_representations:
             loss = None

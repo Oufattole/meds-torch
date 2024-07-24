@@ -11,10 +11,7 @@ from torch import nn
 from x_transformers import Encoder, TransformerWrapper
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
-from meds_torch.sequence_models import (
-    SEQUENCE_MODEL_EMBEDDINGS_KEY,
-    SEQUENCE_MODEL_TOKENS_KEY,
-)
+from meds_torch.models import model_EMBEDDINGS_KEY, model_TOKENS_KEY
 from meds_torch.utils.module_class import Module
 
 
@@ -83,7 +80,7 @@ class AttentionAveragedTransformerEncoderModel(torch.nn.Module, Module):
     def forward(self, batch):
         input_data, mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
         output = self.model(input_data.transpose(1, 2), mask=mask)
-        batch[SEQUENCE_MODEL_TOKENS_KEY] = output
+        batch[model_TOKENS_KEY] = output
         output, _ = self.decoder(output, mask)
-        batch[SEQUENCE_MODEL_EMBEDDINGS_KEY] = output
+        batch[model_EMBEDDINGS_KEY] = output
         return batch

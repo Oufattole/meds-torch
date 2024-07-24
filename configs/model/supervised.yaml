@@ -2,7 +2,7 @@ defaults:
   - input_encoder: triplet_encoder
   - backbone: lstm
   - _self_
-_target_: meds_torch.sequence_models.supervised_model.SupervisedModule.initialize
+_target_: meds_torch.models.supervised_model.SupervisedModule.initialize
 
 optimizer:
   _target_: torch.optim.Adam

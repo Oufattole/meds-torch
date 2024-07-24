@@ -28,9 +28,9 @@ def test_train(
     # input_encoder=input_encoder
     overrides = [
         f"data={data}",
-        f"sequence_model/input_encoder={input_encoder}",
-        f"sequence_model/backbone={backbone}",
-        f"sequence_model={model}",
+        f"model/input_encoder={input_encoder}",
+        f"model/backbone={backbone}",
+        f"model={model}",
         f"data.task_name={SUPERVISED_TASK_NAME}",
     ]
     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
@@ -39,7 +39,7 @@ def test_train(
     dm.setup(stage="train")
     train_dataloader = dm.train_dataloader()
     lightning.Trainer(accelerator="cpu", fast_dev_run=True).fit(
-        model=hydra.utils.instantiate(cfg.sequence_model),
+        model=hydra.utils.instantiate(cfg.model),
         train_dataloaders=train_dataloader,
     )
 

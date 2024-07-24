@@ -1,0 +1,5 @@
+defaults:
+  - default
+  - _self_
+
+_target_: meds_torch.models.components.transformer_encoder_attn_avg.AttentionAveragedTransformerEncoderModel.initialize

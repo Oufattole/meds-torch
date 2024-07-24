@@ -1,5 +1,0 @@
-defaults:
-  - default
-  - _self_
-
-_target_: meds_torch.sequence_models.components.mamba.MambaModel.initialize

@@ -1,0 +1,7 @@
+nheads: 2
+n_layers: 2
+dropout: 0.1
+token_dim: ${model.token_dim}
+max_seq_len: ${model.max_seq_len}
+vocab_size: ${model.vocab_size}
+get_last_token: true

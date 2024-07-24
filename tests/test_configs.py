@@ -13,15 +13,11 @@ def cfg(request):
 
 from meds_torch.data.datamodule import MEDSDataModule
 from meds_torch.input_encoder.triplet_encoder import TripletEncoder
-from meds_torch.sequence_models.components.lstm import LstmModel
-from meds_torch.sequence_models.components.mamba import MambaModel
-from meds_torch.sequence_models.components.transformer_decoder import (
-    TransformerDecoderModel,
-)
-from meds_torch.sequence_models.components.transformer_encoder import (
-    TransformerEncoderModel,
-)
-from meds_torch.sequence_models.components.transformer_encoder_attn_avg import (
+from meds_torch.models.components.lstm import LstmModel
+from meds_torch.models.components.mamba import MambaModel
+from meds_torch.models.components.transformer_decoder import TransformerDecoderModel
+from meds_torch.models.components.transformer_encoder import TransformerEncoderModel
+from meds_torch.models.components.transformer_encoder_attn_avg import (
     AttentionAveragedTransformerEncoderModel,
 )
 from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
@@ -44,24 +40,24 @@ def test_train_config(
     # input_encoder=input_encoder
     overrides = [
         f"data={data}",
-        f"sequence_model/input_encoder={input_encoder}",
-        f"sequence_model/backbone={backbone}",
-        f"sequence_model={model}",
+        f"model/input_encoder={input_encoder}",
+        f"model/backbone={backbone}",
+        f"model={model}",
     ]
     if model == "supervised":
         overrides.append(f"data.task_name={SUPERVISED_TASK_NAME}")
     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
     assert isinstance(cfg, DictConfig)
     assert isinstance(cfg.data, DictConfig)
-    assert isinstance(cfg.sequence_model.input_encoder, DictConfig)
-    assert isinstance(cfg.sequence_model.backbone, DictConfig)
-    assert isinstance(cfg.sequence_model, DictConfig)
+    assert isinstance(cfg.model.input_encoder, DictConfig)
+    assert isinstance(cfg.model.backbone, DictConfig)
+    assert isinstance(cfg.model, DictConfig)
 
     HydraConfig().set_config(cfg)
 
     assert isinstance(hydra.utils.instantiate(cfg.data), MEDSDataModule)
-    assert isinstance(hydra.utils.instantiate(cfg.sequence_model.input_encoder), TripletEncoder)
-    backbone_model = hydra.utils.instantiate(cfg.sequence_model.backbone)
+    assert isinstance(hydra.utils.instantiate(cfg.model.input_encoder), TripletEncoder)
+    backbone_model = hydra.utils.instantiate(cfg.model.backbone)
     if backbone == "lstm":
         assert isinstance(backbone_model, LstmModel)
     elif backbone == "transformer_decoder":
@@ -74,21 +70,21 @@ def test_train_config(
         assert isinstance(backbone_model, AttentionAveragedTransformerEncoderModel)
     else:
         raise NotImplementedError(f"Unsupported backbone {backbone}!")
-    assert isinstance(hydra.utils.instantiate(cfg.sequence_model), LightningModule)
+    assert isinstance(hydra.utils.instantiate(cfg.model), LightningModule)
 
 
-# @pytest.mark.parametrize("sequence_model", ["supervised"]) # "transformer_decoder"
+# @pytest.mark.parametrize("model", ["supervised"]) # "transformer_decoder"
 # def test_train_config(data: str, input_encoder: str, backbone: str, meds_dir) -> None: # cfg: DictConfig,
 #     """Tests the training configuration provided by the `cfg_train` pytest fixture.
 
 #     :param cfg_train: A DictConfig containing a valid training configuration.
 #     """
 #     # input_encoder=input_encoder
-#     overrides = [f"data={data}", f"input_encoder={input_encoder}", f"sequence_model/backbone={backbone}"]
+#     overrides = [f"data={data}", f"input_encoder={input_encoder}", f"model/backbone={backbone}"]
 #     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
 
 #     HydraConfig().set_config(cfg)
-#     backbone_model = hydra.utils.instantiate(cfg.sequence_model.backbone)
+#     backbone_model = hydra.utils.instantiate(cfg.model.backbone)
 #     if backbone == "lstm":
 #         assert isinstance(backbone_model, LstmModel)
 #     elif backbone == "transformer_decoder":
