@@ -34,7 +34,7 @@ class AutoEmbedder(nn.Module):
         return pooler_output
 
 
-class TextCodeEmbedder(nn.Module, Module):
+class TextCodeEncoder(nn.Module, Module):
     """TODO(teya): Add docstring."""
 
     def __init__(self, cfg: DictConfig):
@@ -76,7 +76,7 @@ class TextCodeEmbedder(nn.Module, Module):
         return batch
 
 
-class TextObservationEmbedder(nn.Module, Module):
+class TextObservationEncoder(nn.Module, Module):
     """TODO(teya): Add docstring."""
 
     def __init__(self, cfg: DictConfig):
