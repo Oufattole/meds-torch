@@ -1,5 +1,3 @@
-import dataclasses
-
 import torch
 import torch.nn.functional as F
 import torchmetrics
@@ -15,15 +13,6 @@ from meds_torch.models import (
     MODEL_TOKENS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
-from meds_torch.models.utils import OutputBase
-
-
-@dataclasses.dataclass
-class OCPPretrainOutput(OutputBase):
-    loss: torch.Tensor
-    logits: torch.Tensor
-    outputs: torch.Tensor
-    attn: torch.Tensor = None
 
 
 class OCPModule(BaseModule):
@@ -40,6 +29,9 @@ class OCPModule(BaseModule):
 
         self.val_acc = torchmetrics.Accuracy(num_classes=cfg.batch_size, task="binary")
         self.val_auc = torchmetrics.AUROC(num_classes=cfg.batch_size, task="binary")
+
+        self.test_acc = torchmetrics.Accuracy(num_classes=cfg.batch_size, task="binary")
+        self.test_auc = torchmetrics.AUROC(num_classes=cfg.batch_size, task="binary")
 
         # pretraining model components
         if cfg.early_fusion:
@@ -121,24 +113,24 @@ class OCPModule(BaseModule):
         return output
 
     def training_step(self, batch):
-        output: OCPPretrainOutput = self.forward(batch)
+        output = self.forward(batch)
         # pretrain metrics
         # pre metrics
         labels = output["MODEL//LABELS"].float()
         self.train_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.train_auc.update(output[MODEL_LOGITS_KEY], labels)
-        output[MODEL_LOSS_KEY]
+        return output[MODEL_LOSS_KEY]
 
     def validation_step(self, batch):
-        output: OCPPretrainOutput = self.forward(batch)
+        output = self.forward(batch)
         # pretrain metrics
         labels = output["MODEL//LABELS"].float()
         self.val_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.val_auc.update(output[MODEL_LOGITS_KEY], labels)
-        output[MODEL_LOSS_KEY]
+        return output[MODEL_LOSS_KEY]
 
     def test_step(self, batch):
-        output: OCPPretrainOutput = self.forward(batch)
+        output = self.forward(batch)
         # pretrain metrics
         labels = output["MODEL//LABELS"].float()
         self.test_acc.update(output[MODEL_LOGITS_KEY], labels)

@@ -24,5 +24,8 @@ get_representations: false
 task_name: ${data.task_name}
 batch_size: ${data.dataloader.batch_size}
 
+input_window_name: pre
+forecast_window_name: post
+
 # compile model for faster training with pytorch 2.0
 compile: false

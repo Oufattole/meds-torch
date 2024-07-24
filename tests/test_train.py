@@ -50,7 +50,7 @@ def test_train(
     "backbone",
     ["transformer_decoder"],
 )
-@pytest.mark.parametrize("model", ["ebcl"])  # "token_forecasting", "value_forecasting"
+@pytest.mark.parametrize("model", ["ebcl", "value_forecasting"])  # "token_forecasting"
 def test_ebcl_train(
     data: str, input_encoder: str, backbone: str, model: str, meds_dir
 ) -> None:  # cfg: DictConfig,
