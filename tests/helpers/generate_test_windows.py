@@ -3,9 +3,9 @@ from tempfile import TemporaryDirectory
 
 import polars as pl
 import rootutils
-from helpers.run_sh_command import run_command
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
+from tests.helpers.run_sh_command import run_command
 
 RANDOM_LOCAL_WINDOWS = """
 predicates:

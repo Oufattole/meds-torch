@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meds-torch"
-version = "0.0.1"
+version = "0.0.1a1"
 authors = [
   {name="Matthew McDermott", email="mattmcdermott8@gmail.com"},
   {name="Nassim Oufattole", email="noufattole@gmail.com"},
@@ -20,7 +20,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "es-aces", "polars", "pyarrow", "nested_ragged_tensors", "loguru", "numpy", "ml-mixins", "torch", "omegaconf", "hydra-core", "lightning", "x-transformers", "rich", "hydra-colorlog", "hydra-optuna-sweeper", "wandb", "torchmetrics", "torchvision",
+    "es-aces", "polars", "pyarrow", "nested_ragged_tensors", "loguru", "numpy", "ml-mixins", "torch", "omegaconf", "hydra-core", "lightning", "x-transformers", "rich", "hydra-colorlog", "hydra-optuna-sweeper", "wandb", "torchmetrics", "torchvision", "transformers"
 ]
 
 [project.optional-dependencies]

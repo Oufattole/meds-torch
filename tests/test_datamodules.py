@@ -18,10 +18,13 @@ from meds_torch.data.datamodule import MEDSDataModule
 from tests.conftest import SUPERVISED_TASK_NAME
 
 
-@pytest.mark.parametrize("collate_type", ["triplet", "event_stream"])
+@pytest.mark.parametrize(
+    "collate_type", ["triplet", "event_stream", "text_code", "text_observation", "all_text"]
+)
 def test_pytorch_dataset(cfg_train, collate_type):
     cfg = cfg_train
     cfg.data.collate_type = collate_type
+    cfg.data.tokenizer = "bert-base-uncased"
     pyd = PytorchDataset(cfg.data, split="train")
     assert not pyd.has_task
     item = pyd[0]
@@ -45,6 +48,28 @@ def test_pytorch_dataset(cfg_train, collate_type):
             "numerical_value",
             "time_delta_days",
             "numerical_value_mask",
+        }
+    elif collate_type == "text_code":
+        assert set(batch.keys()) == {
+            "mask",
+            "static_mask",
+            "code_tokens",
+            "code_mask",
+            "numerical_value",
+            "time_delta_days",
+            "numerical_value_mask",
+        }
+    elif collate_type == "text_observation":
+        assert set(batch.keys()) == {
+            "mask",
+            "observation_tokens",
+            "observation_mask",
+        }
+    elif collate_type == "all_text":
+        assert set(batch.keys()) == {
+            "mask",
+            "observation_tokens",
+            "observation_mask",
         }
     else:
         raise NotImplementedError(f"{collate_type} not implemented")
