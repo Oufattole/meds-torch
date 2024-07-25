@@ -1,0 +1,6 @@
+_target_: meds_torch.input_encoder.text_encoder.TextObservationEncoder.initialize
+collate_style: text_observation
+tokenizer: "bert-base-uncased"
+max_seq_len: ${sequence_model.max_seq_len}
+token_dim: ${sequence_model.token_dim}
+vocab_size: ${sequence_model.vocab_size}

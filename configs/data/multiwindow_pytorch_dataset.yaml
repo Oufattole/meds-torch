@@ -1,0 +1,8 @@
+defaults:
+  - pytorch_dataset
+  - _self_
+name: multiwindow_pytorch_dataset
+
+patient_level_sampling: false
+cached_windows_dir: ???
+raw_windows_fp: ???

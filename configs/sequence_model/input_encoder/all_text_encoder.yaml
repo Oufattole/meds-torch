@@ -1,0 +1,6 @@
+_target_: torch.nn.Identity()
+collate_style: all_text
+tokenizer: "bert-base-uncased"
+max_seq_len: ${sequence_model.max_seq_len}
+token_dim: ${sequence_model.token_dim}
+vocab_size: ${sequence_model.vocab_size}
