@@ -1,0 +1,72 @@
+input_dir: /home/aleksia/MEDS_polars_functions/tests/dummy_data/processed
+cohort_dir: /home/aleksia/MEDS_polars_functions/tests/dummy_data/processed/final_cohort
+_default_description:
+  "This is a MEDS pipeline ETL. Please set a more detailed description
+  at the top of your specific pipeline
+
+  configuration file."
+log_dir: ${stage_cfg.output_dir}/.logs
+do_overwrite: false
+seed: 1
+stages:
+  - filter_patients
+  - add_time_derived_measurements
+  - preliminary_counts
+  - filter_codes
+  - fit_outlier_detection
+  - filter_outliers
+  - fit_normalization
+  - fit_vocabulary_indices
+  - normalize
+  - tokenization
+  - tensorize
+stage_configs:
+  filter_patients:
+    min_events_per_patient: null
+    min_measurements_per_patient: null
+    data_input_dir: ${input_dir}/final_cohort
+  add_time_derived_measurements:
+    age:
+      DOB_code: DOB
+      age_code: AGE
+      age_unit: years
+    time_of_day:
+      time_of_day_code: TIME_OF_DAY
+      endpoints:
+        - 6
+        - 12
+        - 18
+        - 24
+  preliminary_counts:
+    aggregations:
+      - code/n_occurrences
+      - code/n_patients
+    do_summarize_over_all_codes: true
+  filter_codes:
+    min_patients_per_code: null
+    min_occurrences_per_code: null
+  fit_outlier_detection:
+    aggregations:
+      - values/n_occurrences
+      - values/sum
+      - values/sum_sqd
+  filter_outliers:
+    stddev_cutoff: 4.5
+  fit_normalization:
+    aggregations:
+      - code/n_occurrences
+      - code/n_patients
+      - values/n_occurrences
+      - values/sum
+      - values/sum_sqd
+  fit_vocabulary_indices:
+    is_metadata: true
+    ordering_method: lexicographic
+    output_dir: ${cohort_dir}
+worker: 1
+polling_time: 300
+stage: ${current_script_name:}
+stage_cfg:
+  ${oc.create:${populate_stage:${stage}, ${input_dir}, ${cohort_dir}, ${stages},
+  ${stage_configs}}}
+code_modifier_columns: ???
