@@ -1,7 +1,10 @@
 """This file prepares config fixtures for other tests."""
 
+import json
+import operator
 import shutil
 from datetime import datetime
+from functools import reduce
 from pathlib import Path
 
 import polars as pl
@@ -48,6 +51,15 @@ def meds_dir(tmp_path_factory) -> Path:
     meds_dir = tmp_path_factory.mktemp("meds_data")
     # copy test data to temporary directory
     shutil.copytree(Path("./tests/test_data"), meds_dir, dirs_exist_ok=True)
+    patient_id_values = json.load(open(meds_dir / "splits.json")).values()
+    patient_ids = reduce(operator.add, patient_id_values)
+    df = (
+        pl.read_parquet(meds_dir / "final_cohort" / "*/*.parquet")
+        .groupby("patient_id")
+        .agg(pl.col("timestamp").min().alias("start_time"), pl.col("timestamp").max().alias("end_time"))
+    )
+    time_diff = (pl.col("end_time") - pl.col("start_time")) / 2
+    df.with_columns((time_diff + pl.col("start_time")).alias("end_time"))
 
     # Store Test Task labels
     task_df = pl.DataFrame(

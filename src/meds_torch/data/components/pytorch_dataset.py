@@ -1,7 +1,7 @@
 import json
 from collections import defaultdict
 from datetime import timedelta
-from enum import Enum, StrEnum
+from enum import StrEnum
 from pathlib import Path
 
 import numpy as np
@@ -23,12 +23,13 @@ from transformers import AutoTokenizer
 IDX_COL = "_row_index"
 
 
-class CollateType(Enum):
+class CollateType(StrEnum):
     event_stream = "event_stream"
     triplet = "triplet"
     text_code = "text_code"
     text_observation = "text_observation"
     all_text = "all_text"
+    triplet_prompt = "triplet_prompt"
 
 
 def count_or_proportion(N: int | pl.Expr | None, cnt_or_prop: int | float) -> int:
@@ -258,7 +259,6 @@ def get_task_indexes(task_df_joint) -> list[tuple[int, int, int]]:
     end_idx_expr = (
         (pl.col("timestamp").search_sorted(pl.col("end_time"), side="left")).last().alias("end_idx")
     )
-    task_df_joint.explode("start_time", "end_time")
     task_df_joint = (
         task_df_joint.explode("start_time", "end_time")
         .explode("timestamp")
@@ -835,6 +835,86 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         )
 
     @classmethod
+    def process_triplet_prompt(cls, item: dict) -> dict:
+        """Processes a single triplet of dynamic and static data.
+
+        This function takes a dictionary containing dynamic and static data,
+        processes the tensors, and concatenates them appropriately to create
+        a unified representation of the data.
+
+        Args:
+            item: A dictionary containing 'dynamic' and 'static' data.
+
+        Returns:
+            A dictionary with the processed data including:
+                - mask: A mask indicating valid data points.
+                - static_mask: A mask indicating static data points.
+                - code: Concatenated static and dynamic codes.
+                - numerical_value: Concatenated static and dynamic numerical values.
+                - time_delta_days: Concatenated static and dynamic time deltas.
+
+        Examples:
+            >>> import numpy as np
+            >>> import tempfile, json, os
+            >>> from omegaconf import DictConfig
+            >>> item =  {
+            ...         'dynamic': JointNestedRaggedTensorDict({
+            ...                 'code': [np.array([5, 6]), np.array([1, 2])],
+            ...                 'numerical_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
+            ...                 'time_delta_days': np.array([np.nan, 12])
+            ...         }),
+            ...         'static_values': [70.0],
+            ...         'static_indices': [2]
+            ...     }
+            >>> triplet_item = PytorchDataset.process_triplet(item)
+            >>> for each in sorted(list(triplet_item.keys())): print(each)
+            code
+            mask
+            numerical_value
+            numerical_value_mask
+            static_mask
+            time_delta_days
+            >>> for key, value in triplet_item.items(): print(key, value);
+            mask [ True  True  True  True  True]
+            static_mask [ True False False False False]
+            code [2 5 6 1 2]
+            numerical_value [70. 50. 60.  0.  0.]
+            time_delta_days [ 0.  0.  0. 12. 12.]
+            numerical_value_mask [ True  True  True False False]
+        """
+        dynamic_data = item["dynamic"]
+        raw_codes = dynamic_data.tensors["dim1/code"]
+        raw_values = dynamic_data.tensors["dim1/numerical_value"]
+        raw_times = dynamic_data.tensors["dim0/time_delta_days"]
+
+        static_values = np.asarray(item["static_values"], dtype=np.float32)
+        static_indices = np.asarray(item["static_indices"], dtype=np.int32)
+        code = np.concatenate([np.array(static_indices)] + raw_codes, dtype=np.int32, casting="unsafe")
+        numerical_value = np.concatenate([np.array(static_values)] + raw_values)
+        numerical_value_mask = ~np.isnan(numerical_value)
+        # Replace NaNs with 0s
+        np.nan_to_num(numerical_value, nan=0, copy=False)
+        np.nan_to_num(raw_times, nan=0, copy=False)
+
+        static_mask = np.zeros(len(code), dtype=bool)
+        static_mask[: len(static_values)] = True
+
+        lengths = np.concatenate([[len(static_values)], dynamic_data.tensors["dim1/lengths"]])
+        time_delta_days = np.repeat(
+            np.concatenate([np.array([0], dtype=raw_times.dtype), raw_times]), lengths
+        )
+        mask = np.ones(len(time_delta_days), dtype=bool)
+
+        return dict(
+            mask=mask,
+            static_mask=static_mask,
+            code=code,
+            numerical_value=numerical_value,
+            time_delta_days=time_delta_days,
+            numerical_value_mask=numerical_value_mask,
+        )
+
+    @classmethod
     def collate_triplet(cls, batch: list[dict]) -> dict:
         """Combines the ragged dictionaries  into a triplet format (times, codes, values) batch.
 
@@ -890,6 +970,77 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                     [ 0,  0,  0, 12, 12]], dtype=torch.uint8)}
         """
         processed_batch = [cls.process_triplet(item) for item in batch]
+        tensorized_batch = {
+            k: torch.nn.utils.rnn.pad_sequence(
+                [torch.as_tensor(x[k]) for x in processed_batch],
+                batch_first=True,
+                padding_value=0,
+            )
+            for k in processed_batch[0].keys()
+        }
+
+        # Add task labels to batch
+        for k in batch[0].keys():
+            if k not in ("dynamic", "static_values", "static_indices"):
+                tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
+        return tensorized_batch
+
+    @classmethod
+    def collate_triplet_prompt(cls, batch: list[dict]) -> dict:
+        """Combines the ragged dictionaries  into a triplet format (times, codes, values) batch.
+
+        This function handles conversion of arrays to tensors and padding of elements within the
+        batch across static data elements, sequence events, and dynamic data elements. It ensures
+        that each batch has uniform shape by padding shorter sequences with zeros.
+
+        Args:
+            batch: A list of dictionaries with dynamic and static data from `__getitem__` method outputs.
+
+        Returns:
+            A dictionary containing tensorized and padded data for each key. The keys include 'mask',
+            'static_mask', 'code', 'numerical_value', 'numerical_value_mask', and 'time_delta_days'.
+
+        Examples:
+            >>> import torch
+            >>> import numpy as np
+            >>> batch = [
+            ...     {
+            ...         'dynamic': JointNestedRaggedTensorDict(
+            ...             {'code': [np.array([1])],
+            ...              'numerical_value': [np.array([10.0])],
+            ...              'time_delta_days': np.array([0])}),
+            ...         'static_values': [20.0],
+            ...         'static_indices': [0],
+            ...         'label': 0,
+            ...     },
+            ...     {
+            ...         'dynamic': JointNestedRaggedTensorDict(
+            ...             {'code': [np.array([5, 6]), np.array([1, 2])],
+            ...              'numerical_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
+            ...              'time_delta_days': np.array([np.nan, 12])}),
+            ...         'static_values': [70.0],
+            ...         'static_indices': [2],
+            ...         'label': 1,
+            ...         },
+            ... ]
+            >>> collated_batch = PytorchDataset.collate_triplet(batch)
+            >>> from pprint import pprint
+            >>> pprint(collated_batch)
+            {'code': tensor([[0, 1, 0, 0, 0],
+                    [2, 5, 6, 1, 2]], dtype=torch.int32),
+             'label': tensor([0., 1.]),
+             'mask': tensor([[ True,  True, False, False, False],
+                    [ True,  True,  True,  True,  True]]),
+             'numerical_value': tensor([[20., 10.,  0.,  0.,  0.],
+                    [70., 50., 60.,  0.,  0.]]),
+             'numerical_value_mask': tensor([[ True,  True, False, False, False],
+                    [ True,  True,  True, False, False]]),
+             'static_mask': tensor([[ True, False, False, False, False],
+                    [ True, False, False, False, False]]),
+             'time_delta_days': tensor([[ 0,  0,  0,  0,  0],
+                    [ 0,  0,  0, 12, 12]], dtype=torch.uint8)}
+        """
+        processed_batch = [cls.process_triplet_prompt(item) for item in batch]
         tensorized_batch = {
             k: torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x[k]) for x in processed_batch],
@@ -1304,9 +1455,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         Returns:     A fully collated, tensorized, and padded batch.
         """
-        collate_type = CollateType[self.config.collate_type]
+        collate_type = self.config.collate_type
         if collate_type == CollateType.event_stream:
             return self.collate_event_stream(batch)
+        elif collate_type == CollateType.triplet_prompt:
+            return self.collate_triplet_prompt(batch)
         elif collate_type == CollateType.triplet:
             return self.collate_triplet(batch)
         elif collate_type == CollateType.text_code:

@@ -1,0 +1,5 @@
+_target_: meds_torch.input_encoder.triplet_prompt_encoder.TripletPromptEncoder.initialize
+collate_style: triplet
+max_seq_len: ${model.max_seq_len}
+token_dim: ${model.token_dim}
+vocab_size: ${model.vocab_size}

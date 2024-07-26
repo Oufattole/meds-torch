@@ -36,7 +36,7 @@ def test_train(
     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
     assert Path(cfg.data.task_label_path).exists()
     dm = hydra.utils.instantiate(cfg.data)
-    dm.setup(stage="train")
+    dm.setup()
     train_dataloader = dm.train_dataloader()
     lightning.Trainer(accelerator="cpu", fast_dev_run=True).fit(
         model=hydra.utils.instantiate(cfg.model),
@@ -69,7 +69,7 @@ def test_ebcl_train(
     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
     assert Path(cfg.data.task_label_path).exists()
     dm = hydra.utils.instantiate(cfg.data)
-    dm.setup(stage="train")
+    dm.setup()
     train_dataloader = dm.train_dataloader()
     lightning.Trainer(accelerator="cpu", fast_dev_run=True).fit(
         model=hydra.utils.instantiate(cfg.model),
@@ -103,7 +103,7 @@ def test_ocp_train(
     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
     assert Path(cfg.data.task_label_path).exists()
     dm = hydra.utils.instantiate(cfg.data)
-    dm.setup(stage="train")
+    dm.setup()
     train_dataloader = dm.train_dataloader()
     lightning.Trainer(accelerator="cpu", fast_dev_run=True).fit(
         model=hydra.utils.instantiate(cfg.model),

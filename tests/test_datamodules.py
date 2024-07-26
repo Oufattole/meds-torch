@@ -4,6 +4,7 @@ root = rootutils.setup_root(__file__, dotenv=True, pythonpath=True, cwd=True)
 
 from pathlib import Path
 
+import hydra
 import pytest
 from omegaconf import open_dict
 from torch.utils.data import DataLoader
@@ -15,11 +16,11 @@ from meds_torch.data.components.pytorch_dataset import PytorchDataset
 from meds_torch.data.datamodule import MEDSDataModule
 
 # from meds_torch.data.components.pytorch_dataset
-from tests.conftest import SUPERVISED_TASK_NAME
+from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 
 
 @pytest.mark.parametrize(
-    "collate_type", ["triplet", "event_stream", "text_code", "text_observation", "all_text"]
+    "collate_type", ["triplet", "event_stream", "text_code", "text_observation", "all_text", "triplet_prompt"]
 )
 def test_pytorch_dataset(cfg_train, collate_type):
     cfg = cfg_train
@@ -70,6 +71,15 @@ def test_pytorch_dataset(cfg_train, collate_type):
             "mask",
             "observation_tokens",
             "observation_mask",
+        }
+    elif collate_type == "triplet_prompt":
+        assert batch.keys() == {
+            "mask",
+            "static_mask",
+            "code",
+            "numerical_value",
+            "time_delta_days",
+            "numerical_value_mask",
         }
     else:
         raise NotImplementedError(f"{collate_type} not implemented")
@@ -149,7 +159,7 @@ def test_datamodule(cfg_train):
 
     assert not dm.data_train and not dm.data_val and not dm.data_test
 
-    dm.setup(stage="fit")
+    dm.setup()
     assert (
         isinstance(dm.data_train, PytorchDataset)
         and isinstance(dm.data_val, PytorchDataset)
@@ -158,8 +168,31 @@ def test_datamodule(cfg_train):
     assert isinstance(dm.train_dataloader(), DataLoader) and isinstance(dm.val_dataloader(), DataLoader)
 
     num_datapoints = len(dm.data_train)
-    assert num_datapoints == 4
+    assert num_datapoints == 112
 
     batch = next(iter(dm.train_dataloader()))
     for value in batch.values():
         assert len(value) == cfg.data.dataloader.batch_size
+
+
+def test_triplet_prompt_encoder(meds_dir):
+    input_encoder = "triplet_prompt_encoder"
+    backbone = "transformer_decoder"
+    overrides = [
+        f"model/input_encoder={input_encoder}",
+        f"model/backbone={backbone}",
+    ]
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
+    cfg.data.collate_type = "triplet_prompt"
+
+    dm = hydra.utils.instantiate(cfg.data)
+    dm.setup()
+    train_dataloader = dm.train_dataloader()
+    input_encoder = hydra.utils.instantiate(cfg.model.input_encoder)
+    batch = next(iter(train_dataloader))
+    output = input_encoder(batch)
+    # batch = next(iter(train_dataloader))
+    # output = input_encoder(batch)
+    # pyd = PytorchDataset(cfg.data, split="train")
+    # item = pyd[0]
+    # assert item.keys() == {"static_indices", "static_values", "dynamic", "supervised_task"}
