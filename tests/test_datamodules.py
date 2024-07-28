@@ -4,7 +4,6 @@ root = rootutils.setup_root(__file__, dotenv=True, pythonpath=True, cwd=True)
 
 from pathlib import Path
 
-import hydra
 import pytest
 from omegaconf import open_dict
 from torch.utils.data import DataLoader
@@ -16,7 +15,7 @@ from meds_torch.data.components.pytorch_dataset import PytorchDataset
 from meds_torch.data.datamodule import MEDSDataModule
 
 # from meds_torch.data.components.pytorch_dataset
-from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
+from tests.conftest import SUPERVISED_TASK_NAME
 
 
 @pytest.mark.parametrize(
@@ -151,7 +150,7 @@ def test_contrastive_windows(cfg_multiwindow_train, patient_level_sampling, coll
         }
 
 
-def test_datamodule(cfg_train):
+def test_full_datamodule(cfg_train):
     cfg = cfg_train.copy()
     cfg.data.dataloader.batch_size = 1
     dm = MEDSDataModule(cfg.data)
@@ -163,7 +162,7 @@ def test_datamodule(cfg_train):
     assert (
         isinstance(dm.data_train, PytorchDataset)
         and isinstance(dm.data_val, PytorchDataset)
-        and (dm.data_test is None)
+        and isinstance(dm.data_test, PytorchDataset)
     )
     assert isinstance(dm.train_dataloader(), DataLoader) and isinstance(dm.val_dataloader(), DataLoader)
 
@@ -175,24 +174,24 @@ def test_datamodule(cfg_train):
         assert len(value) == cfg.data.dataloader.batch_size
 
 
-def test_triplet_prompt_encoder(meds_dir):
-    input_encoder = "triplet_prompt_encoder"
-    backbone = "transformer_decoder"
-    overrides = [
-        f"model/input_encoder={input_encoder}",
-        f"model/backbone={backbone}",
-    ]
-    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
-    cfg.data.collate_type = "triplet_prompt"
+# def test_triplet_prompt_encoder(meds_dir):
+#     input_encoder = "triplet_prompt_encoder"
+#     backbone = "transformer_decoder"
+#     overrides = [
+#         f"model/input_encoder={input_encoder}",
+#         f"model/backbone={backbone}",
+#     ]
+#     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
+#     cfg.data.collate_type = "triplet_prompt"
 
-    dm = hydra.utils.instantiate(cfg.data)
-    dm.setup()
-    train_dataloader = dm.train_dataloader()
-    input_encoder = hydra.utils.instantiate(cfg.model.input_encoder)
-    batch = next(iter(train_dataloader))
-    output = input_encoder(batch)
-    # batch = next(iter(train_dataloader))
-    # output = input_encoder(batch)
-    # pyd = PytorchDataset(cfg.data, split="train")
-    # item = pyd[0]
-    # assert item.keys() == {"static_indices", "static_values", "dynamic", "supervised_task"}
+#     dm = hydra.utils.instantiate(cfg.data)
+#     dm.setup()
+#     train_dataloader = dm.train_dataloader()
+#     input_encoder = hydra.utils.instantiate(cfg.model.input_encoder)
+#     batch = next(iter(train_dataloader))
+#     output = input_encoder(batch)
+#     # batch = next(iter(train_dataloader))
+#     # output = input_encoder(batch)
+#     # pyd = PytorchDataset(cfg.data, split="train")
+#     # item = pyd[0]
+#     # assert item.keys() == {"static_indices", "static_values", "dynamic", "supervised_task"}

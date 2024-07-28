@@ -409,8 +409,16 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 idx_col = f"_{idx_col}"
 
             task_df_joint = merge_task_with_static(task_df, self.static_dfs)
+            # Filter out patients that are not in the split
+            split_patients = set(
+                pl.concat(self.static_dfs.values())
+                .select(pl.col("patient_id").unique())
+                .to_series()
+                .to_list()
+            )
+            task_df_joint = task_df_joint.filter(pl.col("patient_id").is_in(split_patients))
+            # Convert dates to indexes in the nested ragged tensor, (for fast indexing of data)
             self.index = get_task_indexes(task_df_joint)
-
             self.labels = {t: task_df.get_column(t).to_list() for t in self.tasks}
         else:
             self.index = [(subj, *bounds) for subj, bounds in self.subj_seq_bounds.items()]

@@ -1,17 +1,15 @@
 """This file prepares config fixtures for other tests."""
 
-import json
-import operator
 import shutil
-from datetime import datetime
-from functools import reduce
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import pytest
 import rootutils
 from hydra import compose, initialize
 from hydra.core.global_hydra import GlobalHydra
+from loguru import logger
 from omegaconf import DictConfig, open_dict
 
 from meds_torch.utils.resolvers import setup_resolvers
@@ -49,40 +47,19 @@ def cfg_eval_global() -> DictConfig:
 @pytest.fixture(scope="package")
 def meds_dir(tmp_path_factory) -> Path:
     meds_dir = tmp_path_factory.mktemp("meds_data")
+    logger.info(meds_dir)
     # copy test data to temporary directory
     shutil.copytree(Path("./tests/test_data"), meds_dir, dirs_exist_ok=True)
-    patient_id_values = json.load(open(meds_dir / "splits.json")).values()
-    patient_ids = reduce(operator.add, patient_id_values)
-    df = (
-        pl.read_parquet(meds_dir / "final_cohort" / "*/*.parquet")
-        .groupby("patient_id")
-        .agg(pl.col("timestamp").min().alias("start_time"), pl.col("timestamp").max().alias("end_time"))
-    )
-    time_diff = (pl.col("end_time") - pl.col("start_time")) / 2
-    df.with_columns((time_diff + pl.col("start_time")).alias("end_time"))
-
-    # Store Test Task labels
-    task_df = pl.DataFrame(
-        {
-            "patient_id": [239684, 1195293, 68729, 814703],
-            "start_time": [
-                datetime(1980, 12, 28),
-                datetime(1978, 6, 20),
-                datetime(1978, 3, 9),
-                datetime(1976, 3, 28),
-            ],
-            "end_time": [
-                datetime(2010, 5, 11, 18, 25, 35),
-                datetime(2010, 6, 20, 20, 12, 31),
-                datetime(2010, 5, 26, 2, 30, 56),
-                datetime(2010, 2, 5, 5, 55, 39),
-            ],
-            SUPERVISED_TASK_NAME: [0, 1, 0, 1],
-        }
-    )
+    label_df = pl.read_parquet(meds_dir / "final_cohort" / "*/*.parquet")
+    label_df = label_df.sort(["patient_id", "timestamp"]).filter(pl.col("timestamp").is_not_null())
+    start_time_expr = pl.col("timestamp").get(0).alias("start_time")
+    end_time_expr = pl.col("timestamp").get(pl.len() // 2).alias("end_time")
+    label_df = label_df.group_by("patient_id", maintain_order=True).agg(start_time_expr, end_time_expr)
+    rng = np.random.default_rng(0)
+    label_df = label_df.with_columns(pl.lit(rng.integers(0, 2, label_df.height)).alias(SUPERVISED_TASK_NAME))
     tasks_dir = meds_dir / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)
-    task_df.write_parquet(tasks_dir / f"{SUPERVISED_TASK_NAME}.parquet")
+    label_df.write_parquet(tasks_dir / f"{SUPERVISED_TASK_NAME}.parquet")
     return meds_dir
 
 

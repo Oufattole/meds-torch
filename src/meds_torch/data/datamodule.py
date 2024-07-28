@@ -108,7 +108,7 @@ class MEDSDataModule(LightningDataModule, Module):
         if stage != "train":  # TODO: remove this after we have more test data
             self.data_val = get_dataset(self.cfg, split="tuning")
         if stage in ["test", None]:
-            self.data_test = get_dataset(self.cfg, split="held-out")
+            self.data_test = get_dataset(self.cfg, split="held_out")
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Create and return the train dataloader.
