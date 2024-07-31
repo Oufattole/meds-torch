@@ -1,3 +1,0 @@
-- input_dir=/tmp/pytest-of-nassim/pytest-24/test_tokenize0/processed
-- cohort_dir=/tmp/pytest-of-nassim/pytest-24/test_tokenize0/processed/final_cohort
-- stage_configs.add_time_derived_measurements.age.DOB_code=DOB

@@ -88,16 +88,16 @@ Easily add new models, datasets, tasks, experiments, and train on different acce
 
 ✅ Support different tokenization methods for EHR data <br>
 
-- [ ] [Triplet Tokenization](https://github.com/Oufattole/meds-torch/issues/1) -- add to read the docs explanations of each subtype
-- [ ] [Everything is text](https://github.com/Oufattole/meds-torch/issues/12) -- add to read the docs explanations of each subtype
+- [x] [Triplet Tokenization](https://github.com/Oufattole/meds-torch/issues/1) -- add to read the docs explanations of each subtype
+- [x] [Everything is text](https://github.com/Oufattole/meds-torch/issues/12) -- add to read the docs explanations of each subtype
 - [ ] Everything is a code TODO -- add to read the docs explanations of each subtype
 
 ✅ MEDS data pretraining (and Transfer Learning Support) <br>
 
-- [ ] General Contrastive window Pretraining
-  - [ ] Random [EBCL](https://arxiv.org/abs/2312.10308) Example
-  - [ ] [OCP](https://arxiv.org/abs/2111.02599) Example
-- [ ] [STraTS](https://arxiv.org/abs/2107.14293) Value Forecasting
+- [x] General Contrastive window Pretraining
+  - [x] Random [EBCL](https://arxiv.org/abs/2312.10308) Example
+  - [x] [OCP](https://arxiv.org/abs/2111.02599) Example
+- [x] [STraTS](https://arxiv.org/abs/2107.14293) Value Forecasting
 - [ ] Autoregressive Token Forecasting
 - [ ] Token Masked Imputation
 
@@ -106,7 +106,9 @@ Easily add new models, datasets, tasks, experiments, and train on different acce
 - [ ] Allow support for generating meds format future trajectories for patients using the Autoregressive Token Forecasting.
 
 ✅ Supervised Model Support <br>
-Load pretrained model weights (TODO) or [randomly initialize](https://github.com/Oufattole/meds-torch/issues/2) a model and train it in a supervised maner on you MEDS format medical data.
+
+- [x] randomly initialize a model and train it in a supervised maner on your MEDS format medical data.
+- [ ] Load pretrained model weights
 
 ✅ Education <br>
 Thoroughly commented. You can use this repo as a learning resource.
