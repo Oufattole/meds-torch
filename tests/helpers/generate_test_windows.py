@@ -1,3 +1,7 @@
+"""Generates Random Local Windows for testing multiwindow.
+
+You must run `pip install es-aces` first.
+"""
 from pathlib import Path
 from tempfile import TemporaryDirectory
 

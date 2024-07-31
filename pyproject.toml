@@ -27,7 +27,6 @@ dependencies = [
 mamba = ["mamba-ssm", "causal-conv1d>=1.4.0"]
 dev = ["pre-commit","notebook", "pdbpp"]
 tests = ["pytest", "pytest-cov[toml]", "rootutils", "pytest-sugar", "pytest-instafail", "pytest-xdist", "sh"]
-aces = ["es-aces"]
 
 [pytest]
 looponfailroots = ["tests"]
@@ -49,6 +48,7 @@ markers = [
 ]
 minversion = "6.0"
 testpaths = "tests/"
+norecursedirs = ["helpers"]
 
 [tool.coverage.report]
 exclude_lines = [

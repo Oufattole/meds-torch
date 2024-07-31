@@ -167,7 +167,7 @@ def test_full_datamodule(cfg_train):
     assert isinstance(dm.train_dataloader(), DataLoader) and isinstance(dm.val_dataloader(), DataLoader)
 
     num_datapoints = len(dm.data_train)
-    assert num_datapoints == 112
+    assert num_datapoints == 120
 
     batch = next(iter(dm.train_dataloader()))
     for value in batch.values():

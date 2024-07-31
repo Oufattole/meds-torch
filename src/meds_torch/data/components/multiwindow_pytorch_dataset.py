@@ -90,7 +90,7 @@ def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) ->
         pl.col("timestamp").explode().search_sorted(pl.col(col).explode()).alias(f"{col}_idx")
         for col in datetime_cols
     ]
-    return windows_df.groupby(pl.col("patient_id")).agg(expr)
+    return windows_df.group_by(pl.col("patient_id")).agg(expr)
 
 
 def cache_window_indexes(cfg: DictConfig, split: str, static_dfs) -> pl.DataFrame:
@@ -105,7 +105,7 @@ def cache_window_indexes(cfg: DictConfig, split: str, static_dfs) -> pl.DataFram
             parsed_col = col.split(".")[0] + f".{side}"
             exprs.append(pl.col(col).struct.field(f"timestamp_at_{side}").alias(parsed_col))
     window_df = window_df.select(exprs)
-    window_df = window_df.groupby("patient_id").agg(pl.all())
+    window_df = window_df.group_by("patient_id").agg(pl.all())
     timeseries_df = pl.concat(static_dfs.values()).select("patient_id", "timestamp")
     cached_window_df = get_window_indexes(timeseries_df, window_df)
     cache_window_fp = Path(cfg.cached_windows_dir) / f"{split}.parquet"
