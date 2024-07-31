@@ -24,6 +24,8 @@ from tests.conftest import SUPERVISED_TASK_NAME
 def test_pytorch_dataset(cfg_train, collate_type):
     cfg = cfg_train
     cfg.data.collate_type = collate_type
+    if collate_type == "triplet_prompt":
+        cfg.data.tensorization_name = "prompt_expanded_observation"
     cfg.data.tokenizer = "bert-base-uncased"
     pyd = PytorchDataset(cfg.data, split="train")
     assert not pyd.has_task
@@ -84,7 +86,7 @@ def test_pytorch_dataset(cfg_train, collate_type):
         raise NotImplementedError(f"{collate_type} not implemented")
 
 
-@pytest.mark.parametrize("collate_type", ["triplet", "event_stream"])
+@pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt"])
 def test_pytorch_dataset_with_supervised_task(cfg_train, collate_type):
     cfg = cfg_train
     cfg.data.collate_type = collate_type
@@ -108,7 +110,7 @@ def test_pytorch_dataset_with_supervised_task(cfg_train, collate_type):
             "static_values",
             SUPERVISED_TASK_NAME,
         }
-    elif collate_type == "triplet":
+    elif collate_type in ["triplet", "triplet_prompt"]:
         assert batch.keys() == {
             "mask",
             "static_mask",
