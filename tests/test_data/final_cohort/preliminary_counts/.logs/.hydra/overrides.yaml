@@ -1,3 +1,0 @@
-- input_dir=/home/aleksia/MEDS_polars_functions/tests/dummy_data/processed
-- cohort_dir=/home/aleksia/MEDS_polars_functions/tests/dummy_data/processed/final_cohort
-- stage_configs.add_time_derived_measurements.age.DOB_code=DOB
