@@ -216,7 +216,6 @@ def test_tokenize(tmp_path):
     # "MEDS_transform-aggregate_code_metadata", code_kwargs, "aggregate code metadata")
 
     config_kwargs = {
-        # MEDS_cohort_dir=str(MEDS_cohort_dir.resolve()),
         "input_dir": str(MEDS_cohort_dir.parent.resolve()),
         "cohort_dir": str(MEDS_cohort_dir.resolve()),
         "stage_configs.add_time_derived_measurements.age.DOB_code": "DOB",
@@ -256,6 +255,13 @@ def test_tokenize(tmp_path):
     stderr, stdout = run_command("MEDS_transform-tokenization", config_kwargs, "tokenize")
     logger.info("Converting to tensor...")
     stderr, stdout = run_command("MEDS_transform-tensorization", config_kwargs, "tensorize")
+    shutil.move(MEDS_cohort_dir / "tensorization", MEDS_cohort_dir / "default_tensorization")
+    logger.info("Converting to tensor...")
+    config_kwargs["stage_configs.tensorization.strategy"] = "prompt_expanded_observation"
+    stderr, stdout = run_command("MEDS_transform-tensorization", config_kwargs, "tensorize")
+    shutil.move(
+        MEDS_cohort_dir / "tensorization", MEDS_cohort_dir / "prompt_expanded_observation_tensorization"
+    )
 
 
 if __name__ == "__main__":
