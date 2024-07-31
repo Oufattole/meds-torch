@@ -2,7 +2,7 @@ defaults:
   - input_encoder: triplet_encoder
   - backbone: lstm
   - _self_
-_target_: meds_torch.models.token_forecasting.TripletTokenForecastingModule.initialize
+_target_: meds_torch.models.token_forecasting.TokenForecastingModule.initialize
 
 optimizer:
   _target_: torch.optim.Adam

@@ -17,15 +17,14 @@ from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
     "backbone",
     ["transformer_decoder"],
 )
-@pytest.mark.parametrize("model", ["supervised"])  # "token_forecasting", "value_forecasting"
-def test_train(
+@pytest.mark.parametrize("model", ["supervised"])  # "token_masking"
+def test_train_supervised(
     data: str, input_encoder: str, backbone: str, model: str, meds_dir
 ) -> None:  # cfg: DictConfig,
     """Tests the training configuration provided by the `cfg_train` pytest fixture.
 
     :param cfg_train: A DictConfig containing a valid training configuration.
     """
-    # input_encoder=input_encoder
     overrides = [
         f"data={data}",
         f"model/input_encoder={input_encoder}",
@@ -34,6 +33,43 @@ def test_train(
         f"data.task_name={SUPERVISED_TASK_NAME}",
     ]
     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
+    assert Path(cfg.data.task_label_path).exists()
+    dm = hydra.utils.instantiate(cfg.data)
+    dm.setup()
+    train_dataloader = dm.train_dataloader()
+    lightning.Trainer(accelerator="cpu", fast_dev_run=True).fit(
+        model=hydra.utils.instantiate(cfg.model),
+        train_dataloaders=train_dataloader,
+    )
+
+
+@pytest.mark.parametrize("data", ["pytorch_dataset"])
+@pytest.mark.parametrize("backbone", ["transformer_decoder"])
+@pytest.mark.parametrize("model", ["token_forecasting"])  # "token_masking"
+@pytest.mark.parametrize("input_encoder", ["triplet_encoder", "triplet_prompt_encoder"])  # "token_masking"
+def test_train_token_forecasting(
+    data: str, backbone: str, model: str, meds_dir, input_encoder: str
+) -> None:  # cfg: DictConfig,
+    """Tests the training configuration provided by the `cfg_train` pytest fixture.
+
+    :param cfg_train: A DictConfig containing a valid training configuration.
+    """
+    if input_encoder == "triplet_prompt_encoder":
+        tensorization_name = "prompt_expanded_observation"
+    elif input_encoder == "triplet_encoder":
+        tensorization_name = "default"
+    else:
+        raise ValueError(f"Invalid input_encoder: {input_encoder}")
+
+    overrides = [
+        f"data={data}",
+        f"model/input_encoder={input_encoder}",
+        f"model/backbone={backbone}",
+        f"model={model}",
+        f"data.task_name={SUPERVISED_TASK_NAME}",
+    ]
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
+    cfg.data.tensorization_name = tensorization_name
     assert Path(cfg.data.task_label_path).exists()
     dm = hydra.utils.instantiate(cfg.data)
     dm.setup()
@@ -58,7 +94,6 @@ def test_ebcl_train(
 
     :param cfg_train: A DictConfig containing a valid training configuration.
     """
-    # input_encoder=input_encoder
     overrides = [
         f"data={data}",
         f"model/input_encoder={input_encoder}",
