@@ -23,7 +23,7 @@ def run_sh_command(command: list[str]) -> None:
 
 
 def run_command(script: str, hydra_kwargs: dict[str, str], test_name: str, expected_returncode: int = 0):
-    command_parts = ["python", script] + [f"{k}={v}" for k, v in hydra_kwargs.items()]
+    command_parts = [script] + [f"{k}={v}" for k, v in hydra_kwargs.items()]
     command_out = subprocess.run(" ".join(command_parts), shell=True, capture_output=True)
     stderr = command_out.stderr.decode()
     stdout = command_out.stdout.decode()
