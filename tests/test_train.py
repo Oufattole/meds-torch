@@ -7,6 +7,7 @@ from pathlib import Path
 import hydra
 import lightning
 import pytest
+import torch
 
 from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 
@@ -74,10 +75,15 @@ def test_train_token_forecasting(
     dm = hydra.utils.instantiate(cfg.data)
     dm.setup()
     train_dataloader = dm.train_dataloader()
+    model = hydra.utils.instantiate(cfg.model)
     lightning.Trainer(accelerator="cpu", fast_dev_run=True).fit(
-        model=hydra.utils.instantiate(cfg.model),
+        model=model,
         train_dataloaders=train_dataloader,
     )
+    batch = next(iter(train_dataloader))
+    seq_len = 20
+    output = model.generate(batch, seq_len)
+    assert output.shape == torch.Size([2, seq_len, 4])
 
 
 @pytest.mark.parametrize("data", ["multiwindow_pytorch_dataset"])
