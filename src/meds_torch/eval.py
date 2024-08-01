@@ -24,13 +24,10 @@ rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 # more info: https://github.com/ashleve/rootutils
 # ------------------------------------------------------------------------------------ #
 
-from meds_torch.utils import (
-    RankedLogger,
-    extras,
-    instantiate_loggers,
-    log_hyperparameters,
-    task_wrapper,
-)
+from meds_torch.utils.instantiators import instantiate_loggers
+from meds_torch.utils.logging_utils import log_hyperparameters
+from meds_torch.utils.pylogger import RankedLogger
+from meds_torch.utils.utils import extras, task_wrapper
 
 log = RankedLogger(__name__, rank_zero_only=True)
 
@@ -82,7 +79,7 @@ def evaluate(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     return metric_dict, object_dict
 
 
-@hydra.main(version_base="1.3", config_path="../configs", config_name="eval.yaml")
+@hydra.main(version_base="1.3", config_path="../../configs", config_name="eval.yaml")
 def main(cfg: DictConfig) -> None:
     """Main entry point for evaluation.
 
