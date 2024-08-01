@@ -80,6 +80,7 @@ def test_train_token_forecasting(
         model=model,
         train_dataloaders=train_dataloader,
     )
+    torch.manual_seed(0)
     batch = next(iter(train_dataloader))
     seq_len = 20
     output = model.generate(batch, seq_len)

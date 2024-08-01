@@ -6,7 +6,6 @@ from omegaconf import DictConfig
 from torch import nn
 from x_transformers import AutoregressiveWrapper
 from x_transformers.autoregressive_wrapper import (
-    align_right,
     cast_tuple,
     contrastive_decode_fn,
     eval_decorator,
@@ -39,6 +38,26 @@ def top_k_logits(logits, k):
     values, _ = torch.topk(logits, k)
     min_values = values[:, -1]
     return torch.where(logits < min_values, torch.ones_like(logits, dtype=logits.dtype) * -1e10, logits)
+
+
+def align_right(t, lens, pad_id=0):
+    batch, seq_len, _, device = *t.shape, t.device
+
+    assert lens.ndim == 1 and lens.shape[0] == batch
+    assert lens.amax() <= seq_len
+
+    pad_lens = seq_len - lens
+    max_pad_len = pad_lens.amax()
+
+    batch_arange = torch.arange(batch, device=device, dtype=torch.long)[..., None]
+    prompt_len_arange = torch.arange(seq_len, device=device, dtype=torch.long)
+
+    t = F.pad(t, (0, 0, max_pad_len, 0, 0, 0), value=0)
+    offset = max_pad_len - pad_lens
+
+    # TODO: you may need to mask the padding out, x_transformers might take care of this double check
+    aligned = t[batch_arange, prompt_len_arange + offset[..., None], :]
+    return aligned
 
 
 def select_values_from_logits(logits, target_indices):
@@ -232,6 +251,7 @@ class TokenForecastingModule(BaseModule):
         max_seq_len, greedy = model.max_seq_len, temperature == 0.0
 
         t = prompts.shape[1]
+        prompt_lens = mask.sum(axis=1)
 
         # handle variable lengthed prompts (prefixes)
 
