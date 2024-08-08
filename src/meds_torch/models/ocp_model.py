@@ -120,6 +120,7 @@ class OCPModule(BaseModule):
         labels = output["MODEL//LABELS"].float()
         self.train_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.train_auc.update(output[MODEL_LOGITS_KEY], labels)
+        self.log("train/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 
     def validation_step(self, batch):
@@ -128,6 +129,7 @@ class OCPModule(BaseModule):
         labels = output["MODEL//LABELS"].float()
         self.val_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.val_auc.update(output[MODEL_LOGITS_KEY], labels)
+        self.log("val/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 
     def test_step(self, batch):
@@ -136,17 +138,18 @@ class OCPModule(BaseModule):
         labels = output["MODEL//LABELS"].float()
         self.test_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.test_auc.update(output[MODEL_LOGITS_KEY], labels)
+        self.log("test/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 
     def on_train_epoch_end(self):
         self.log(
-            "train_acc",
+            "train/acc",
             self.train_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "train_auc",
+            "train/auc",
             self.train_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
@@ -154,40 +157,40 @@ class OCPModule(BaseModule):
 
     def on_val_epoch_end(self):
         self.log(
-            "val_acc",
+            "val/acc",
             self.val_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "val_auc",
+            "val/auc",
             self.val_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         print(
-            "val_acc",
+            "val/acc",
             self.val_acc.compute(),
-            "val_auc",
+            "val/auc",
             self.val_auc.compute(),
         )
 
     def on_test_epoch_end(self):
         self.log(
-            "test_acc",
+            "test/acc",
             self.test_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "test_auc",
+            "test/auc",
             self.test_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         print(
-            "test_acc",
+            "test/acc",
             self.test_acc.compute(),
-            "test_auc",
+            "test/auc",
             self.test_auc.compute(),
         )

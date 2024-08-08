@@ -207,10 +207,10 @@ class TokenForecastingModule(BaseModule):
         return batch
 
     def _log(self, batch, split):
-        self.log(split + "_code_loss", batch[CODE_LOSS])
-        self.log(split + "_numerical_value_loss", batch[NUMERICAL_VALUE_LOSS])
-        self.log(split + "_time_loss", batch[TIME_LOSS])
-        self.log(split + "_loss", batch[MODEL_LOSS_KEY])
+        self.log(split + "/code_loss", batch[CODE_LOSS])
+        self.log(split + "/numerical_value_loss", batch[NUMERICAL_VALUE_LOSS])
+        self.log(split + "/time_loss", batch[TIME_LOSS])
+        self.log(split + "/loss", batch[MODEL_LOSS_KEY])
 
     def training_step(self, batch):
         batch = self(batch)

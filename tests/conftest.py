@@ -73,7 +73,7 @@ def create_cfg(overrides, meds_dir: Path) -> DictConfig:
             cfg.paths.data_dir = str(meds_dir)
             cfg.paths.meds_dir = str(meds_dir / "final_cohort")
             cfg.trainer.max_epochs = 1
-            cfg.trainer.limit_train_batches = 0.01
+            cfg.trainer.limit_train_batches = 0.05
             cfg.trainer.limit_val_batches = 0.1
             cfg.trainer.limit_test_batches = 0.1
             cfg.trainer.accelerator = "cpu"
