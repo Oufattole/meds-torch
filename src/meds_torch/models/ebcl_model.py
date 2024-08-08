@@ -34,6 +34,12 @@ class EBCLModule(BaseModule):
         self.val_post_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
         self.val_post_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
 
+        self.test_pre_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
+        self.test_pre_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+
+        self.test_post_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
+        self.test_post_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+
         # Model components
         self.pre_projection = nn.Linear(cfg.token_dim, cfg.token_dim)
         self.post_projection = nn.Linear(cfg.token_dim, cfg.token_dim)

@@ -65,8 +65,6 @@ class MEDSDataModule(LightningDataModule, Module):
         self.data_val: Dataset | None = None
         self.data_test: Dataset | None = None
 
-        self.batch_size_per_device = cfg.dataloader.batch_size
-
     @property
     def num_classes(self) -> int:
         """Get the number of classes.
@@ -96,12 +94,12 @@ class MEDSDataModule(LightningDataModule, Module):
         """
         # Divide batch size by the number of devices.
         if self.trainer is not None:
-            if self.hparams.batch_size % self.trainer.world_size != 0:
+            if self.hparams.cfg.dataloader.batch_size % self.trainer.world_size != 0:
                 raise RuntimeError(
-                    f"Batch size ({self.hparams.batch_size}) is not divisible by the number of devices"
-                    f" ({self.trainer.world_size})."
+                    f"Batch size ({self.hparams.cfg.dataloader.batch_size}) is not divisible by "
+                    f"the number of devices ({self.trainer.world_size})."
                 )
-            self.batch_size_per_device = self.hparams.batch_size // self.trainer.world_size
+            self.batch_size_per_device = self.hparams.cfg.dataloader.batch_size // self.trainer.world_size
 
         # load and split datasets only if not loaded already
         self.data_train = get_dataset(self.cfg, split="train")

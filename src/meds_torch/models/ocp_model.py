@@ -63,11 +63,12 @@ class OCPModule(BaseModule):
             post_batch = batch[self.cfg.post_window_name]
             post_batch = self.input_encoder(post_batch)
 
-            random_flips = torch.randint(0, 2, (pre_batch[INPUT_ENCODER_MASK_KEY].shape[0], 1)).bool()
-
             pre_padded_mask, post_padded_mask = self.early_fusion_pad(
                 pre_batch[INPUT_ENCODER_MASK_KEY], post_batch[INPUT_ENCODER_MASK_KEY]
             )
+            random_flips = torch.randint(
+                0, 2, (pre_batch[INPUT_ENCODER_MASK_KEY].shape[0], 1), device=pre_padded_mask.device
+            ).bool()
             fusion_mask = self.shuffled_concat(pre_padded_mask, post_padded_mask, random_flips)
 
             pre_padded_tokens, post_padded_tokens = self.early_fusion_pad(
@@ -93,7 +94,7 @@ class OCPModule(BaseModule):
             post_batch = self.model(post_batch)
             post_outputs = post_batch[BACKBONE_EMBEDDINGS_KEY]
 
-            random_flips = torch.randint(0, 2, (pre_outputs.shape[0], 1)).bool()
+            random_flips = torch.randint(0, 2, (pre_outputs.shape[0], 1), device=pre_outputs.device).bool()
             shuffled_pre_outputs = torch.where(random_flips, post_outputs, pre_outputs)
             shuffled_post_outputs = torch.where(random_flips, pre_outputs, post_outputs)
             classifier_inputs = torch.concat([shuffled_pre_outputs, shuffled_post_outputs], dim=1)
