@@ -2,12 +2,9 @@
 
 TODO: finish the meds_torch.train function and setup tests for it
 """
-from pathlib import Path
 
 import hydra
-import lightning
 import pytest
-import torch
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import open_dict
 
@@ -15,116 +12,28 @@ from meds_torch.train import train
 from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 
 
-@pytest.mark.parametrize("data", ["pytorch_dataset"])
-@pytest.mark.parametrize("input_encoder", ["triplet_encoder"])
+@pytest.mark.parametrize("input_encoder", ["triplet_encoder", "triplet_prompt_encoder"])
 @pytest.mark.parametrize(
-    "backbone",
-    ["transformer_decoder"],
+    "backbone", ["transformer_decoder", "transformer_encoder", "transformer_encoder_attn_avg", "lstm"]
 )
-@pytest.mark.parametrize("model", ["supervised"])  # "token_masking"
-def test_train_supervised(
-    data: str, input_encoder: str, backbone: str, model: str, meds_dir
-) -> None:  # cfg: DictConfig,
-    """Tests the training configuration provided by the `cfg_train` pytest fixture.
-
-    :param cfg_train: A DictConfig containing a valid training configuration.
-    """
-    overrides = [
-        f"data={data}",
-        f"model/input_encoder={input_encoder}",
-        f"model/backbone={backbone}",
-        f"model={model}",
-        f"data.task_name={SUPERVISED_TASK_NAME}",
-    ]
-    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
-    with open_dict(cfg):
-        cfg.trainer.fast_dev_run = True
-        cfg.trainer.accelerator = "gpu"
-    HydraConfig().set_config(cfg)
-    train(cfg)
-
-
-@pytest.mark.parametrize("data", ["pytorch_dataset"])
-@pytest.mark.parametrize("backbone", ["transformer_decoder"])
-@pytest.mark.parametrize("model", ["token_forecasting"])  # "token_masking"
-@pytest.mark.parametrize("input_encoder", ["triplet_encoder", "triplet_prompt_encoder"])  # "token_masking"
-def test_train_token_forecasting(
-    data: str, backbone: str, model: str, meds_dir, input_encoder: str
-) -> None:  # cfg: DictConfig,
-    """Tests the training configuration provided by the `cfg_train` pytest fixture.
-
-    :param cfg_train: A DictConfig containing a valid training configuration.
-    """
-    if input_encoder == "triplet_prompt_encoder":
-        tensorization_name = "prompt_expanded_observation"
-    elif input_encoder == "triplet_encoder":
-        tensorization_name = "default"
-    else:
-        raise ValueError(f"Invalid input_encoder: {input_encoder}")
-
-    overrides = [
-        f"data={data}",
-        f"model/input_encoder={input_encoder}",
-        f"model/backbone={backbone}",
-        f"model={model}",
-        f"data.task_name={SUPERVISED_TASK_NAME}",
-    ]
-    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
-    cfg.data.tensorization_name = tensorization_name
-    assert Path(cfg.data.task_label_path).exists()
-    dm = hydra.utils.instantiate(cfg.data)
-    dm.setup()
-    train_dataloader = dm.train_dataloader()
-    model = hydra.utils.instantiate(cfg.model)
-    lightning.Trainer(accelerator="cpu", fast_dev_run=True).fit(
-        model=model,
-        train_dataloaders=train_dataloader,
-    )
-    torch.manual_seed(0)
-    batch = next(iter(train_dataloader))
-    seq_len = 20
-    output = model.generate(batch, seq_len)
-    assert output.shape == torch.Size([2, seq_len, 4])
-
-
-@pytest.mark.parametrize("data", ["multiwindow_pytorch_dataset"])
-@pytest.mark.parametrize("input_encoder", ["triplet_encoder"])
 @pytest.mark.parametrize(
-    "backbone",
-    ["transformer_decoder"],
+    "data, model, early_fusion",
+    [
+        # Supervised
+        ("pytorch_dataset", "supervised", None),
+        # Token Forecasting
+        ("pytorch_dataset", "token_forecasting", None),
+        # EBCL
+        ("multiwindow_pytorch_dataset", "ebcl", None),
+        # Value Forecasting
+        ("multiwindow_pytorch_dataset", "value_forecasting", None),
+        # OCP
+        ("multiwindow_pytorch_dataset", "ocp", "true"),
+        ("multiwindow_pytorch_dataset", "ocp", "false"),
+    ],
 )
-@pytest.mark.parametrize("model", ["ebcl", "value_forecasting"])  # "token_forecasting"
-def test_ebcl_train(
-    data: str, input_encoder: str, backbone: str, model: str, meds_dir
-) -> None:  # cfg: DictConfig,
-    """Tests the training configuration provided by the `cfg_train` pytest fixture.
-
-    :param cfg_train: A DictConfig containing a valid training configuration.
-    """
-    overrides = [
-        f"data={data}",
-        f"model/input_encoder={input_encoder}",
-        f"model/backbone={backbone}",
-        f"model={model}",
-        f"data.task_name={SUPERVISED_TASK_NAME}",
-    ]
-    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
-    with open_dict(cfg):
-        cfg.trainer.fast_dev_run = True
-        cfg.trainer.accelerator = "gpu"
-    HydraConfig().set_config(cfg)
-    train(cfg)
-
-
-@pytest.mark.parametrize("data", ["multiwindow_pytorch_dataset"])
-@pytest.mark.parametrize("input_encoder", ["triplet_encoder"])
-@pytest.mark.parametrize(
-    "backbone",
-    ["transformer_decoder"],
-)
-@pytest.mark.parametrize("early_fusion", ["true", "false"])  # "token_forecasting", "value_forecasting"
-def test_ocp_train(
-    data: str, input_encoder: str, backbone: str, early_fusion: str, meds_dir
+def test_train(
+    data: str, input_encoder: str, model: str, backbone: str, early_fusion: str, meds_dir
 ) -> None:  # cfg: DictConfig,
     """Tests the training configuration provided by the `cfg_train` pytest fixture.
 
@@ -135,16 +44,28 @@ def test_ocp_train(
         f"data={data}",
         f"model/input_encoder={input_encoder}",
         f"model/backbone={backbone}",
-        "model=ocp",
-        f"data.task_name={SUPERVISED_TASK_NAME}",
-        f"model.early_fusion={early_fusion}",
+        f"model={model}",
     ]
+    raises_value_error = False
+
+    if model == "supervised":
+        overrides.append(f"data.task_name={SUPERVISED_TASK_NAME}")
+    elif model == "token_forecasting" and backbone not in ["transformer_decoder", "lstm"]:
+        raises_value_error = True
+
+    if early_fusion is not None:
+        overrides.append(f"model.early_fusion={early_fusion}")
+
     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
     with open_dict(cfg):
         cfg.trainer.fast_dev_run = True
-        cfg.trainer.accelerator = "gpu"
+        cfg.trainer.accelerator = "cpu"
     HydraConfig().set_config(cfg)
-    train(cfg)
+    if raises_value_error:
+        with pytest.raises(hydra.errors.InstantiationException):
+            train(cfg)
+    else:
+        train(cfg)
 
 
 # @RunIf(min_gpus=1)

@@ -19,6 +19,7 @@ from meds_torch.input_encoder.triplet_encoder import TripletEncoder
 from meds_torch.input_encoder.triplet_prompt_encoder import TripletPromptEncoder
 from meds_torch.models import BACKBONE_TOKENS_KEY, MODEL_LOSS_KEY
 from meds_torch.models.base_model import BaseModule
+from meds_torch.models.components import AUTOREGRESSIVE_MODELS
 
 # from meds_torch.model.architectures.mamba import MambaModel
 
@@ -88,6 +89,10 @@ class TokenForecastingModule(BaseModule):
 
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
+        if not isinstance(self.model, AUTOREGRESSIVE_MODELS):
+            raise ValueError(
+                f"Unsupported model type: {type(self.model)}, choose one from {AUTOREGRESSIVE_MODELS}"
+            )
         self.setup_heads()
 
     def setup_heads(self):
