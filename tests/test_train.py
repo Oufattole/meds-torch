@@ -15,6 +15,25 @@ from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 from tests.helpers.run_if import RunIf
 
 
+def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backbone):
+    overrides = [
+        f"data={data}",
+        f"model/input_encoder={input_encoder}",
+        f"model/backbone={backbone}",
+        f"model={model}",
+    ]
+    raises_value_error = False
+
+    if model == "supervised":
+        overrides.append(f"data.task_name={SUPERVISED_TASK_NAME}")
+    elif model == "token_forecasting" and backbone not in ["transformer_decoder", "lstm"]:
+        raises_value_error = True
+
+    if early_fusion is not None:
+        overrides.append(f"model.early_fusion={early_fusion}")
+    return overrides, raises_value_error
+
+
 @pytest.fixture(
     params=[
         pytest.param(
@@ -35,25 +54,17 @@ from tests.helpers.run_if import RunIf
 )
 def kwargs(request, meds_dir) -> dict:
     data, model, early_fusion, input_encoder, backbone = request.param
-
-    overrides = [
-        f"data={data}",
-        f"model/input_encoder={input_encoder}",
-        f"model/backbone={backbone}",
-        f"model={model}",
-    ]
-    raises_value_error = False
-
-    if model == "supervised":
-        overrides.append(f"data.task_name={SUPERVISED_TASK_NAME}")
-    elif model == "token_forecasting" and backbone not in ["transformer_decoder", "lstm"]:
-        raises_value_error = True
-
-    if early_fusion is not None:
-        overrides.append(f"model.early_fusion={early_fusion}")
-
+    overrides, raises_value_error = get_overrides_and_exceptions(
+        data, model, early_fusion, input_encoder, backbone
+    )
     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
-    return dict(cfg=cfg, raises_value_error=raises_value_error)
+    return dict(
+        cfg=cfg,
+        raises_value_error=raises_value_error,
+        input_kwargs=dict(
+            data=data, model=model, early_fusion=early_fusion, input_encoder=input_encoder, backbone=backbone
+        ),
+    )
 
 
 def test_fast_dev_train(kwargs: dict):

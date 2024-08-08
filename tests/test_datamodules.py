@@ -15,14 +15,14 @@ from meds_torch.data.components.pytorch_dataset import PytorchDataset
 from meds_torch.data.datamodule import MEDSDataModule
 
 # from meds_torch.data.components.pytorch_dataset
-from tests.conftest import SUPERVISED_TASK_NAME
+from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 
 
 @pytest.mark.parametrize(
     "collate_type", ["triplet", "event_stream", "text_code", "text_observation", "all_text", "triplet_prompt"]
 )
-def test_pytorch_dataset(cfg_train, collate_type):
-    cfg = cfg_train
+def test_pytorch_dataset(meds_dir, collate_type):
+    cfg = create_cfg(overrides=[], meds_dir=meds_dir)
     cfg.data.collate_type = collate_type
     if collate_type == "triplet_prompt":
         cfg.data.tensorization_name = "prompt_expanded_observation"
@@ -87,8 +87,8 @@ def test_pytorch_dataset(cfg_train, collate_type):
 
 
 @pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt"])
-def test_pytorch_dataset_with_supervised_task(cfg_train, collate_type):
-    cfg = cfg_train
+def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
+    cfg = create_cfg(overrides=[], meds_dir=meds_dir)
     cfg.data.collate_type = collate_type
     with open_dict(cfg):
         cfg.data.task_name = SUPERVISED_TASK_NAME
@@ -126,8 +126,8 @@ def test_pytorch_dataset_with_supervised_task(cfg_train, collate_type):
 
 @pytest.mark.parametrize("patient_level_sampling", [False, True])
 @pytest.mark.parametrize("collate_type", ["triplet"])
-def test_contrastive_windows(cfg_multiwindow_train, patient_level_sampling, collate_type):
-    cfg = cfg_multiwindow_train
+def test_contrastive_windows(meds_dir, patient_level_sampling, collate_type):
+    cfg = create_cfg(overrides=["data=multiwindow_pytorch_dataset"], meds_dir=meds_dir)
     cfg.data.collate_type = collate_type
     cfg.data.patient_level_sampling = patient_level_sampling
     assert cfg.data.cached_windows_dir
@@ -152,8 +152,8 @@ def test_contrastive_windows(cfg_multiwindow_train, patient_level_sampling, coll
         }
 
 
-def test_full_datamodule(cfg_train):
-    cfg = cfg_train.copy()
+def test_full_datamodule(meds_dir):
+    cfg = create_cfg(overrides=[], meds_dir=meds_dir)
     cfg.data.dataloader.batch_size = 1
     dm = MEDSDataModule(cfg.data)
     dm.prepare_data()
@@ -174,26 +174,3 @@ def test_full_datamodule(cfg_train):
     batch = next(iter(dm.train_dataloader()))
     for value in batch.values():
         assert len(value) == cfg.data.dataloader.batch_size
-
-
-# def test_triplet_prompt_encoder(meds_dir):
-#     input_encoder = "triplet_prompt_encoder"
-#     backbone = "transformer_decoder"
-#     overrides = [
-#         f"model/input_encoder={input_encoder}",
-#         f"model/backbone={backbone}",
-#     ]
-#     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
-#     cfg.data.collate_type = "triplet_prompt"
-
-#     dm = hydra.utils.instantiate(cfg.data)
-#     dm.setup()
-#     train_dataloader = dm.train_dataloader()
-#     input_encoder = hydra.utils.instantiate(cfg.model.input_encoder)
-#     batch = next(iter(train_dataloader))
-#     output = input_encoder(batch)
-#     # batch = next(iter(train_dataloader))
-#     # output = input_encoder(batch)
-#     # pyd = PytorchDataset(cfg.data, split="train")
-#     # item = pyd[0]
-#     # assert item.keys() == {"static_indices", "static_values", "dynamic", "supervised_task"}
