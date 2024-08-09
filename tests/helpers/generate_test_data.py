@@ -238,29 +238,29 @@ def test_tokenize(tmp_path):
     }
 
     logger.info("Filtering patients...")
-    stderr, stdout = run_command("MEDS_transform-filter_patients", config_kwargs, "filter patients")
+    stderr, stdout = run_command("MEDS_transform-filter_patients", [], config_kwargs, "filter patients")
     logger.info("Generating time derived measurements...")
     stderr, stdout = run_command(
         "MEDS_transform-add_time_derived_measurements", config_kwargs, "time derived measurements"
     )
     logger.info("Filtering measurements...")
-    stderr, stdout = run_command("MEDS_transform-filter_measurements", config_kwargs, "filter_codes")
+    stderr, stdout = run_command("MEDS_transform-filter_measurements", [], config_kwargs, "filter_codes")
     logger.info("Occluding outliers...")
-    stderr, stdout = run_command("MEDS_transform-occlude_outliers", config_kwargs, "filter_outliers")
+    stderr, stdout = run_command("MEDS_transform-occlude_outliers", [], config_kwargs, "filter_outliers")
     logger.info("Fitting vocabulary indices...")
     stderr, stdout = run_command(
-        "MEDS_transform-fit_vocabulary_indices", config_kwargs, "fit_vocabulary_indices"
+        "MEDS_transform-fit_vocabulary_indices", [], config_kwargs, "fit_vocabulary_indices"
     )
     logger.info("Normalizing data (converting codes to use integer encodings)...")
-    stderr, stdout = run_command("MEDS_transform-normalization", config_kwargs, "normalize")
+    stderr, stdout = run_command("MEDS_transform-normalization", [], config_kwargs, "normalize")
     logger.info("Converting to tokenization...")
-    stderr, stdout = run_command("MEDS_transform-tokenization", config_kwargs, "tokenize")
+    stderr, stdout = run_command("MEDS_transform-tokenization", [], config_kwargs, "tokenize")
     logger.info("Converting to tensor...")
-    stderr, stdout = run_command("MEDS_transform-tensorization", config_kwargs, "tensorize")
+    stderr, stdout = run_command("MEDS_transform-tensorization", [], config_kwargs, "tensorize")
     shutil.move(MEDS_cohort_dir / "tensorization", MEDS_cohort_dir / "default_tensorization")
     logger.info("Converting to tensor...")
     config_kwargs["stage_configs.tensorization.strategy"] = "prompt_expanded_observation"
-    stderr, stdout = run_command("MEDS_transform-tensorization", config_kwargs, "tensorize")
+    stderr, stdout = run_command("MEDS_transform-tensorization", [], config_kwargs, "tensorize")
     shutil.move(
         MEDS_cohort_dir / "tensorization", MEDS_cohort_dir / "prompt_expanded_observation_tensorization"
     )
