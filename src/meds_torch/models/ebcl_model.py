@@ -34,6 +34,12 @@ class EBCLModule(BaseModule):
         self.val_post_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
         self.val_post_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
 
+        self.test_pre_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
+        self.test_pre_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+
+        self.test_post_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
+        self.test_post_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+
         # Model components
         self.pre_projection = nn.Linear(cfg.token_dim, cfg.token_dim)
         self.post_projection = nn.Linear(cfg.token_dim, cfg.token_dim)
@@ -90,7 +96,7 @@ class EBCLModule(BaseModule):
         self.train_post_acc.update(output[MODEL_LOGITS_KEY].T, labels)
         self.train_post_auc.update(output[MODEL_LOGITS_KEY].T, labels)
 
-        self.log("train_loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
+        self.log("train/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 
     def validation_step(self, batch):
@@ -104,7 +110,7 @@ class EBCLModule(BaseModule):
         # post metrics
         self.val_post_acc.update(output[MODEL_LOGITS_KEY].T, labels)
         self.val_post_auc.update(output[MODEL_LOGITS_KEY].T, labels)
-        self.log("val_loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
+        self.log("val/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 
     def test_step(self, batch):
@@ -118,31 +124,31 @@ class EBCLModule(BaseModule):
         # post metrics
         self.test_post_acc.update(output[MODEL_LOGITS_KEY].T, labels)
         self.test_post_auc.update(output[MODEL_LOGITS_KEY].T, labels)
-        self.log("test_loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
+        self.log("test/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 
     def on_train_epoch_end(self):
         self.log(
-            "train_pre_acc",
+            "train/pre/acc",
             self.train_pre_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "train_pre_auc",
+            "train/pre/auc",
             self.train_pre_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
 
         self.log(
-            "train_post_acc",
+            "train/post/acc",
             self.train_post_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "train_post_auc",
+            "train/post/auc",
             self.train_post_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
@@ -150,79 +156,79 @@ class EBCLModule(BaseModule):
 
     def on_val_epoch_end(self):
         self.log(
-            "val_pre_acc",
+            "val/pre/acc",
             self.val_pre_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "val_pre_auc",
+            "val/pre/auc",
             self.val_pre_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
 
         self.log(
-            "val_post_acc",
+            "val/post/acc",
             self.val_post_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "val_post_auc",
+            "val/post/auc",
             self.val_post_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
 
         print(
-            "val_pre_acc",
+            "val/pre/acc",
             self.val_pre_acc.compute(),
-            "val_pre_auc",
+            "val/pre/auc",
             self.val_pre_auc.compute(),
         )
         print(
-            "val_post_acc",
+            "val/post/acc",
             self.val_post_acc.compute(),
-            "val_post_auc",
+            "val/post/auc",
             self.val_post_auc.compute(),
         )
 
     def on_test_epoch_end(self):
         self.log(
-            "test_pre_acc",
+            "test/pre/acc",
             self.test_pre_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "test_pre_auc",
+            "test/pre/auc",
             self.test_pre_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
 
         self.log(
-            "test_post_acc",
+            "test/post/acc",
             self.test_post_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "test_post_auc",
+            "test/post/auc",
             self.test_post_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         print(
-            "test_pre_acc",
+            "test/pre/acc",
             self.test_pre_acc.compute(),
-            "test_pre_auc",
+            "test/pre/auc",
             self.test_pre_auc.compute(),
         )
         print(
-            "test_post_acc",
+            "test/post/acc",
             self.test_post_acc.compute(),
-            "test_post_auc",
+            "test/post/auc",
             self.test_post_auc.compute(),
         )

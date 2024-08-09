@@ -5,6 +5,7 @@ from typing import Any
 import hydra
 import lightning as L
 import rootutils
+import torch
 from lightning import Callback, LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig, OmegaConf
@@ -43,7 +44,7 @@ log = RankedLogger(__name__, rank_zero_only=True)
 
 
 @task_wrapper
-def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
+def transfer_learning(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     """Trains the model. Can additionally evaluate on a testset, using best weights obtained during training.
 
     This method is wrapped in optional @task_wrapper decorator, that controls the behavior during failure.
@@ -52,6 +53,12 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     :param cfg: A DictConfig configuration composed by Hydra.
     :return: A tuple with metrics and dict with all instantiated objects.
     """
+    # load pretrained backbone and input encoder:
+    pretrain_cfg = OmegaConf.load(cfg.pretrain_yaml_path)
+    pretrain_model: LightningModule = hydra.utils.instantiate(pretrain_cfg.model)
+    ckpt = torch.load(cfg.pretrain_ckpt_path)
+    pretrain_model.load_state_dict(ckpt["state_dict"])
+
     # cache hydra config
     os.makedirs(cfg.paths.output_dir, exist_ok=True)
     OmegaConf.save(config=cfg, f=Path(cfg.paths.output_dir) / "hydra_config.yaml")
@@ -65,6 +72,22 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
 
     log.info(f"Instantiating model <{cfg.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.model)
+
+    log.info(f"Loading backbone from {cfg.pretrain_yaml_path}")
+    if not isinstance(model.model, pretrain_model.model.__class__):
+        raise ValueError(
+            f"Model {model.model.__class__} is not compatible with pretrained model"
+            f" {pretrain_model.model.__class__}."
+        )
+    model.model = pretrain_model.model
+
+    log.info(f"Loading input encoder from {cfg.pretrain_yaml_path}")
+    if not isinstance(model.input_encoder, pretrain_model.input_encoder.__class__):
+        raise ValueError(
+            f"Input encoder {model.input_encoder.__class__} is not compatible with pretrained"
+            f" input encoder {pretrain_model.input_encoder.__class__}."
+        )
+    model.input_encoder = pretrain_model.input_encoder
 
     log.info("Instantiating callbacks...")
     callbacks: list[Callback] = instantiate_callbacks(cfg.get("callbacks"))
@@ -111,7 +134,7 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     return metric_dict, object_dict
 
 
-@hydra.main(version_base="1.3", config_path="../configs", config_name="train.yaml")
+@hydra.main(version_base="1.3", config_path="../configs", config_name="transfer_learning.yaml")
 def main(cfg: DictConfig) -> float | None:
     """Main entry point for training.
 
@@ -124,7 +147,7 @@ def main(cfg: DictConfig) -> float | None:
     extras(cfg)
 
     # train the model
-    metric_dict, _ = train(cfg)
+    metric_dict, _ = transfer_learning(cfg)
 
     # safely retrieve metric value for hydra-based hyperparameter optimization
     metric_value = get_metric_value(metric_dict=metric_dict, metric_name=cfg.get("optimized_metric"))

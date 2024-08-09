@@ -57,6 +57,7 @@ def test_train_config(
 
     assert isinstance(hydra.utils.instantiate(cfg.data), MEDSDataModule)
     assert isinstance(hydra.utils.instantiate(cfg.model.input_encoder), TripletEncoder)
+
     backbone_model = hydra.utils.instantiate(cfg.model.backbone)
     if backbone == "lstm":
         assert isinstance(backbone_model, LstmModel)
@@ -70,4 +71,8 @@ def test_train_config(
         assert isinstance(backbone_model, AttentionAveragedTransformerEncoderModel)
     else:
         raise NotImplementedError(f"Unsupported backbone {backbone}!")
-    assert isinstance(hydra.utils.instantiate(cfg.model), LightningModule)
+    if model == "token_forecasting" and backbone not in ["transformer_decoder", "lstm", "mamba"]:
+        with pytest.raises(hydra.errors.InstantiationException):
+            hydra.utils.instantiate(cfg.model)
+    else:
+        assert isinstance(hydra.utils.instantiate(cfg.model), LightningModule)

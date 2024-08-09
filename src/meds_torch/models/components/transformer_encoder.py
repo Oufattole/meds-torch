@@ -42,7 +42,7 @@ class TransformerEncoderModel(torch.nn.Module, Module):
         # Add representation token to the beginning of the sequence
         repeated_rep_token = self.rep_token.repeat(input_data.shape[0], 1, 1)
         input_data = torch.column_stack((repeated_rep_token, input_data.transpose(1, 2)))
-        mask = torch.cat((torch.ones((2, 1), dtype=torch.bool), mask), dim=1)
+        mask = torch.cat((torch.ones((2, 1), dtype=torch.bool, device=mask.device), mask), dim=1)
         # pass tokens and attention mask to the transformer
         output = self.model(input_data, mask=mask)
         # extract the representation token's embedding

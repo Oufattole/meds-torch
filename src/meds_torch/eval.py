@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 import hydra
@@ -31,7 +32,9 @@ from meds_torch.utils import (
     log_hyperparameters,
     task_wrapper,
 )
+from meds_torch.utils.resolvers import setup_resolvers
 
+setup_resolvers()
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
@@ -90,6 +93,7 @@ def main(cfg: DictConfig) -> None:
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
+    os.makedirs(cfg.paths.output_dir, exist_ok=True)
     extras(cfg)
 
     evaluate(cfg)

@@ -63,11 +63,12 @@ class OCPModule(BaseModule):
             post_batch = batch[self.cfg.post_window_name]
             post_batch = self.input_encoder(post_batch)
 
-            random_flips = torch.randint(0, 2, (pre_batch[INPUT_ENCODER_MASK_KEY].shape[0], 1)).bool()
-
             pre_padded_mask, post_padded_mask = self.early_fusion_pad(
                 pre_batch[INPUT_ENCODER_MASK_KEY], post_batch[INPUT_ENCODER_MASK_KEY]
             )
+            random_flips = torch.randint(
+                0, 2, (pre_batch[INPUT_ENCODER_MASK_KEY].shape[0], 1), device=pre_padded_mask.device
+            ).bool()
             fusion_mask = self.shuffled_concat(pre_padded_mask, post_padded_mask, random_flips)
 
             pre_padded_tokens, post_padded_tokens = self.early_fusion_pad(
@@ -93,7 +94,7 @@ class OCPModule(BaseModule):
             post_batch = self.model(post_batch)
             post_outputs = post_batch[BACKBONE_EMBEDDINGS_KEY]
 
-            random_flips = torch.randint(0, 2, (pre_outputs.shape[0], 1)).bool()
+            random_flips = torch.randint(0, 2, (pre_outputs.shape[0], 1), device=pre_outputs.device).bool()
             shuffled_pre_outputs = torch.where(random_flips, post_outputs, pre_outputs)
             shuffled_post_outputs = torch.where(random_flips, pre_outputs, post_outputs)
             classifier_inputs = torch.concat([shuffled_pre_outputs, shuffled_post_outputs], dim=1)
@@ -119,6 +120,7 @@ class OCPModule(BaseModule):
         labels = output["MODEL//LABELS"].float()
         self.train_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.train_auc.update(output[MODEL_LOGITS_KEY], labels)
+        self.log("train/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 
     def validation_step(self, batch):
@@ -127,6 +129,7 @@ class OCPModule(BaseModule):
         labels = output["MODEL//LABELS"].float()
         self.val_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.val_auc.update(output[MODEL_LOGITS_KEY], labels)
+        self.log("val/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 
     def test_step(self, batch):
@@ -135,17 +138,18 @@ class OCPModule(BaseModule):
         labels = output["MODEL//LABELS"].float()
         self.test_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.test_auc.update(output[MODEL_LOGITS_KEY], labels)
+        self.log("test/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 
     def on_train_epoch_end(self):
         self.log(
-            "train_acc",
+            "train/acc",
             self.train_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "train_auc",
+            "train/auc",
             self.train_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
@@ -153,40 +157,40 @@ class OCPModule(BaseModule):
 
     def on_val_epoch_end(self):
         self.log(
-            "val_acc",
+            "val/acc",
             self.val_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "val_auc",
+            "val/auc",
             self.val_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         print(
-            "val_acc",
+            "val/acc",
             self.val_acc.compute(),
-            "val_auc",
+            "val/auc",
             self.val_auc.compute(),
         )
 
     def on_test_epoch_end(self):
         self.log(
-            "test_acc",
+            "test/acc",
             self.test_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "test_auc",
+            "test/auc",
             self.test_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         print(
-            "test_acc",
+            "test/acc",
             self.test_acc.compute(),
-            "test_auc",
+            "test/auc",
             self.test_auc.compute(),
         )

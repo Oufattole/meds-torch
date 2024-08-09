@@ -1,7 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
-
-
 import torch
 from omegaconf import DictConfig
 from torch import nn
@@ -34,7 +30,6 @@ class TransformerDecoderModel(torch.nn.Module, Module):
             ),
         )
         self.model.token_emb = nn.Identity()
-        self.get_last_token = cfg.get_last_token
 
         # Setup LM Heads
         self.value_head = nn.Linear(cfg.token_dim, 1, bias=False)

@@ -16,4 +16,5 @@ def setup_resolvers():
         .collect()
         .item()
         + 1,
+        replace=True,
     )

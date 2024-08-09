@@ -20,7 +20,9 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "polars", "pyarrow", "nested_ragged_tensors", "loguru", "numpy", "ml-mixins", "torch", "omegaconf", "hydra-core", "lightning", "x-transformers", "rich", "hydra-colorlog", "hydra-optuna-sweeper", "wandb", "torchmetrics", "torchvision", "transformers", "MEDS-transforms"
+    "polars", "pyarrow", "nested_ragged_tensors", "loguru", "numpy", "ml-mixins", "torch", "omegaconf", "hydra-core",
+    "lightning", "x-transformers", "rich", "hydra-colorlog", "hydra-optuna-sweeper", "wandb", "torchmetrics",
+    "torchvision", "transformers", "MEDS-transforms", "ray[tune]",
 ]
 
 [project.optional-dependencies]
@@ -65,3 +67,5 @@ Issues = "https://github.com/oufattole/meds-torch/issues"
 [project.scripts]
 meds-torch-train = "meds_torch.train:main"
 meds-torch-eval = "meds_torch.eval:main"
+meds-torch-transfer = "meds_torch.transfer_learning:main"
+meds-torch-tune = "meds_torch.tune:main"

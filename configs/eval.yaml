@@ -10,7 +10,9 @@ defaults:
   - extras: default
   - hydra: default
 
-task_name: "eval"
+name: "eval"
+
+task_name: null
 
 tags: ["dev"]
 

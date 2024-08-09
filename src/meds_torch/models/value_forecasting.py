@@ -37,7 +37,9 @@ class ValueForecastingModule(BaseModule):
 
         with torch.no_grad():
             # create presence target and value target
-            presence_target = torch.zeros((codes.shape[0], vocab_size), dtype=torch.float32)
+            presence_target = torch.zeros(
+                (codes.shape[0], vocab_size), dtype=torch.float32, device=codes.device
+            )
             row_indices = torch.arange(codes.shape[0]).unsqueeze(-1).expand_as(codes).reshape(-1)
             col_indices = codes.reshape(-1)
             presence_target[row_indices, col_indices] = 1
@@ -45,7 +47,9 @@ class ValueForecastingModule(BaseModule):
             # create value target
             numerical_value_mask = forecast_window_data["numerical_value_mask"]
             numerical_value_codes = codes * numerical_value_mask
-            value_target = torch.zeros((numerical_value_codes.shape[0], vocab_size), dtype=torch.float32)
+            value_target = torch.zeros(
+                (numerical_value_codes.shape[0], vocab_size), dtype=torch.float32, device=codes.device
+            )
             row_indices = (
                 torch.arange(numerical_value_codes.shape[0])
                 .unsqueeze(-1)
@@ -82,6 +86,7 @@ class ValueForecastingModule(BaseModule):
         self.train_presence_mse(output["MODEL//PRESENCE_FORECAST"], output["MODEL//PRESENCE_TARGET"])
         self.train_value_mse(output["MODEL//VALUE_FORECAST"], output["MODEL//VALUE_TARGET"])
 
+        self.log("train/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 
     def validation_step(self, batch):
@@ -90,13 +95,16 @@ class ValueForecastingModule(BaseModule):
         self.val_presence_mse(output["MODEL//PRESENCE_FORECAST"], output["MODEL//PRESENCE_TARGET"])
         self.val_value_mse(output["MODEL//VALUE_FORECAST"], output["MODEL//VALUE_TARGET"])
 
+        self.log("val/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 
     def test_step(self, batch):
         output = self.forward(batch)
 
-        self.val_presence_mse(output["MODEL//PRESENCE_FORECAST"], output["MODEL//PRESENCE_TARGET"])
-        self.val_value_mse(output["MODEL//VALUE_FORECAST"], output["MODEL//VALUE_TARGET"])
+        self.test_presence_mse(output["MODEL//PRESENCE_FORECAST"], output["MODEL//PRESENCE_TARGET"])
+        self.test_value_mse(output["MODEL//VALUE_FORECAST"], output["MODEL//VALUE_TARGET"])
+
+        self.log("test/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
 
         return output[MODEL_LOSS_KEY]
 

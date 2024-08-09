@@ -66,20 +66,20 @@ class SupervisedModule(BaseModule):
         self.train_acc.update(output.logits.squeeze(), batch[self.task_name].float())
         self.train_auc.update(output.logits.squeeze(), batch[self.task_name].float())
         self.train_apr.update(output.logits.squeeze(), batch[self.task_name].int())
-        self.log("train_loss", output.loss, batch_size=self.cfg.batch_size)
+        self.log("train/loss", output.loss, batch_size=self.cfg.batch_size)
 
         assert not torch.isnan(output.loss), "Loss is NaN"
         return output.loss
 
     def on_train_epoch_end(self):
         self.log(
-            "train_auc",
+            "train/auc",
             self.train_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "train_acc",
+            "train/acc",
             self.train_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
@@ -99,7 +99,7 @@ class SupervisedModule(BaseModule):
         self.val_apr.update(output.logits.squeeze(), batch[self.task_name].int())
 
         self.log(
-            "val_loss",
+            "val/loss",
             output.loss,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
@@ -108,13 +108,13 @@ class SupervisedModule(BaseModule):
 
     def on_validation_epoch_end(self):
         self.log(
-            "val_auc",
+            "val/auc",
             self.val_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "val_acc",
+            "val/acc",
             self.val_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
@@ -126,9 +126,9 @@ class SupervisedModule(BaseModule):
             batch_size=self.cfg.batch_size,
         )
         logger.info(
-            "val_auc",
+            "val/auc",
             self.val_auc.compute(),
-            "val_acc",
+            "val/acc",
             self.val_acc.compute(),
             "val_apr",
             self.val_apr.compute(),
@@ -141,18 +141,18 @@ class SupervisedModule(BaseModule):
         self.test_auc.update(output.logits.squeeze(), batch[self.task_name].float())
         self.test_apr.update(output.logits.squeeze(), batch[self.task_name].int())
 
-        self.log("test_loss", output.loss, batch_size=self.cfg.batch_size)
+        self.log("test/loss", output.loss, batch_size=self.cfg.batch_size)
         return output.loss
 
     def on_test_epoch_end(self):
         self.log(
-            "test_auc",
+            "test/auc",
             self.test_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
         self.log(
-            "test_acc",
+            "test/acc",
             self.test_acc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
@@ -164,9 +164,9 @@ class SupervisedModule(BaseModule):
             batch_size=self.cfg.batch_size,
         )
         logger.info(
-            "test_auc",
+            "test/auc",
             self.test_auc.compute(),
-            "test_acc",
+            "test/acc",
             self.test_acc.compute(),
             "test_apr",
             self.test_apr.compute(),
