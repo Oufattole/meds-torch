@@ -37,7 +37,9 @@ from meds_torch.utils import (
     log_hyperparameters,
     task_wrapper,
 )
+from meds_torch.utils.resolvers import setup_resolvers
 
+setup_resolvers()
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
@@ -58,7 +60,6 @@ def transfer_learning(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     pretrain_model.load_state_dict(ckpt["state_dict"])
 
     # cache hydra config
-    os.makedirs(cfg.paths.output_dir, exist_ok=True)
     OmegaConf.save(config=cfg, f=Path(cfg.paths.output_dir) / "hydra_config.yaml")
 
     # set seed for random number generators in pytorch, numpy and python.random
@@ -141,6 +142,7 @@ def main(cfg: DictConfig) -> float | None:
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
+    os.makedirs(cfg.paths.output_dir, exist_ok=True)
     extras(cfg)
 
     # train the model

@@ -1,0 +1,35 @@
+# Ray Tune configuration
+ray:
+  num_samples: 16
+  resources_per_trial:
+    cpu: 4
+    gpu: 1
+
+# choose metric which will be optimized by Ray Tune
+optimized_metric: "val/loss"
+
+# Define the search space
+search_space:
+  model.optimizer.lr:
+    _target_: ray.tune.loguniform
+    lower: 1e-6
+    upper: 1e-2
+  model.backbone.dropout:
+    _target_: ray.tune.uniform
+    lower: 0.0
+    upper: 0.5
+  seed:
+    _target_: ray.tune.randint
+    lower: 0
+    upper: 10000
+
+scheduler:
+  _target_: ray.tune.schedulers.ASHAScheduler
+  metric: ${hparams_search.optimized_metric}
+  mode: "min"
+  max_t: ${trainer.max_epochs}
+  grace_period: 4
+  reduction_factor: 2
+
+# Choose between train and transfer_learning
+train_fn: ${name}

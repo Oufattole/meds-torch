@@ -1,0 +1,6 @@
+defaults:
+  - _self_
+  - default
+
+ray_callback:
+  _target_: ray.train.lightning.RayTrainReportCallback
