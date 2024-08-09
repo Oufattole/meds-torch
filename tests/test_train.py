@@ -67,7 +67,7 @@ def kwargs(request, meds_dir) -> dict:
     )
 
 
-def test_fast_dev_train(kwargs: dict):
+def test_fast_dev_train(kwargs: dict, tmp_path):
     """Tests the training configuration provided by the `kwargs` pytest fixture.
 
     :param kwargs: A dictionary containing the configuration and a flag for expected ValueError.
@@ -78,6 +78,7 @@ def test_fast_dev_train(kwargs: dict):
     with open_dict(cfg):
         cfg.trainer.fast_dev_run = True
         cfg.trainer.accelerator = "cpu"
+        cfg.paths.output_dir = str(tmp_path)
     HydraConfig().set_config(cfg)
     if raises_value_error:
         with pytest.raises(hydra.errors.InstantiationException):
@@ -87,7 +88,7 @@ def test_fast_dev_train(kwargs: dict):
 
 
 @RunIf(min_gpus=1)
-def test_gpu_train(kwargs) -> None:  # cfg: DictConfig,
+def test_gpu_train(kwargs, tmp_path) -> None:  # cfg: DictConfig,
     """Tests the training configuration provided by the `cfg_train` pytest fixture.
 
     :param cfg_train: A DictConfig containing a valid training configuration.
@@ -98,6 +99,7 @@ def test_gpu_train(kwargs) -> None:  # cfg: DictConfig,
     with open_dict(cfg):
         cfg.trainer.fast_dev_run = True
         cfg.trainer.accelerator = "gpu"
+        cfg.paths.output_dir = str(tmp_path)
     HydraConfig().set_config(cfg)
     if raises_value_error:
         with pytest.raises(hydra.errors.InstantiationException):
@@ -108,7 +110,7 @@ def test_gpu_train(kwargs) -> None:  # cfg: DictConfig,
 
 @RunIf(min_gpus=1)
 @pytest.mark.slow
-def test_train_epoch_gpu_amp(kwargs) -> None:
+def test_train_epoch_gpu_amp(kwargs, tmp_path) -> None:
     """Train 1 epoch on GPU with mixed-precision.
 
     :param cfg_train: A DictConfig containing a valid training configuration.
@@ -119,6 +121,7 @@ def test_train_epoch_gpu_amp(kwargs) -> None:
         cfg.trainer.max_epochs = 1
         cfg.trainer.accelerator = "gpu"
         cfg.trainer.precision = 16
+        cfg.paths.output_dir = str(tmp_path)
     HydraConfig().set_config(cfg)
     if raises_value_error:
         with pytest.raises(hydra.errors.InstantiationException):

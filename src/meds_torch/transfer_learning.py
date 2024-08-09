@@ -60,6 +60,7 @@ def transfer_learning(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     pretrain_model.load_state_dict(ckpt["state_dict"])
 
     # cache hydra config
+    os.makedirs(cfg.paths.output_dir, exist_ok=True)
     OmegaConf.save(config=cfg, f=Path(cfg.paths.output_dir) / "hydra_config.yaml")
 
     # set seed for random number generators in pytorch, numpy and python.random

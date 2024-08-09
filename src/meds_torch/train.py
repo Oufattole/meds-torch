@@ -53,6 +53,7 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     :return: A tuple with metrics and dict with all instantiated objects.
     """
     # cache hydra config
+    os.makedirs(cfg.paths.output_dir, exist_ok=True)
     OmegaConf.save(config=cfg, f=Path(cfg.paths.output_dir) / "hydra_config.yaml")
 
     # set seed for random number generators in pytorch, numpy and python.random
