@@ -1,6 +1,12 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "setuptools-scm>=8.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+meds_torch = ["**/*.yaml"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["*.pyc"]
 
 [project]
 name = "meds-torch"

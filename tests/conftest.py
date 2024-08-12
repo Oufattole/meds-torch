@@ -39,7 +39,7 @@ def meds_dir(tmp_path_factory) -> Path:
 
 def create_cfg(overrides, meds_dir: Path, config_name="train.yaml") -> DictConfig:
     """Helper function to create Hydra DictConfig with given overrides and common settings."""
-    with initialize(version_base="1.3", config_path="../configs"):
+    with initialize(version_base="1.3", config_path="../src/meds_torch/configs"):
         cfg = compose(config_name=config_name, return_hydra_config=True, overrides=overrides)
 
         with open_dict(cfg):

@@ -2,40 +2,23 @@ import copy
 import json
 import os
 from collections.abc import Callable
+from importlib.resources import files
 from pathlib import Path
 
 import hydra
 import ray
-import rootutils
 from omegaconf import DictConfig, OmegaConf
 from ray import tune
 
-rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 from meds_torch.train import train
 from meds_torch.transfer_learning import transfer_learning
-
-# ------------------------------------------------------------------------------------ #
-# the setup_root above is equivalent to:
-# - adding project root dir to PYTHONPATH
-#       (so you don't need to force user to install project as a package)
-#       (necessary before importing any local modules e.g. `from meds_torch import utils`)
-# - setting up PROJECT_ROOT environment variable
-#       (which is used as a base for paths in "configs/paths/default.yaml")
-#       (this way all filepaths are the same no matter where you run the code)
-# - loading environment variables from ".env" in root dir
-#
-# you can remove it if you:
-# 1. either install project as a package or move entry files to project root dir
-# 2. set `root_dir` to "." in "configs/paths/default.yaml"
-#
-# more info: https://github.com/ashleve/rootutils
-# ------------------------------------------------------------------------------------ #
 from meds_torch.utils import RankedLogger, extras
 from meds_torch.utils.resolvers import setup_resolvers
 
 log = RankedLogger(__name__, rank_zero_only=True)
 
 setup_resolvers()
+config_yaml = files("meds_torch").joinpath("configs/train.yaml")
 
 
 def ray_tune_runner(cfg: DictConfig, train_fn: Callable):
@@ -71,7 +54,7 @@ def ray_tune_runner(cfg: DictConfig, train_fn: Callable):
     return analysis, best_trial
 
 
-@hydra.main(version_base="1.3", config_path="../configs", config_name="train.yaml")
+@hydra.main(version_base="1.3", config_path=str(config_yaml.parent.resolve()), config_name=config_yaml.stem)
 def main(cfg: DictConfig) -> float | None:
     """Main entry point for training.
 
