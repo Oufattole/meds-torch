@@ -25,7 +25,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir)
     cfg.data.collate_type = collate_type
     if collate_type == "triplet_prompt":
-        cfg.data.tensorization_name = "prompt_expanded_observation"
+        cfg.data.tensorization_name = "prompt_expanded_observation_tensorization"
     cfg.data.tokenizer = "bert-base-uncased"
     pyd = PytorchDataset(cfg.data, split="train")
     assert not pyd.has_task
@@ -47,7 +47,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "mask",
             "static_mask",
             "code",
-            "numerical_value",
+            "numeric_value",
             "time_delta_days",
             "numerical_value_mask",
         }
@@ -57,7 +57,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "static_mask",
             "code_tokens",
             "code_mask",
-            "numerical_value",
+            "numeric_value",
             "time_delta_days",
             "numerical_value_mask",
         }
@@ -78,7 +78,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "mask",
             "static_mask",
             "code",
-            "numerical_value",
+            "numeric_value",
             "time_delta_days",
             "numerical_value_mask",
         }
@@ -115,7 +115,7 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             "mask",
             "static_mask",
             "code",
-            "numerical_value",
+            "numeric_value",
             "time_delta_days",
             "numerical_value_mask",
             SUPERVISED_TASK_NAME,
@@ -146,7 +146,7 @@ def test_contrastive_windows(meds_dir, patient_level_sampling, collate_type):
             "mask",
             "static_mask",
             "code",
-            "numerical_value",
+            "numeric_value",
             "time_delta_days",
             "numerical_value_mask",
         }

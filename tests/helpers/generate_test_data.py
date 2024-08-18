@@ -153,11 +153,11 @@ def aggregate_metadata(meds_outputs, unique_codes):
         for df in filtered_dfs:
             patient_ids.update(df.select(pl.col("patient_id")).to_series().to_list())
 
-            valid_values_df = df.filter(pl.col("numerical_value").is_not_null())
+            valid_values_df = df.filter(pl.col("numeric_value").is_not_null())
             values_occurrences += valid_values_df.shape[0]
 
-            if "numerical_value" in df.columns and not df["numerical_value"].is_null().all():
-                valid_values = df["numerical_value"].fill_null(0)
+            if "numeric_value" in df.columns and not df["numeric_value"].is_null().all():
+                valid_values = df["numeric_value"].fill_null(0)
                 values_sum += valid_values.sum()
                 values_sum_sqd += (valid_values**2).sum()
 
@@ -197,7 +197,7 @@ def test_tokenize(tmp_path):
     for split, df in MEDS_OUTPUTS.items():
         file_path = MEDS_cohort_dir / f"{split}.parquet"
         file_path.parent.mkdir(exist_ok=True)
-        df.with_columns(pl.col("timestamp").str.to_datetime("%Y-%m-%dT%H:%M:%S%.f")).write_parquet(file_path)
+        df.with_columns(pl.col("time").str.to_datetime("%Y-%m-%dT%H:%M:%S%.f")).write_parquet(file_path)
     meds_files = list_subdir_files(Path(MEDS_cohort_dir).parent, "parquet")
     assert len(meds_files) == len(MEDS_OUTPUTS), "Mismatch in number of expected data files!"
     for f in meds_files:

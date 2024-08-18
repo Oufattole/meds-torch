@@ -52,8 +52,6 @@ with TemporaryDirectory() as tmp_path:
     # TODO: ACES is duplicating these outputs should be fixed
     aces_df = pl.read_parquet(raw_windows_path).unique()
 
-    number_of_unique_event_times = (
-        meds_df.unique(["patient_id", "timestamp"]).drop_nulls("timestamp").shape[0]
-    )
+    number_of_unique_event_times = meds_df.unique(["patient_id", "time"]).drop_nulls("time").shape[0]
     assert number_of_unique_event_times == aces_df.shape[0]
     aces_df.write_parquet(raw_windows_path)

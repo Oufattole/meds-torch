@@ -5,3 +5,4 @@ token_dim: ${model.token_dim}
 max_seq_len: ${model.max_seq_len}
 vocab_size: ${model.vocab_size}
 get_last_token: true
+pos_encoding: "absolute_sinusoidal"

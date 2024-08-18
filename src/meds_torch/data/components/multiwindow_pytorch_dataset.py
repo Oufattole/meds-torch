@@ -14,8 +14,8 @@ from meds_torch.data.components.pytorch_dataset import PytorchDataset
 
 def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) -> pl.DataFrame:
     """Computes the start and end indexes of time windows for each entry in the provided DataFrame. This
-    function assumes that the 'timestamp' in `timestamps_series` is sorted. It finds the index of timestamps
-    that fall between 'start' and 'end' times specified in `windows_df`.
+    function assumes that the "time" in `timestamps_series` is sorted. It finds the index of timestamps that
+    fall between 'start' and 'end' times specified in `windows_df`.
 
     Parameters:
     - timeseries_df (pl.Series): A Polars dataframe containing sorted datetime values for each patient.
@@ -30,7 +30,7 @@ def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) ->
     Example:
     >>> timeseries_df = pl.DataFrame({
     ...     "patient_id": [1, 2],
-    ...     "timestamp": [
+    ...     "time": [
     ...         pl.Series(["1978-03-09 00:00:00", "2010-05-26 02:30:56", "2010-05-26 04:51:52"]
     ...             ).str.strptime(pl.Datetime),
     ...         pl.Series(["1970-03-09 00:00:00", "1972-05-26 02:30:56", "1975-05-26 04:51:52"]
@@ -87,7 +87,7 @@ def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) ->
     datetime_cols = [col for col in windows_df.columns if col.endswith(".start") or col.endswith(".end")]
     windows_df = windows_df.join(how="inner", other=timeseries_df, on="patient_id")
     expr = [
-        pl.col("timestamp").explode().search_sorted(pl.col(col).explode()).alias(f"{col}_idx")
+        pl.col("time").explode().search_sorted(pl.col(col).explode()).alias(f"{col}_idx")
         for col in datetime_cols
     ]
     return windows_df.group_by(pl.col("patient_id")).agg(expr)
@@ -106,7 +106,7 @@ def cache_window_indexes(cfg: DictConfig, split: str, static_dfs) -> pl.DataFram
             exprs.append(pl.col(col).struct.field(f"timestamp_at_{side}").alias(parsed_col))
     window_df = window_df.select(exprs)
     window_df = window_df.group_by("patient_id").agg(pl.all())
-    timeseries_df = pl.concat(static_dfs.values()).select("patient_id", "timestamp")
+    timeseries_df = pl.concat(static_dfs.values()).select("patient_id", "time")
     cached_window_df = get_window_indexes(timeseries_df, window_df)
     cache_window_fp = Path(cfg.cached_windows_dir) / f"{split}.parquet"
     cache_window_fp.parent.mkdir(parents=True, exist_ok=True)

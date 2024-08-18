@@ -64,7 +64,7 @@ class TripletPromptEncoder(nn.Module, Module):
 
     def get_embedding(self, batch):
         code = batch["code"]
-        numerical_value = batch["numerical_value"]
+        numerical_value = batch["numeric_value"]
         numerical_value_mask = batch["numerical_value_mask"]
 
         # Embed codes

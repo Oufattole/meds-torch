@@ -2,13 +2,13 @@ _target_: meds_torch.data.datamodule.MEDSDataModule.initialize
 name: pytorch_dataset
 # Path params
 data_dir: ${paths.data_dir}
-meds_dir: ${paths.meds_dir}
-code_metadata_fp: ${paths.data_dir}/final_cohort/code_metadata.parquet
+meds_cohort_dir: ${paths.meds_cohort_dir}
+code_metadata_fp: ${paths.meds_cohort_dir}/code_metadata.parquet
 split_shards_fp: ${paths.data_dir}/splits.json
-schema_files_root: ${paths.data_dir}/final_cohort/tokenization/schemas
-tasks_root: ${paths.data_dir}/final_cohort/tasks
-tensorization_name: default # or prompt_expanded_observation
-tensorized_root: ${paths.data_dir}/final_cohort/${data.tensorization_name}_tensorization
+schema_files_root: ${paths.meds_cohort_dir}/tokenization/schemas
+tasks_root: ${paths.meds_cohort_dir}/tasks
+tensorization_name: default_tensorization # or prompt_expanded_observation_tensorization
+tensorized_root: ${paths.meds_cohort_dir}/${data.tensorization_name}
 
 # Task params
 task_name: null
@@ -25,6 +25,8 @@ tokenizer: "bert-base-uncased"
 do_include_patient_id: false
 do_include_subsequence_indices: false
 do_include_start_time_min: false
+do_prepend_static_data: false
+num_value_code_quantiles: null
 
 # Sequence Params
 max_seq_len: 512
