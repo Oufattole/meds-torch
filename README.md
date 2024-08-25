@@ -21,6 +21,8 @@
 
 </div>
 
+For the time being, install: `pip install MEDS_transforms@git+https://github.com/mmcdermott/MEDS_transforms#egg=dev`
+
 ## Description
 
 This repository provides a comprehensive suite for advanced machine learning over Electronic Health Records (EHR) using PyTorch, PyTorch Lightning, and Hydra for configuration management. The project leverages MEDS_Polars, a robust system for transforming EHR data into a structured, tabular format that enhances the accessibility and analyzability of medical datasets. By employing a variety of tokenization strategies and neural network architectures, this framework facilitates the development and testing of models that can predict, generate, and understand complex medical trajectories.
