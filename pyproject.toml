@@ -10,7 +10,7 @@ meds_torch = ["**/*.yaml"]
 
 [project]
 name = "meds-torch"
-version = "0.0.1a1"
+dynamic = ["version"]
 authors = [
   {name="Matthew McDermott", email="mattmcdermott8@gmail.com"},
   {name="Nassim Oufattole", email="noufattole@gmail.com"},
