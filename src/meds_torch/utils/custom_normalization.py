@@ -9,6 +9,135 @@ from MEDS_transforms.mapreduce.mapper import map_over
 from omegaconf import DictConfig
 
 
+def convert_to_discrete_quantiles(
+    meds_data: pl.DataFrame, code_metadata: pl.DataFrame, custom_quantiles
+) -> pl.DataFrame:
+    """Converts the numeric values in a MEDS dataset to discrete quantiles that are added to the code name.
+
+    Returns:
+        - A new DataFrame with the quantile values added to the code name.
+        - A new DataFrame with the metadata for the quantile codes.
+
+    Examples:
+    >>> from datetime import datetime
+    >>> MEDS_df = pl.DataFrame(
+    ...     {
+    ...         "patient_id": [1, 1, 1, 2, 2, 2, 3],
+    ...         "time": [
+    ...             datetime(2021, 1, 1),
+    ...             datetime(2021, 1, 1),
+    ...             datetime(2021, 1, 2),
+    ...             datetime(2022, 10, 2),
+    ...             datetime(2022, 10, 2),
+    ...             datetime(2022, 10, 2),
+    ...             datetime(2022, 10, 2),
+    ...         ],
+    ...         "code": ["lab//A", "lab//C", "dx//B", "lab//A", "dx//D", "lab//C", "lab//F"],
+    ...         "numeric_value": [1, 3, None, 3, None, None, None],
+    ...     },
+    ...     schema = {
+    ...         "patient_id": pl.UInt32,
+    ...         "time": pl.Datetime,
+    ...         "code": pl.Utf8,
+    ...         "numeric_value": pl.Float64,
+    ...    },
+    ... )
+    >>> code_metadata = pl.DataFrame(
+    ...     {
+    ...         "code": ["lab//A", "lab//C", "dx//B", "dx//E", "lab//F", "dx//D"],
+    ...         "code/vocab_index": [0, 1, 2, 3, 4, 5],
+    ...         "values/quantiles": [ # [[-3,-1,1,3], [-3,-1,1,3], [], [-3,-1,1,3], [-3,-1,1,3], [-3,-1,1,3]],
+    ...             {"values/quantile/0.2": -3, "values/quantile/0.4": -1,
+    ...                 "values/quantile/0.6": 1, "values/quantile/0.8": 3},
+    ...             {"values/quantile/0.2": -3, "values/quantile/0.4": -1,
+    ...                 "values/quantile/0.6": 1, "values/quantile/0.8": 3},
+    ...             {"values/quantile/0.2": None, "values/quantile/0.4": None,
+    ...                 "values/quantile/0.6": None, "values/quantile/0.8": None},
+    ...             {"values/quantile/0.2": -3, "values/quantile/0.4": -1,
+    ...                 "values/quantile/0.6": 1, "values/quantile/0.8": 3},
+    ...             {"values/quantile/0.2": -3, "values/quantile/0.4": -1,
+    ...                 "values/quantile/0.6": 1, "values/quantile/0.8": 3},
+    ...             {"values/quantile/0.2": -3, "values/quantile/0.4": -1,
+    ...                 "values/quantile/0.6": 1, "values/quantile/0.8": 3},
+    ...         ],
+    ...     },
+    ...     schema = {
+    ...         "code": pl.Utf8,
+    ...         "code/vocab_index": pl.UInt32,
+    ...         "values/quantiles": pl.Struct([
+    ...             pl.Field("values/quantile/0.2", pl.Float64),
+    ...             pl.Field("values/quantile/0.4", pl.Float64),
+    ...             pl.Field("values/quantile/0.6", pl.Float64),
+    ...             pl.Field("values/quantile/0.8", pl.Float64),
+    ...         ]), # pl.List(pl.Float64),
+    ...     },
+    ... )
+    >>> custom_quantiles = {"lab//B": {"values/quantile/0.5": 0}}
+    >>> result, quantile_code_metadata = convert_to_discrete_quantiles(
+    ...    MEDS_df, code_metadata, custom_quantiles)
+    >>> result.sort("patient_id", "time", "code")
+    shape: (7, 4)
+    ┌────────────┬─────────────────────┬──────────────┬───────────────┐
+    │ patient_id ┆ time                ┆ code         ┆ numeric_value │
+    │ ---        ┆ ---                 ┆ ---          ┆ ---           │
+    │ u32        ┆ datetime[μs]        ┆ str          ┆ f64           │
+    ╞════════════╪═════════════════════╪══════════════╪═══════════════╡
+    │ 1          ┆ 2021-01-01 00:00:00 ┆ lab//A//_Q_3 ┆ 1.0           │
+    │ 1          ┆ 2021-01-01 00:00:00 ┆ lab//C//_Q_4 ┆ 3.0           │
+    │ 1          ┆ 2021-01-02 00:00:00 ┆ dx//B        ┆ null          │
+    │ 2          ┆ 2022-10-02 00:00:00 ┆ dx//D        ┆ null          │
+    │ 2          ┆ 2022-10-02 00:00:00 ┆ lab//A//_Q_4 ┆ 3.0           │
+    │ 2          ┆ 2022-10-02 00:00:00 ┆ lab//C       ┆ null          │
+    │ 3          ┆ 2022-10-02 00:00:00 ┆ lab//F       ┆ null          │
+    └────────────┴─────────────────────┴──────────────┴───────────────┘
+    """
+    result = meds_data.join(code_metadata.rename({"values/quantiles": "quantiles"}), on="code", how="left")
+    quantile_columns = pl.selectors.starts_with("values/quantile/")
+    result = (
+        result.unnest("quantiles")
+        .with_columns(
+            quantile=pl.when(pl.col("numeric_value").is_not_null()).then(
+                pl.sum_horizontal(quantile_columns.lt(pl.col("numeric_value"))).add(1)
+            )
+        )
+        .drop(quantile_columns)
+    )
+
+    code_quantile_concat = pl.concat_str(pl.col("code"), pl.lit("//_Q_"), pl.col("quantile"))
+    result = result.with_columns(
+        pl.when(pl.col("quantile").is_not_null()).then(code_quantile_concat).otherwise(pl.col("code"))
+    )
+    result = result.drop("quantile", "code/vocab_index")
+    num_quantiles = len(code_metadata.schema["values/quantiles"].fields)
+    quantile_code_metadata = code_metadata.select(
+        [
+            pl.col("code").repeat_by(num_quantiles + 1).alias("code"),
+            pl.col("code/vocab_index").repeat_by(num_quantiles + 1).alias("base_index"),
+            pl.exclude("code", "code/vocab_index"),
+        ]
+    )
+    quantile_code_metadata = (
+        quantile_code_metadata.explode(pl.col("code", "base_index"))
+        .with_row_index("quantile")
+        .with_columns(pl.col("quantile") % (num_quantiles + 1))
+    )
+    quantile_code_metadata = quantile_code_metadata.with_columns(
+        (pl.col("base_index") * (num_quantiles + 1) + pl.col("quantile")).alias("code/vocab_index")
+    )
+    quantile_code = pl.concat_str([pl.col("code"), pl.lit("/_Q_"), pl.col("quantile").cast(pl.Utf8)])
+    quantile_code_metadata = quantile_code_metadata.with_columns(
+        pl.when(pl.col("quantile").ne(0)).then(quantile_code).otherwise(pl.col("code")).alias("code")
+    )
+    quantile_code_metadata = quantile_code_metadata.drop("base_index", "quantile")
+
+    # TODO add support for custom quantiles
+    # a user can define a different quantile set for a specific code,
+    # like the following: custom_quantiles = {"lab//B": {"values/quantile/0.5": 0}}
+    # How should this integrate with the function
+
+    return result, quantile_code_metadata
+
+
 def normalize(
     df: pl.LazyFrame, code_metadata: pl.DataFrame, code_modifiers: list[str] | None = None
 ) -> pl.LazyFrame:
@@ -108,18 +237,18 @@ def normalize(
         ...         ]), # pl.List(pl.Float64),
         ...     },
         ... )
-        >>> normalize(MEDS_df.lazy(), code_metadata).collect()
+        >>> normalize(MEDS_df.lazy(), code_metadata).collect().sort("patient_id", "time", "code")
         shape: (6, 4)
         ┌────────────┬─────────────────────┬──────┬───────────────┐
         │ patient_id ┆ time                ┆ code ┆ numeric_value │
         │ ---        ┆ ---                 ┆ ---  ┆ ---           │
         │ u32        ┆ datetime[μs]        ┆ u32  ┆ f64           │
         ╞════════════╪═════════════════════╪══════╪═══════════════╡
-        │ 1          ┆ 2021-01-01 00:00:00 ┆ 12   ┆ 1.0           │
-        │ 1          ┆ 2021-01-01 00:00:00 ┆ 18   ┆ 3.0           │
+        │ 1          ┆ 2021-01-01 00:00:00 ┆ 18   ┆ 1.0           │
+        │ 1          ┆ 2021-01-01 00:00:00 ┆ 24   ┆ 3.0           │
         │ 1          ┆ 2021-01-02 00:00:00 ┆ 3    ┆ null          │
-        │ 2          ┆ 2022-10-02 00:00:00 ┆ 18   ┆ 3.0           │
         │ 2          ┆ 2022-10-02 00:00:00 ┆ 2    ┆ null          │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 24   ┆ 3.0           │
         │ 3          ┆ 2022-10-02 00:00:00 ┆ 5    ┆ null          │
         └────────────┴─────────────────────┴──────┴───────────────┘
     """
