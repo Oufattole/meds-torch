@@ -24,7 +24,7 @@ def meds_dir(tmp_path_factory) -> Path:
     logger.info(meds_dir)
     # copy test data to temporary directory
     shutil.copytree(Path("./tests/test_data"), meds_dir, dirs_exist_ok=True)
-    label_df = pl.read_parquet(meds_dir / "final_cohort" / "*/*.parquet")
+    label_df = pl.read_parquet(meds_dir / "MEDS_cohort" / "data/*/*.parquet")
     label_df = label_df.sort(["patient_id", "time"]).filter(pl.col("time").is_not_null())
     start_time_expr = pl.col("time").get(0).alias("start_time")
     end_time_expr = pl.col("time").get(pl.len() // 2).alias("end_time")
@@ -45,7 +45,7 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml") -> DictConfi
         with open_dict(cfg):
             cfg.paths.root_dir = str(rootutils.find_root(indicator=".project-root"))
             cfg.paths.data_dir = str(meds_dir)
-            cfg.paths.meds_dir = str(meds_dir / "final_cohort")
+            cfg.paths.meds_dir = str(meds_dir / "MEDS_cohort")
             cfg.trainer.max_epochs = 1
             cfg.trainer.limit_train_batches = 0.05
             cfg.trainer.limit_val_batches = 0.1

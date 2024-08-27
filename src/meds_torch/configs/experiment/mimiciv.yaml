@@ -5,7 +5,7 @@
 
 defaults:
   - override /data: pytorch_dataset
-  - override /paths/data_dir: /path/to/mimiciv/meds/data/final_cohort
+  - override /paths/data_dir: /path/to/mimiciv/meds/data/MEDS_cohort
   - override /paths/meds_dir: /path/to/mimiciv/meds/data/
   - override /logger: wandb
   - override /model/backbone: mamba

@@ -32,7 +32,7 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         if not cfg.pos_encoding == "absolute_sinusoidal":
             if cfg.pos_encoding is not None:
                 raise ValueError(f"Unknown positional encoding: {cfg.pos_encoding}")
-        if not cfg.use_only_code:
+        if not cfg.use_xtransformers_token_emb:
             self.model.token_emb = nn.Identity()
 
         # Setup LM Heads

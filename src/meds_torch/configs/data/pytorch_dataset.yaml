@@ -3,7 +3,7 @@ name: pytorch_dataset
 # Path params
 data_dir: ${paths.data_dir}
 meds_cohort_dir: ${paths.meds_cohort_dir}
-code_metadata_fp: ${paths.meds_cohort_dir}/code_metadata.parquet
+code_metadata_fp: ${paths.meds_cohort_dir}/metadata/codes.parquet
 split_shards_fp: ${paths.data_dir}/splits.json
 schema_files_root: ${paths.meds_cohort_dir}/tokenization/schemas
 tasks_root: ${paths.meds_cohort_dir}/tasks

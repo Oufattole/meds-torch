@@ -32,7 +32,7 @@ windows:
 """
 
 with TemporaryDirectory() as tmp_path:
-    meds_dir = "tests/test_data/final_cohort"
+    meds_dir = "tests/test_data/MEDS_cohort"
     raw_windows_path = "tests/test_data/raw_windows.parquet"
     aces_task_cfg_path = Path(tmp_path) / "aces_config.yaml"
 
