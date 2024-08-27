@@ -1,4 +1,5 @@
 import json
+import os
 from collections import defaultdict
 from datetime import timedelta
 from enum import StrEnum
@@ -30,7 +31,22 @@ class CollateType(StrEnum):
     text_observation = "text_observation"
     all_text = "all_text"
     triplet_prompt = "triplet_prompt"
-    only_code = "only_code"
+    eic = "eic"
+
+
+def generate_patient_split_dict(meds_dir):
+    patient_split_dict = {}
+
+    for split_dir in os.listdir(meds_dir):
+        split_path = Path(meds_dir) / split_dir
+        if split_path.is_dir():
+            for shard_file in split_path.glob("*.parquet"):
+                split_name = f"{split_dir}/{shard_file.stem}"
+                df = pl.read_parquet(shard_file)
+                patient_ids = df["patient_id"].unique().to_list()
+                patient_split_dict[split_name] = patient_ids
+
+    return patient_split_dict
 
 
 def debug_fn(data_dict, max_seq_len=None):
@@ -373,7 +389,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
     def read_shards(self):
         """Reads the split-specific patient shards from the ESGPT or MEDS dataset."""
-        all_shards = json.loads(Path(self.config.split_shards_fp).read_text())
+        all_shards = generate_patient_split_dict(Path(self.config.meds_cohort_dir) / "data")
         self.shards = {sp: subjs for sp, subjs in all_shards.items() if sp.startswith(f"{self.split}")}
         self.subj_map = {subj: sp for sp, subjs in self.shards.items() for subj in subjs}
 
@@ -660,7 +676,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             tensors["dim1/code"] = np.concatenate(tensors["dim1/code"], axis=0)
             seq_len = tensors["dim1/code"].shape[0]
             st = 0
-            if self.config.collate_type != CollateType.only_code:
+            if self.config.collate_type != CollateType.eic:
                 # TODO: pad times
                 tensors["dim0/time_delta_days"] = subpad_vectors(
                     tensors["dim0/time_delta_days"], tensors["dim1/bounds"]
@@ -690,7 +706,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             out["dynamic"] = patient_dynamic_data[st:end]
         else:
             tensors["dim1/code"] = tensors["dim1/code"][st:end]
-            if self.config.collate_type != CollateType.only_code:
+            if self.config.collate_type != CollateType.eic:
                 tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
                 tensors["dim0/time_delta_days"] = tensors["dim0/time_delta_days"][st:end]
             out["dynamic"] = tensors
@@ -716,7 +732,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         patient_idx = self.subj_indices[patient_id]
 
         patient_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-            Path(self.config.tensorized_root) / f"{shard}.nrt", patient_idx
+            Path(self.config.data_dir) / "data" / f"{shard}.nrt", patient_idx
         )
         out = self.load_patient(patient_dynamic_data, patient_id, st, end)
 
@@ -1457,7 +1473,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             return self.collate_event_stream(batch)
         elif collate_type == CollateType.triplet_prompt:
             return self.collate_triplet_prompt(batch)
-        elif collate_type == CollateType.only_code:
+        elif collate_type == CollateType.eic:
             return self.collate_triplet(batch)
         elif collate_type == CollateType.triplet:
             return self.collate_triplet(batch, self.config.do_prepend_static_data)

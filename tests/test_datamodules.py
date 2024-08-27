@@ -24,8 +24,6 @@ from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 def test_pytorch_dataset(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir)
     cfg.data.collate_type = collate_type
-    if collate_type == "triplet_prompt":
-        cfg.data.tensorization_name = "prompt_expanded_observation_tensorization"
     cfg.data.tokenizer = "bert-base-uncased"
     pyd = PytorchDataset(cfg.data, split="train")
     assert not pyd.has_task

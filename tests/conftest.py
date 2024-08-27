@@ -44,8 +44,11 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml") -> DictConfi
 
         with open_dict(cfg):
             cfg.paths.root_dir = str(rootutils.find_root(indicator=".project-root"))
-            cfg.paths.data_dir = str(meds_dir)
-            cfg.paths.meds_dir = str(meds_dir / "MEDS_cohort")
+            if "data.collate_type=eic" in overrides:
+                cfg.paths.data_dir = str(meds_dir / "eic_tensors")
+            else:
+                cfg.paths.data_dir = str(meds_dir / "triplet_tensors")
+            cfg.paths.meds_cohort_dir = str(meds_dir / "MEDS_cohort")
             cfg.trainer.max_epochs = 1
             cfg.trainer.limit_train_batches = 0.05
             cfg.trainer.limit_val_batches = 0.1

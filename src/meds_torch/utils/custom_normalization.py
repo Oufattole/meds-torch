@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 """Transformations for normalizing MEDS datasets, across both categorical and continuous dimensions."""
+from pathlib import Path
 
 import hydra
 import polars as pl
+from loguru import logger
 from MEDS_transforms import PREPROCESS_CONFIG_YAML
 from MEDS_transforms.mapreduce.mapper import map_over
 from omegaconf import DictConfig, OmegaConf
@@ -454,6 +456,17 @@ def main(cfg: DictConfig):
         )
 
     map_over(cfg, compute_fn=normalize)
+
+    custom_quantiles = cfg.stage_cfg.get("custom_quantiles", {})
+
+    metadata_input_dir = Path(cfg.stage_cfg.metadata_input_dir)
+    code_metadata = pl.read_parquet(metadata_input_dir / "codes.parquet", use_pyarrow=True)
+    quantile_code_metadata = convert_metadata_codes_to_discrete_quantiles(code_metadata, custom_quantiles)
+
+    output_fp = metadata_input_dir / "codes.parquet"
+    output_fp.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Indices assigned. Writing to {output_fp}")
+    quantile_code_metadata.write_parquet(output_fp, use_pyarrow=True)
 
 
 if __name__ == "__main__":

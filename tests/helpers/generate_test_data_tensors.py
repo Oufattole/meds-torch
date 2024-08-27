@@ -162,7 +162,7 @@ def generate_test_triplet_tokenize(tmp_path):
 
 def generate_test_eic_tokenize(tmp_path):
     input_dir = tmp_path / "MEDS_cohort"
-    cohort_dir = tmp_path / "triplet_tensors"
+    cohort_dir = tmp_path / "eic_tensors"
 
     # Create the directories
     input_dir.mkdir(parents=True, exist_ok=True)
