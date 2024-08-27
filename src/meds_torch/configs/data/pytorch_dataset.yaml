@@ -8,9 +8,10 @@ schema_files_root: ${paths.data_dir}/tokenization/schemas
 tasks_root: ${paths.meds_cohort_dir}/tasks
 
 # Task params
+task_root_dir: null
 task_name: null
-task_label_path: ${paths.data_dir}/tasks/${data.task_name}.parquet
-task_info_path: ${paths.data_dir}/tasks/${data.task_name}_info.json
+task_label_path: ${data.task_root_dir}/${data.task_name}.parquet
+task_info_path: ${data.task_root_dir}/${data.task_name}_info.json
 
 # Split params
 train_subset_size: null

@@ -903,8 +903,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         if do_prepend_static_data:
             static_values = np.asarray(item["static_values"], dtype=np.float32)
             static_indices = np.asarray(item["static_indices"], dtype=np.int32)
-            code = np.concatenate([np.array(static_indices), code], dtype=np.int32, casting="unsafe")
-            numerical_value = np.concatenate([np.array(static_values)] + numerical_value)
+            code = np.concatenate([static_indices, code], dtype=np.int32, casting="unsafe")
+            numerical_value = np.concatenate([static_values, numerical_value])
             static_mask = np.zeros(len(code), dtype=bool)
             static_mask[: len(static_values)] = True
 
@@ -1135,18 +1135,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             numerical_value_mask [ True  True  True False False]
         """
         dynamic_data = item["dynamic"]
-        raw_codes = dynamic_data.tensors["dim1/code"]
-        raw_values = dynamic_data.tensors["dim1/numeric_value"]
-        raw_times = dynamic_data.tensors["dim0/time_delta_days"]
+        raw_codes = dynamic_data["dim1/code"]
+        raw_values = dynamic_data["dim1/numeric_value"]
+        raw_times = dynamic_data["dim0/time_delta_days"]
 
         static_values = np.asarray(item["static_values"], dtype=raw_values[0].dtype)
         static_indices = np.asarray(item["static_indices"], dtype=raw_codes[0].dtype)
-        code = np.concatenate([np.array(static_indices)] + raw_codes, dtype=np.int32, casting="unsafe")
+        code = np.concatenate([static_indices, raw_codes], dtype=np.int32, casting="unsafe")
         tokens = [tokenized_codes[c] for c in code]
         code_tokens, code_mask = zip(*tokens)
         code_tokens = np.array(code_tokens)
         code_mask = np.array(code_mask)
-        numerical_value = np.concatenate([np.array(static_values)] + raw_values)
+        numerical_value = np.concatenate([static_values, raw_values])
         numerical_value_mask = ~np.isnan(numerical_value)
         # Replace NaNs with 0s
         np.nan_to_num(numerical_value, nan=0, copy=False)
@@ -1155,7 +1155,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         static_mask = np.zeros(len(code), dtype=bool)
         static_mask[: len(static_values)] = True
 
-        lengths = np.concatenate([[len(static_values)], dynamic_data.tensors["dim1/lengths"]])
+        lengths = np.concatenate([[len(static_values)], dynamic_data["dim1/lengths"]])
         time_delta_days = np.repeat(
             np.concatenate([np.array([0], dtype=raw_times.dtype), raw_times]), lengths
         )
@@ -1262,17 +1262,17 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                      1., 1., 1., 1.]])
         """
         dynamic_data = item["dynamic"]
-        raw_codes = dynamic_data.tensors["dim1/code"]
-        raw_values = dynamic_data.tensors["dim1/numeric_value"]
-        raw_times = dynamic_data.tensors["dim0/time_delta_days"]
+        raw_codes = dynamic_data["dim1/code"]
+        raw_values = dynamic_data["dim1/numeric_value"]
+        raw_times = dynamic_data["dim0/time_delta_days"]
 
         static_values = np.asarray(item["static_values"], dtype=raw_values[0].dtype)
         static_indices = np.asarray(item["static_indices"], dtype=raw_codes[0].dtype)
-        code = np.concatenate([np.array(static_indices)] + raw_codes, dtype=np.int32, casting="unsafe")
+        code = np.concatenate([static_indices, raw_codes], dtype=np.int32, casting="unsafe")
         tokens = [tokenized_codes[c] for c in code]
         code_tokens, code_mask = zip(*tokens)
 
-        numerical_value = np.concatenate([np.array(static_values)] + raw_values)
+        numerical_value = np.concatenate([static_values, raw_values])
         numerical_value_mask = ~np.isnan(numerical_value)
         # # Replace NaNs with 0s
         np.nan_to_num(numerical_value, nan=0, copy=False)
@@ -1281,7 +1281,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         static_mask = np.zeros(len(code), dtype=bool)
         static_mask[: len(static_values)] = True
 
-        lengths = np.concatenate([[len(static_values)], dynamic_data.tensors["dim1/lengths"]])
+        lengths = np.concatenate([[len(static_values)], dynamic_data["dim1/lengths"]])
         time_delta_days = np.repeat(
             np.concatenate([np.array([0], dtype=raw_times.dtype), raw_times]), lengths
         )

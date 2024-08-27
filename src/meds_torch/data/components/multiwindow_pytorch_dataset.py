@@ -96,7 +96,7 @@ def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) ->
 def cache_window_indexes(cfg: DictConfig, split: str, static_dfs) -> pl.DataFrame:
     # TODO add support for windows between different patients
     # Parse windows
-    window_df = pl.read_parquet(cfg.raw_windows_fp).rename({"subject_id": "patient_id"})
+    window_df = pl.read_parquet(cfg.raw_windows_fp)
     window_cols = [col for col in window_df.columns if col.endswith("_summary")]
     col = "pre.start_summary"
     exprs = [pl.col("patient_id")]
@@ -221,7 +221,7 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         out = {}
         for window in self.window_cols:
             patient_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-                Path(self.config.tensorized_root) / f"{shard}.nrt", patient_idx
+                Path(self.config.data_dir) / "data" / f"{shard}.nrt", patient_idx
             )
             out[window] = self.pytorch_dataset.load_patient(
                 patient_dynamic_data, patient_id, windows[window][0], windows[window][1]
