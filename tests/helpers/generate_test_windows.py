@@ -57,3 +57,11 @@ with TemporaryDirectory() as tmp_path:
     assert (
         number_of_unique_event_times >= aces_df.shape[0]
     ), f"{number_of_unique_event_times} < {aces_df.shape[0]}"
+    zero_event_pre_windows = aces_df.unnest("pre.start_summary").select(
+        pl.col("timestamp_at_start").eq(pl.col("timestamp_at_end"))
+    )
+    zero_event_post_windows = aces_df.unnest("post.end_summary").select(
+        pl.col("timestamp_at_start").eq(pl.col("timestamp_at_end"))
+    )
+    aces_df = aces_df.filter(~(zero_event_pre_windows.to_series() | zero_event_post_windows.to_series()))
+    aces_df.write_parquet(Path(window_stats_dir) / "raw_windows.parquet")

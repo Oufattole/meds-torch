@@ -37,7 +37,7 @@ def meds_dir(tmp_path_factory) -> Path:
     return meds_dir
 
 
-def create_cfg(overrides, meds_dir: Path, config_name="train.yaml") -> DictConfig:
+def create_cfg(overrides, meds_dir: Path, config_name="train.yaml", supervised=False) -> DictConfig:
     """Helper function to create Hydra DictConfig with given overrides and common settings."""
     with initialize(version_base="1.3", config_path="../src/meds_torch/configs"):
         cfg = compose(config_name=config_name, return_hydra_config=True, overrides=overrides)
@@ -48,11 +48,14 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml") -> DictConfi
                 cfg.paths.data_dir = str(meds_dir / "eic_tensors")
             else:
                 cfg.paths.data_dir = str(meds_dir / "triplet_tensors")
+            if supervised:
+                cfg.data.task_name = SUPERVISED_TASK_NAME
+                cfg.data.task_root_dir = str(meds_dir / "tasks")
             cfg.paths.meds_cohort_dir = str(meds_dir / "MEDS_cohort")
             cfg.trainer.max_epochs = 1
-            cfg.trainer.limit_train_batches = 0.05
-            cfg.trainer.limit_val_batches = 0.1
-            cfg.trainer.limit_test_batches = 0.1
+            cfg.trainer.limit_train_batches = 0.1
+            cfg.trainer.limit_val_batches = 0.25
+            cfg.trainer.limit_test_batches = 0.25
             cfg.trainer.accelerator = "cpu"
             cfg.trainer.devices = 1
             cfg.data.num_workers = 0

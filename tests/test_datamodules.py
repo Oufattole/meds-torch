@@ -5,7 +5,6 @@ root = rootutils.setup_root(__file__, dotenv=True, pythonpath=True, cwd=True)
 from pathlib import Path
 
 import pytest
-from omegaconf import open_dict
 from torch.utils.data import DataLoader
 
 from meds_torch.data.components.multiwindow_pytorch_dataset import (
@@ -96,11 +95,8 @@ def test_pytorch_dataset(meds_dir, collate_type):
 
 @pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt"])
 def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
-    cfg = create_cfg(overrides=[], meds_dir=meds_dir)
+    cfg = create_cfg(overrides=[], meds_dir=meds_dir, supervised=True)
     cfg.data.collate_type = collate_type
-    with open_dict(cfg):
-        cfg.data.task_name = SUPERVISED_TASK_NAME
-        cfg.data.task_root_dir = str(Path(meds_dir) / "tasks")
     assert Path(cfg.data.task_label_path).exists(), f"Path does not exist: {cfg.data.task_label_path}"
 
     pyd = PytorchDataset(cfg.data, split="train")

@@ -430,7 +430,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 #     Path(self.config.tensorized_root)
                 #     / f"{shard}.nrt", i).tensors["dim0/time_delta_days"].shape[0]:
                 #     logger.info(f"Event count mismatch for {subj} in {shard}!")
-                #     import pdb; pdb.set_trace()
                 if subj in self.subj_indices or subj in self.subj_seq_bounds:
                     raise ValueError(f"Duplicate subject {subj} in {shard}!")
 
@@ -438,6 +437,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 self.subj_seq_bounds[subj] = (0, n_events)
 
         if self.has_task:
+            if self.config.task_root_dir is None:
+                raise ValueError("`task_root_dir` must be provided if task is specified!")
             task_df_fp = Path(self.config.task_label_path)
             task_info_fp = Path(self.config.task_info_path)
 
@@ -716,6 +717,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         if end - st > self.config.max_seq_len:
             raise ValueError(f"Sequence length {end - st} exceeds max_seq_len {self.config.max_seq_len}!")
+
+        if end == st:
+            raise ValueError(f"Sequence length {end - st} is 0!")
 
         return out
 

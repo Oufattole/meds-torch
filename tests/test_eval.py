@@ -33,8 +33,10 @@ def test_train_eval(tmp_path: Path, kwargs: dict, meds_dir) -> None:
     else:
         train_metric_dict, _ = train(cfg_train)
         assert "last.ckpt" in os.listdir(tmp_path / "checkpoints")
-        overrides, _ = get_overrides_and_exceptions(**kwargs["input_kwargs"])
-        cfg_eval = create_cfg(overrides=overrides, meds_dir=meds_dir, config_name="eval.yaml")
+        overrides, _, supervised = get_overrides_and_exceptions(**kwargs["input_kwargs"])
+        cfg_eval = create_cfg(
+            overrides=overrides, meds_dir=meds_dir, config_name="eval.yaml", supervised=supervised
+        )
         with open_dict(cfg_eval):
             cfg_eval.ckpt_path = str(tmp_path / "checkpoints" / "last.ckpt")
 

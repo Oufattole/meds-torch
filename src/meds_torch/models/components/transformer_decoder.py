@@ -42,7 +42,6 @@ class TransformerDecoderModel(torch.nn.Module, Module):
 
     def forward(self, batch):
         input_data, mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
-        # import pdb; pdb.set_trace()
         output = self.model(input_data.transpose(1, 2), mask=mask)
         batch[BACKBONE_TOKENS_KEY] = output
         batch[BACKBONE_EMBEDDINGS_KEY] = get_last_token(output, mask)
