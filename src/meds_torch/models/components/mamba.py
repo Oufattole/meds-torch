@@ -27,10 +27,9 @@ class MambaModel(torch.nn.Module, Module):
                 n_layer=cfg.n_layers,
             )
         )
-        if not cfg.pos_encoding == "absolute_sinusoidal":
-            if cfg.pos_encoding is not None:
-                raise ValueError(f"Unknown positional encoding: {cfg.pos_encoding}")
-            model.backbone.embedding = torch.nn.Identity()
+        if cfg.pos_encoding != "absolute_sinusoidal" and cfg.pos_encoding is not None:
+            raise ValueError(f"Unknown positional encoding: {cfg.pos_encoding}")
+        model.backbone.embedding = torch.nn.Identity()
         model.lm_head = torch.nn.Identity()
         self.model = model
         self.get_last_token = cfg.get_last_token
