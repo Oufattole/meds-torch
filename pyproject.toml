@@ -32,6 +32,7 @@ dependencies = [
 ]
 
 [tool.setuptools_scm]
+local_scheme = "no-local-version"
 
 [project.optional-dependencies]
 mamba = ["mamba-ssm", "causal-conv1d>=1.4.0"]
