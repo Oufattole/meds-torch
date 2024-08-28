@@ -45,6 +45,8 @@ def generate_patient_split_dict(meds_dir):
                 df = pl.read_parquet(shard_file)
                 patient_ids = df["patient_id"].unique().to_list()
                 patient_split_dict[split_name] = patient_ids
+        else:
+            logger.warning(f"Directory {split_path} does not exist or is not a directory.")
 
     return patient_split_dict
 
