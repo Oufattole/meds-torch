@@ -10,7 +10,7 @@ N_PARALLEL_WORKERS=16
 bash MIMICIV_TUTORIAL/post_meds_extract.sh $MIMICIV_MEDS_DIR $N_PARALLEL_WORKERS
 ```
 
-We now generate ebcl pre and post windows around random events -- we subsample the events to make a reasonable amount of windows as making one window per event is too many:
+We now generate ebcl pre- and post-windows around random events -- we subsample the events to make a reasonable number of windows, as making one window per event is too many:
 
 ```bash
 MIMICIV_MEDS_DIR=/path/to/meds/folder/ # DO NOT INCLUDE THE `/data` SUBDIRECTORY
