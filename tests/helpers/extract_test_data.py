@@ -118,7 +118,7 @@ def generate_patient_data(rng, num_patients=100):
     eye_colors = ["BLUE", "BROWN", "HAZEL", "GREEN"]
     departments = ["CARDIAC", "PULMONARY", "ORTHOPEDIC", "NEUROLOGY", "ONCOLOGY"]
 
-    for i in range(1, num_patients + 1):
+    for _i in range(1, num_patients + 1):
         mrn = f"{rng.randint(100000, 999999)}"
         dob = (datetime.now() - timedelta(days=rng.randint(365 * 18, 365 * 80))).strftime("%m/%d/%Y")
         eye_color = rng.choice(eye_colors)
