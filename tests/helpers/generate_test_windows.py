@@ -1,6 +1,6 @@
 """Generates Random Local Windows for testing multiwindow.
 
-You must run `pip install es-aces` first.
+You must run `pip install es-aces==0.3.5` first.
 """
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -32,28 +32,36 @@ windows:
 """
 
 with TemporaryDirectory() as tmp_path:
-    meds_dir = "tests/test_data/final_cohort"
-    raw_windows_path = "tests/test_data/raw_windows.parquet"
-    aces_task_cfg_path = Path(tmp_path) / "aces_config.yaml"
+    meds_dir = "tests/test_data/MEDS_cohort/data"
+    window_stats_dir = "tests/test_data/windows/"
+    raw_windows_path = Path(tmp_path) / "raw_windows.parquet"
+    aces_task_cfg_path = Path(tmp_path) / "raw_windows.yaml"
 
     aces_task_cfg_path.write_text(RANDOM_LOCAL_WINDOWS)
     aces_kwargs = {
         "data.path": str((Path(meds_dir) / "*/*.parquet").resolve()),
         "data.standard": "meds",
         "cohort_dir": str(aces_task_cfg_path.parent.resolve()),
-        "cohort_name": "aces_config",
+        "cohort_name": "raw_windows",
         "output_filepath": raw_windows_path,
         "hydra.verbose": True,
+        "window_stats_dir": window_stats_dir,
     }
 
-    run_command("aces-cli", aces_kwargs, "aces-cli")
+    run_command("aces-cli", [], aces_kwargs, "aces-cli")
 
     meds_df = pl.read_parquet(str((Path(meds_dir) / "*/*.parquet").resolve()))
-    # TODO: ACES is duplicating these outputs should be fixed
-    aces_df = pl.read_parquet(raw_windows_path).unique()
+    aces_df = pl.read_parquet(Path(window_stats_dir) / "raw_windows.parquet")
 
-    number_of_unique_event_times = (
-        meds_df.unique(["patient_id", "timestamp"]).drop_nulls("timestamp").shape[0]
+    number_of_unique_event_times = meds_df.unique(["patient_id", "time"]).drop_nulls("time").shape[0]
+    assert (
+        number_of_unique_event_times >= aces_df.shape[0]
+    ), f"{number_of_unique_event_times} < {aces_df.shape[0]}"
+    zero_event_pre_windows = aces_df.unnest("pre.start_summary").select(
+        pl.col("timestamp_at_start").eq(pl.col("timestamp_at_end"))
     )
-    assert number_of_unique_event_times == aces_df.shape[0]
-    aces_df.write_parquet(raw_windows_path)
+    zero_event_post_windows = aces_df.unnest("post.end_summary").select(
+        pl.col("timestamp_at_start").eq(pl.col("timestamp_at_end"))
+    )
+    aces_df = aces_df.filter(~(zero_event_pre_windows.to_series() | zero_event_post_windows.to_series()))
+    aces_df.write_parquet(Path(window_stats_dir) / "raw_windows.parquet")

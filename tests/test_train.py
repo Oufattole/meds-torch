@@ -11,7 +11,7 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import open_dict
 
 from meds_torch.train import train
-from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
+from tests.conftest import create_cfg
 from tests.helpers.run_if import RunIf
 
 
@@ -24,14 +24,13 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
     ]
     raises_value_error = False
 
-    if model == "supervised":
-        overrides.append(f"data.task_name={SUPERVISED_TASK_NAME}")
-    elif model == "token_forecasting" and backbone not in ["transformer_decoder", "lstm"]:
+    supervised = model == "supervised"
+    if model == "token_forecasting" and backbone not in ["transformer_decoder", "lstm"]:
         raises_value_error = True
 
     if early_fusion is not None:
         overrides.append(f"model.early_fusion={early_fusion}")
-    return overrides, raises_value_error
+    return overrides, raises_value_error, supervised
 
 
 @pytest.fixture(
@@ -54,10 +53,10 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
 )
 def kwargs(request, meds_dir) -> dict:
     data, model, early_fusion, input_encoder, backbone = request.param
-    overrides, raises_value_error = get_overrides_and_exceptions(
+    overrides, raises_value_error, supervised = get_overrides_and_exceptions(
         data, model, early_fusion, input_encoder, backbone
     )
-    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir, supervised=supervised)
     return dict(
         cfg=cfg,
         raises_value_error=raises_value_error,

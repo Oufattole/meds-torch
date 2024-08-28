@@ -1,0 +1,39 @@
+_target_: meds_torch.data.datamodule.MEDSDataModule.initialize
+name: pytorch_dataset
+# Path params
+data_dir: ${paths.data_dir}
+meds_cohort_dir: ${paths.meds_cohort_dir}
+code_metadata_fp: ${paths.data_dir}/metadata/codes.parquet
+schema_files_root: ${paths.data_dir}/tokenization/schemas
+tasks_root: ${paths.meds_cohort_dir}/tasks
+
+# Task params
+task_root_dir: null
+task_name: null
+task_label_path: ${data.task_root_dir}/${data.task_name}.parquet
+task_info_path: ${data.task_root_dir}/${data.task_name}_info.json
+
+# Split params
+train_subset_size: null
+train_subset_seed: 1
+
+# Tokenization params
+collate_type: triplet
+tokenizer: "bert-base-uncased"
+do_include_patient_id: false
+do_include_subsequence_indices: false
+do_include_start_time_min: false
+do_prepend_static_data: false
+num_value_code_quantiles: null
+
+# Sequence Params
+max_seq_len: 512
+min_seq_len: null
+token_dim: 32
+subsequence_sampling_strategy: random
+seq_padding_side: right
+
+dataloader:
+  batch_size: 128 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
+  num_workers: 0
+  pin_memory: False

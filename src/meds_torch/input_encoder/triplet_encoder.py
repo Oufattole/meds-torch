@@ -65,10 +65,9 @@ class TripletEncoder(nn.Module, Module):
     def get_embedding(self, batch):
         static_mask = batch["static_mask"]
         code = batch["code"]
-        numerical_value = batch["numerical_value"]
+        numerical_value = batch["numeric_value"]
         time_delta_days = batch["time_delta_days"]
         numerical_value_mask = batch["numerical_value_mask"]
-
         # Embed times and mask static value times
         time_emb = self.embed_func(self.date_embedder, time_delta_days) * ~static_mask.unsqueeze(dim=1)
         # Embed codes
@@ -82,6 +81,11 @@ class TripletEncoder(nn.Module, Module):
         embedding = time_emb + code_emb + val_emb
 
         assert embedding.isfinite().all(), "Embedding is not finite"
+        if embedding.shape[-1] > self.cfg.max_seq_len:
+            raise ValueError(
+                f"Triplet embedding length {embedding.shape[-1]} "
+                "is greater than max_seq_len {self.cfg.max_seq_len}"
+            )
         return embedding
 
     def forward(self, batch):

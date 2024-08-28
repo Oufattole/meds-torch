@@ -47,9 +47,12 @@ def test_transfer_learning(tmp_path: Path, kwargs: dict, meds_dir) -> None:
         supervised_input_kwargs["model"] = "supervised"
         supervised_input_kwargs["data"] = "pytorch_dataset"
         supervised_input_kwargs["early_fusion"] = None
-        overrides, _ = get_overrides_and_exceptions(**supervised_input_kwargs)
+        overrides, _, supervised = get_overrides_and_exceptions(**supervised_input_kwargs)
         cfg_finetune = create_cfg(
-            overrides=overrides, meds_dir=meds_dir, config_name="transfer_learning.yaml"
+            overrides=overrides,
+            meds_dir=meds_dir,
+            config_name="transfer_learning.yaml",
+            supervised=supervised,
         )
 
         with open_dict(cfg_finetune):

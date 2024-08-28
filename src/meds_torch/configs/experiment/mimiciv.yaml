@@ -1,0 +1,37 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - override /data: pytorch_dataset
+  - override /paths/data_dir: /path/to/mimiciv/meds/data/MEDS_cohort
+  - override /paths/meds_dir: /path/to/mimiciv/meds/data/
+  - override /logger: wandb
+  - override /model/backbone: mamba
+  - override /model/input_encoder: triplet_encoder
+  - override /model: token_forecasting
+  - override /callbacks: default
+  - override /trainer: default
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+tags: ["mimiciv", "mamba-triplet_encoder-forecasting"]
+
+seed: 12345
+
+trainer:
+  min_epochs: 10
+  max_epochs: 10
+  gradient_clip_val: 0.5
+
+data:
+  batch_size: 64
+
+logger:
+  wandb:
+    tags: ${tags}
+    group: "mimiciv"
+  aim:
+    experiment: "mimiciv-mamba-triplet_encoder-forecasting"

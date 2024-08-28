@@ -151,7 +151,7 @@ class TokenForecastingModule(BaseModule):
         dynamic_mask = ~batch["static_mask"]
         code_target = batch["code"]
         # Load data
-        numerical_value_target = batch["numerical_value"]
+        numerical_value_target = batch["numeric_value"]
         time_delta_days_target = batch["time_delta_days"]
         numerical_value_mask = batch["numerical_value_mask"]
         # Code Loss
@@ -366,7 +366,7 @@ class TokenForecastingModule(BaseModule):
             sample_batch = dict()
             sample_batch["static_mask"] = torch.zeros_like(code_sample).bool()
             sample_batch["code"] = code_sample
-            sample_batch["numerical_value"] = numerical_value_sample
+            sample_batch["numeric_value"] = numerical_value_sample
             sample_batch["time_delta_days"] = time_sample
             sample_batch["numerical_value_mask"] = torch.zeros_like(numerical_value_sample).bool()
             sample = self.input_encoder.get_embedding(sample_batch)

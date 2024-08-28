@@ -1,10 +1,16 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "setuptools-scm>=8.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+meds_torch = ["**/*.yaml"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["*.pyc"]
 
 [project]
 name = "meds-torch"
-version = "0.0.1a1"
+dynamic = ["version"]
 authors = [
   {name="Matthew McDermott", email="mattmcdermott8@gmail.com"},
   {name="Nassim Oufattole", email="noufattole@gmail.com"},
@@ -22,13 +28,16 @@ classifiers = [
 dependencies = [
     "polars", "pyarrow", "nested_ragged_tensors", "loguru", "numpy", "ml-mixins", "torch", "omegaconf", "hydra-core",
     "lightning", "x-transformers", "rich", "hydra-colorlog", "hydra-optuna-sweeper", "wandb", "torchmetrics",
-    "torchvision", "transformers", "MEDS-transforms", "ray[tune]",
+    "torchvision", "transformers", "ray[tune]",
 ]
+
+[tool.setuptools_scm]
+local_scheme = "no-local-version"
 
 [project.optional-dependencies]
 mamba = ["mamba-ssm", "causal-conv1d>=1.4.0"]
 dev = ["pre-commit","notebook", "pdbpp"]
-tests = ["pytest", "pytest-cov[toml]", "rootutils", "pytest-sugar", "pytest-instafail", "pytest-xdist", "sh"]
+tests = ["pytest", "pytest-cov[toml]", "rootutils", "pytest-sugar", "pytest-instafail", "pytest-xdist", "sh", "MEDS-transforms==0.0.6"]
 
 [pytest]
 looponfailroots = ["tests"]

@@ -5,7 +5,6 @@ root = rootutils.setup_root(__file__, dotenv=True, pythonpath=True, cwd=True)
 from pathlib import Path
 
 import pytest
-from omegaconf import open_dict
 from torch.utils.data import DataLoader
 
 from meds_torch.data.components.multiwindow_pytorch_dataset import (
@@ -19,13 +18,12 @@ from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 
 
 @pytest.mark.parametrize(
-    "collate_type", ["triplet", "event_stream", "text_code", "text_observation", "all_text", "triplet_prompt"]
+    "collate_type",
+    ["triplet", "event_stream", "text_code", "text_observation", "all_text", "triplet_prompt", "eic"],
 )
 def test_pytorch_dataset(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir)
     cfg.data.collate_type = collate_type
-    if collate_type == "triplet_prompt":
-        cfg.data.tensorization_name = "prompt_expanded_observation"
     cfg.data.tokenizer = "bert-base-uncased"
     pyd = PytorchDataset(cfg.data, split="train")
     assert not pyd.has_task
@@ -47,7 +45,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "mask",
             "static_mask",
             "code",
-            "numerical_value",
+            "numeric_value",
             "time_delta_days",
             "numerical_value_mask",
         }
@@ -57,7 +55,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "static_mask",
             "code_tokens",
             "code_mask",
-            "numerical_value",
+            "numeric_value",
             "time_delta_days",
             "numerical_value_mask",
         }
@@ -78,7 +76,16 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "mask",
             "static_mask",
             "code",
-            "numerical_value",
+            "numeric_value",
+            "time_delta_days",
+            "numerical_value_mask",
+        }
+    elif collate_type == "eic":
+        assert batch.keys() == {
+            "mask",
+            "static_mask",
+            "code",
+            "numeric_value",
             "time_delta_days",
             "numerical_value_mask",
         }
@@ -88,11 +95,9 @@ def test_pytorch_dataset(meds_dir, collate_type):
 
 @pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt"])
 def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
-    cfg = create_cfg(overrides=[], meds_dir=meds_dir)
+    cfg = create_cfg(overrides=[], meds_dir=meds_dir, supervised=True)
     cfg.data.collate_type = collate_type
-    with open_dict(cfg):
-        cfg.data.task_name = SUPERVISED_TASK_NAME
-    assert Path(cfg.data.task_label_path).exists()
+    assert Path(cfg.data.task_label_path).exists(), f"Path does not exist: {cfg.data.task_label_path}"
 
     pyd = PytorchDataset(cfg.data, split="train")
     assert pyd.has_task
@@ -115,7 +120,7 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             "mask",
             "static_mask",
             "code",
-            "numerical_value",
+            "numeric_value",
             "time_delta_days",
             "numerical_value_mask",
             SUPERVISED_TASK_NAME,
@@ -130,6 +135,7 @@ def test_contrastive_windows(meds_dir, patient_level_sampling, collate_type):
     cfg = create_cfg(overrides=["data=multiwindow_pytorch_dataset"], meds_dir=meds_dir)
     cfg.data.collate_type = collate_type
     cfg.data.patient_level_sampling = patient_level_sampling
+
     assert cfg.data.cached_windows_dir
     assert Path(cfg.data.raw_windows_fp).exists()
 
@@ -146,7 +152,7 @@ def test_contrastive_windows(meds_dir, patient_level_sampling, collate_type):
             "mask",
             "static_mask",
             "code",
-            "numerical_value",
+            "numeric_value",
             "time_delta_days",
             "numerical_value_mask",
         }
@@ -169,7 +175,7 @@ def test_full_datamodule(meds_dir):
     assert isinstance(dm.train_dataloader(), DataLoader) and isinstance(dm.val_dataloader(), DataLoader)
 
     num_datapoints = len(dm.data_train)
-    assert num_datapoints == 120
+    assert num_datapoints == 70
 
     batch = next(iter(dm.train_dataloader()))
     for value in batch.values():

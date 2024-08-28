@@ -1,4 +1,5 @@
 import json
+import os
 from collections import defaultdict
 from datetime import timedelta
 from enum import StrEnum
@@ -30,6 +31,56 @@ class CollateType(StrEnum):
     text_observation = "text_observation"
     all_text = "all_text"
     triplet_prompt = "triplet_prompt"
+    eic = "eic"
+
+
+def generate_patient_split_dict(meds_dir):
+    patient_split_dict = {}
+
+    for split_dir in os.listdir(meds_dir):
+        split_path = Path(meds_dir) / split_dir
+        if split_path.is_dir():
+            for shard_file in split_path.glob("*.parquet"):
+                split_name = f"{split_dir}/{shard_file.stem}"
+                df = pl.read_parquet(shard_file)
+                patient_ids = df["patient_id"].unique().to_list()
+                patient_split_dict[split_name] = patient_ids
+        else:
+            logger.warning(f"Directory {split_path} does not exist or is not a directory.")
+
+    return patient_split_dict
+
+
+def debug_fn(data_dict, max_seq_len=None):
+    for key, value in data_dict.items():
+        if isinstance(value, torch.Tensor):
+            if torch.isnan(value).any() or torch.isinf(value).any():
+                raise ValueError(f"Found NaN or infinite values in key: {key}")
+            if max_seq_len and value.shape[-1] > max_seq_len:
+                raise ValueError(f"Found sequence length {value.shape[-1]} in key: {key}")
+        elif isinstance(value, np.ndarray):
+            if max_seq_len and np.isnan(value).any() or np.isinf(value).any():
+                raise ValueError(f"Found NaN or infinite values in key: {key}")
+            if value.shape[-1] > max_seq_len:
+                raise ValueError(f"Found sequence length {value.shape[-1]} in key: {key}")
+        else:
+            raise TypeError(f"Unsupported data type for key: {key}")
+
+
+def subpad_vectors(a, b):
+    """Calculate the total length of the output array Create an array of zeros with the total length Place the
+    values from 'a' at the indices specified by 'b'.
+
+    Example:
+    >>> a = np.array([2, 4, 5])
+    >>> b = np.array([3, 5, 10])
+    >>> subpad_vectors(a, b)
+    array([0, 0, 0, 2, 0, 4, 0, 0, 0, 5, 0])
+    """
+    total_length = b[-1]
+    result = np.zeros(total_length, dtype=a.dtype)
+    result[[0] + list(b[:-1])] = a
+    return result
 
 
 def count_or_proportion(N: int | pl.Expr | None, cnt_or_prop: int | float) -> int:
@@ -156,7 +207,7 @@ def merge_task_with_static(task_df, static_dfs):
     Parameters:
     - task_df (DataFrame): A DataFrame with columns 'patient_id', 'start_time', 'end_time', and 'label'.
     - static_dfs (dict of DataFrames): A dictionary of DataFrames indexed by their source names,
-      each containing 'patient_id', 'start_time', 'static_indices', 'static_values', and 'timestamp'.
+      each containing 'patient_id', 'start_time', 'static_indices', 'static_values', and "time".
 
     Returns:
     - DataFrame: The merged DataFrame containing data from task_df and all static_dfs.
@@ -174,7 +225,7 @@ def merge_task_with_static(task_df, static_dfs):
     # ...     'train/0': pl.DataFrame({
     # ...         "patient_id": [1, 2],
     # ...         "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
-    # ...         "timestamp": [[datetime(2020, 1, 1, 1), datetime(2020, 1, 1, 3)],
+    # ...         "time": [[datetime(2020, 1, 1, 1), datetime(2020, 1, 1, 3)],
     # ...                       [datetime(2020, 1, 2), datetime(2020, 1, 1, 2, 3)]]
     # ...     })
     # ... }
@@ -204,12 +255,12 @@ def merge_task_with_static(task_df, static_dfs):
         .agg("start_time", "end_time")
         .join(
             pl.concat(static_dfs.values()).select(
-                "patient_id", pl.col("start_time").alias("start_time_global"), "timestamp"
+                "patient_id", pl.col("start_time").alias("start_time_global"), "time"
             ),
             on="patient_id",
             how="left",
         )
-        .with_columns(pl.col("timestamp"))
+        .with_columns(pl.col("time"))
     )
     return task_df_joint
 
@@ -246,7 +297,7 @@ def get_task_indexes(task_df_joint) -> list[tuple[int, int, int]]:
     ...         [datetime(2021, 1, 4)],
     ...         [datetime(2021, 1, 4)]
     ...     ],
-    ...     "timestamp": [
+    ...     "time": [
     ...         pl.date_range(datetime(2021, 1, 1), datetime(2021, 1, 5), "1d", eager=True)
     ...     ]*5
     ... })
@@ -254,14 +305,12 @@ def get_task_indexes(task_df_joint) -> list[tuple[int, int, int]]:
     [(0, 0, 1), (1, 0, 1), (2, 0, 2), (3, 1, 3), (4, 2, 3)]
     """
     start_idx_expr = (
-        (pl.col("timestamp").search_sorted(pl.col("start_time"), side="left")).first().alias("start_idx")
+        (pl.col("time").search_sorted(pl.col("start_time"), side="left")).first().alias("start_idx")
     )
-    end_idx_expr = (
-        (pl.col("timestamp").search_sorted(pl.col("end_time"), side="left")).last().alias("end_idx")
-    )
+    end_idx_expr = (pl.col("time").search_sorted(pl.col("end_time"), side="left")).last().alias("end_idx")
     task_df_joint = (
         task_df_joint.explode("start_time", "end_time")
-        .explode("timestamp")
+        .explode("time")
         .group_by(IDX_COL, "patient_id", "start_time", "end_time", maintain_order=True)
         .agg(start_idx_expr, end_idx_expr)
     )
@@ -342,9 +391,13 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
     def read_shards(self):
         """Reads the split-specific patient shards from the ESGPT or MEDS dataset."""
-        all_shards = json.loads(Path(self.config.split_shards_fp).read_text())
-        self.shards = {sp: subjs for sp, subjs in all_shards.items() if sp.startswith(f"{self.split}/")}
+        all_shards = generate_patient_split_dict(Path(self.config.meds_cohort_dir) / "data")
+        self.shards = {sp: subjs for sp, subjs in all_shards.items() if sp.startswith(f"{self.split}")}
         self.subj_map = {subj: sp for sp, subjs in self.shards.items() for subj in subjs}
+        if not self.shards:
+            logger.warning(
+                f"No shards found for split {self.split}. Check the directory structure and file names."
+            )
 
     def read_patient_descriptors(self):
         """Reads the patient schemas and static data."""
@@ -361,12 +414,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                         "patient_id",
                         "start_time",
                         "code",
-                        "numerical_value",
-                        "timestamp",
+                        "numeric_value",
+                        "time",
                     ],
                     use_pyarrow=True,
                 )
-                .rename({"code": "static_indices", "numerical_value": "static_values"})
+                .rename({"code": "static_indices", "numeric_value": "static_values"})
                 .with_columns(
                     pl.col("static_values").list.eval(pl.element().fill_null(0)),
                     pl.col("static_indices").list.eval(pl.element().fill_null(0)),
@@ -375,15 +428,23 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
             self.static_dfs[shard] = df
             patient_ids = df["patient_id"]
-            n_events = df.select(pl.col("timestamp").list.len().alias("n_events")).get_column("n_events")
-            for i, (subj, n_events) in enumerate(zip(patient_ids, n_events)):
+            n_events = df.select(pl.col("time").list.len().alias("n_events")).get_column("n_events")
+            for i, (subj, n_events_count) in enumerate(zip(patient_ids, n_events)):
+                # TODO fix bug where n_events_count is not the same as the number of events in the
+                # tensorized data, seems to be shifting up by 1 multiple times
+                # if not n_events_count == JointNestedRaggedTensorDict.load_slice(
+                #     Path(self.config.tensorized_root)
+                #     / f"{shard}.nrt", i).tensors["dim0/time_delta_days"].shape[0]:
+                #     logger.info(f"Event count mismatch for {subj} in {shard}!")
                 if subj in self.subj_indices or subj in self.subj_seq_bounds:
                     raise ValueError(f"Duplicate subject {subj} in {shard}!")
 
                 self.subj_indices[subj] = i
-                self.subj_seq_bounds[subj] = (0, n_events)
+                self.subj_seq_bounds[subj] = (0, n_events_count)
 
         if self.has_task:
+            if self.config.task_root_dir is None:
+                raise ValueError("`task_root_dir` must be provided if task is specified!")
             task_df_fp = Path(self.config.task_label_path)
             task_info_fp = Path(self.config.task_info_path)
 
@@ -525,7 +586,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         data_for_stats = pl.concat([x.lazy() for x in self.static_dfs.values()])
         stats = (
             data_for_stats.select(
-                pl.col("timestamp").list.diff().explode().drop_nulls().drop_nans().alias("inter_event_time")
+                pl.col("time").list.diff().explode().drop_nulls().drop_nans().alias("inter_event_time")
             )
             .select(
                 pl.col("inter_event_time").min().alias("min"),
@@ -537,7 +598,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         if stats["min"].item() <= timedelta(0):
             bad_inter_event_times = data_for_stats.filter(
-                pl.col("timestamp").list.diff().list.min() <= 0
+                pl.col("time").list.diff().list.min() <= 0
             ).collect()
             bad_patient_ids = set(bad_inter_event_times["patient_id"].to_list())
             warning_strs = [
@@ -608,7 +669,26 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             "static_values": static_row["static_values"].item().to_list(),
         }
 
-        seq_len = end - st
+        # TODO: remove this check after fixing the end bug, sometimes it is for the wrong patient
+        # TODO check the dataset ground truth length where n_event and end differ!
+        end = min(patient_dynamic_data.tensors["dim0/time_delta_days"].shape[0], end)
+        # TODO: remove this and handle flattening in the NRT class
+        # if self.config.collate_type == CollateType.triplet:
+        #     end = sum(len(array) for array in patient_dynamic_data.tensors["dim1/numeric_value"])
+        if self.config.collate_type == CollateType.event_stream:
+            seq_len = end - st
+        if self.config.collate_type != CollateType.event_stream:
+            tensors = patient_dynamic_data.tensors
+            tensors["dim1/numeric_value"] = np.concatenate(tensors["dim1/numeric_value"], axis=0)
+            tensors["dim1/code"] = np.concatenate(tensors["dim1/code"], axis=0)
+            seq_len = tensors["dim1/code"].shape[0]
+            st = 0
+            if self.config.collate_type != CollateType.eic:
+                # TODO: pad times
+                tensors["dim0/time_delta_days"] = subpad_vectors(
+                    tensors["dim0/time_delta_days"], tensors["dim1/bounds"]
+                )
+
         if seq_len > self.max_seq_len:
             match self.config.subsequence_sampling_strategy:
                 case SubsequenceSamplingStrategy.RANDOM:
@@ -629,10 +709,23 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             out["start_idx"] = st
             out["end_idx"] = end
 
-        out["dynamic"] = patient_dynamic_data[st:end]
+        if self.config.collate_type == CollateType.event_stream:
+            out["dynamic"] = patient_dynamic_data[st:end]
+        else:
+            tensors["dim1/code"] = tensors["dim1/code"][st:end]
+            if self.config.collate_type != CollateType.eic:
+                tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
+                tensors["dim0/time_delta_days"] = tensors["dim0/time_delta_days"][st:end]
+            out["dynamic"] = tensors
 
         if self.config.do_include_start_time_min:
-            out["start_time"] = static_row["timestamp"].item().to_list()[st]
+            out["start_time"] = static_row["time"].item().to_list()[st]
+
+        if end - st > self.config.max_seq_len:
+            raise ValueError(f"Sequence length {end - st} exceeds max_seq_len {self.config.max_seq_len}!")
+
+        if end == st:
+            raise ValueError(f"Sequence length {end - st} is 0!")
 
         return out
 
@@ -649,7 +742,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         patient_idx = self.subj_indices[patient_id]
 
         patient_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-            Path(self.config.tensorized_root) / f"{shard}.nrt", patient_idx
+            Path(self.config.data_dir) / "data" / f"{shard}.nrt", patient_idx
         )
         out = self.load_patient(patient_dynamic_data, patient_id, st, end)
 
@@ -659,6 +752,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         for t, t_labels in self.labels.items():
             out[t] = t_labels[idx]
 
+        assert "dynamic" in out, f"Failed to load dynamic data for patient {patient_id} in {shard}!"
         return out
 
     def __dynamic_only_collate(self, batch: list[dict[str, list[float]]]) -> dict:
@@ -675,7 +769,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             padding_side=self.config.seq_padding_side
         )
         dynamic["event_mask"] = dynamic.pop("dim1/mask")
-        dynamic["dynamic_values"] = dynamic.pop("numerical_value")
+        dynamic["dynamic_values"] = dynamic.pop("numeric_value")
         dynamic["dynamic_indices"] = dynamic.pop("code")
         dynamic["dynamic_values_mask"] = dynamic.pop("dim2/mask") & ~np.isnan(dynamic["dynamic_values"])
 
@@ -763,7 +857,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return out_batch
 
     @classmethod
-    def process_triplet(cls, item: dict) -> dict:
+    def process_triplet(cls, item: dict, do_prepend_static_data=True) -> dict:
         """Processes a single triplet of dynamic and static data.
 
         This function takes a dictionary containing dynamic and static data,
@@ -788,7 +882,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> item =  {
             ...         'dynamic': JointNestedRaggedTensorDict({
             ...                 'code': [np.array([5, 6]), np.array([1, 2])],
-            ...                 'numerical_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
+            ...                 'numeric_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
             ...                 'time_delta_days': np.array([np.nan, 12])
             ...         }),
             ...         'static_values': [70.0],
@@ -811,39 +905,39 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             numerical_value_mask [ True  True  True False False]
         """
         dynamic_data = item["dynamic"]
-        raw_codes = dynamic_data.tensors["dim1/code"]
-        raw_values = dynamic_data.tensors["dim1/numerical_value"]
-        raw_times = dynamic_data.tensors["dim0/time_delta_days"]
+        code = dynamic_data["dim1/code"]
+        numerical_value = dynamic_data["dim1/numeric_value"]
+        time_delta_days = dynamic_data["dim0/time_delta_days"]
 
-        static_values = np.asarray(item["static_values"], dtype=np.float32)
-        static_indices = np.asarray(item["static_indices"], dtype=np.int32)
-        code = np.concatenate([np.array(static_indices)] + raw_codes, dtype=np.int32, casting="unsafe")
-        numerical_value = np.concatenate([np.array(static_values)] + raw_values)
+        static_mask = np.zeros(len(code), dtype=bool)
+        if do_prepend_static_data:
+            static_values = np.asarray(item["static_values"], dtype=np.float32)
+            static_indices = np.asarray(item["static_indices"], dtype=np.int32)
+            code = np.concatenate([static_indices, code], dtype=np.int32, casting="unsafe")
+            numerical_value = np.concatenate([static_values, numerical_value])
+            static_mask = np.zeros(len(code), dtype=bool)
+            static_mask[: len(static_values)] = True
+
         numerical_value_mask = ~np.isnan(numerical_value)
         # Replace NaNs with 0s
         np.nan_to_num(numerical_value, nan=0, copy=False)
-        np.nan_to_num(raw_times, nan=0, copy=False)
+        np.nan_to_num(time_delta_days, nan=0, copy=False)
 
-        static_mask = np.zeros(len(code), dtype=bool)
-        static_mask[: len(static_values)] = True
-
-        lengths = np.concatenate([[len(static_values)], dynamic_data.tensors["dim1/lengths"]])
-        time_delta_days = np.repeat(
-            np.concatenate([np.array([0], dtype=raw_times.dtype), raw_times]), lengths
-        )
         mask = np.ones(len(time_delta_days), dtype=bool)
 
-        return dict(
+        output = dict(
             mask=mask,
             static_mask=static_mask,
-            code=code,
-            numerical_value=numerical_value,
+            code=torch.as_tensor(code, dtype=torch.int64),
+            numeric_value=numerical_value,
             time_delta_days=time_delta_days,
             numerical_value_mask=numerical_value_mask,
         )
+        # debug_fn(output)
+        return output
 
     @classmethod
-    def collate_triplet(cls, batch: list[dict]) -> dict:
+    def collate_triplet(cls, batch: list[dict], do_prepend_static_data=True) -> dict:
         """Combines the ragged dictionaries  into a triplet format (times, codes, values) batch.
 
         This function handles conversion of arrays to tensors and padding of elements within the
@@ -855,7 +949,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         Returns:
             A dictionary containing tensorized and padded data for each key. The keys include 'mask',
-            'static_mask', 'code', 'numerical_value', 'numerical_value_mask', and 'time_delta_days'.
+            'static_mask', 'code', 'numeric_value', 'numerical_value_mask', and 'time_delta_days'.
 
         Examples:
             >>> import torch
@@ -864,7 +958,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...     {
             ...         'dynamic': JointNestedRaggedTensorDict(
             ...             {'code': [np.array([1])],
-            ...              'numerical_value': [np.array([10.0])],
+            ...              'numeric_value': [np.array([10.0])],
             ...              'time_delta_days': np.array([0])}),
             ...         'static_values': [20.0],
             ...         'static_indices': [0],
@@ -873,7 +967,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...     {
             ...         'dynamic': JointNestedRaggedTensorDict(
             ...             {'code': [np.array([5, 6]), np.array([1, 2])],
-            ...              'numerical_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
+            ...              'numeric_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
             ...              'time_delta_days': np.array([np.nan, 12])}),
             ...         'static_values': [70.0],
             ...         'static_indices': [2],
@@ -888,7 +982,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
              'label': tensor([0., 1.]),
              'mask': tensor([[ True,  True, False, False, False],
                     [ True,  True,  True,  True,  True]]),
-             'numerical_value': tensor([[20., 10.,  0.,  0.,  0.],
+             'numeric_value': tensor([[20., 10.,  0.,  0.,  0.],
                     [70., 50., 60.,  0.,  0.]]),
              'numerical_value_mask': tensor([[ True,  True, False, False, False],
                     [ True,  True,  True, False, False]]),
@@ -897,7 +991,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
              'time_delta_days': tensor([[ 0,  0,  0,  0,  0],
                     [ 0,  0,  0, 12, 12]], dtype=torch.uint8)}
         """
-        processed_batch = [cls.process_triplet(item) for item in batch]
+        processed_batch = [cls.process_triplet(item, do_prepend_static_data) for item in batch]
         tensorized_batch = {
             k: torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x[k]) for x in processed_batch],
@@ -911,6 +1005,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         for k in batch[0].keys():
             if k not in ("dynamic", "static_values", "static_indices"):
                 tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
+        # debug_fn(tensorized_batch)
         return tensorized_batch
 
     @classmethod
@@ -926,7 +1021,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         Returns:
             A dictionary containing tensorized and padded data for each key. The keys include 'mask',
-            'static_mask', 'code', 'numerical_value', 'numerical_value_mask', and 'time_delta_days'.
+            'static_mask', 'code', 'numeric_value', 'numerical_value_mask', and 'time_delta_days'.
 
         Examples:
             >>> import torch
@@ -935,7 +1030,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...     {
             ...         'dynamic': JointNestedRaggedTensorDict(
             ...             {'code': [np.array([1])],
-            ...              'numerical_value': [np.array([10.0])],
+            ...              'numeric_value': [np.array([10.0])],
             ...              'time_delta_days': np.array([0])}),
             ...         'static_values': [20.0],
             ...         'static_indices': [0],
@@ -944,7 +1039,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...     {
             ...         'dynamic': JointNestedRaggedTensorDict(
             ...             {'code': [np.array([5, 6]), np.array([1, 2])],
-            ...              'numerical_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
+            ...              'numeric_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
             ...              'time_delta_days': np.array([np.nan, 12])}),
             ...         'static_values': [70.0],
             ...         'static_indices': [2],
@@ -959,7 +1054,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
              'label': tensor([0., 1.]),
              'mask': tensor([[ True,  True, False, False, False],
                     [ True,  True,  True,  True,  True]]),
-             'numerical_value': tensor([[20., 10.,  0.,  0.,  0.],
+             'numeric_value': tensor([[20., 10.,  0.,  0.,  0.],
                     [70., 50., 60.,  0.,  0.]]),
              'numerical_value_mask': tensor([[ True,  True, False, False, False],
                     [ True,  True,  True, False, False]]),
@@ -1012,7 +1107,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> item =  {
             ...         'dynamic': JointNestedRaggedTensorDict({
             ...                 'code': [np.array([5, 6]), np.array([1, 2])],
-            ...                 'numerical_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
+            ...                 'numeric_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
             ...                 'time_delta_days': np.array([np.nan, 12])
             ...         }),
             ...         'static_values': [70.0],
@@ -1050,18 +1145,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             numerical_value_mask [ True  True  True False False]
         """
         dynamic_data = item["dynamic"]
-        raw_codes = dynamic_data.tensors["dim1/code"]
-        raw_values = dynamic_data.tensors["dim1/numerical_value"]
-        raw_times = dynamic_data.tensors["dim0/time_delta_days"]
+        raw_codes = dynamic_data["dim1/code"]
+        raw_values = dynamic_data["dim1/numeric_value"]
+        raw_times = dynamic_data["dim0/time_delta_days"]
 
         static_values = np.asarray(item["static_values"], dtype=raw_values[0].dtype)
         static_indices = np.asarray(item["static_indices"], dtype=raw_codes[0].dtype)
-        code = np.concatenate([np.array(static_indices)] + raw_codes, dtype=np.int32, casting="unsafe")
+        code = np.concatenate([static_indices, raw_codes], dtype=np.int32, casting="unsafe")
         tokens = [tokenized_codes[c] for c in code]
         code_tokens, code_mask = zip(*tokens)
         code_tokens = np.array(code_tokens)
         code_mask = np.array(code_mask)
-        numerical_value = np.concatenate([np.array(static_values)] + raw_values)
+        numerical_value = np.concatenate([static_values, raw_values])
         numerical_value_mask = ~np.isnan(numerical_value)
         # Replace NaNs with 0s
         np.nan_to_num(numerical_value, nan=0, copy=False)
@@ -1070,7 +1165,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         static_mask = np.zeros(len(code), dtype=bool)
         static_mask[: len(static_values)] = True
 
-        lengths = np.concatenate([[len(static_values)], dynamic_data.tensors["dim1/lengths"]])
+        lengths = np.concatenate([[len(static_values)], dynamic_data["dim1/lengths"]])
         time_delta_days = np.repeat(
             np.concatenate([np.array([0], dtype=raw_times.dtype), raw_times]), lengths
         )
@@ -1081,7 +1176,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             static_mask=static_mask,
             code_tokens=code_tokens,
             code_mask=code_mask,
-            numerical_value=numerical_value,
+            numeric_value=numerical_value,
             time_delta_days=time_delta_days,
             numerical_value_mask=numerical_value_mask,
         )
@@ -1116,7 +1211,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> item =  {
             ...         'dynamic': JointNestedRaggedTensorDict({
             ...                 'code': [np.array([5, 6]), np.array([1, 2])],
-            ...                 'numerical_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
+            ...                 'numeric_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
             ...                 'time_delta_days': np.array([np.nan, 12])
             ...         }),
             ...         'static_values': [70.0],
@@ -1177,17 +1272,17 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                      1., 1., 1., 1.]])
         """
         dynamic_data = item["dynamic"]
-        raw_codes = dynamic_data.tensors["dim1/code"]
-        raw_values = dynamic_data.tensors["dim1/numerical_value"]
-        raw_times = dynamic_data.tensors["dim0/time_delta_days"]
+        raw_codes = dynamic_data["dim1/code"]
+        raw_values = dynamic_data["dim1/numeric_value"]
+        raw_times = dynamic_data["dim0/time_delta_days"]
 
         static_values = np.asarray(item["static_values"], dtype=raw_values[0].dtype)
         static_indices = np.asarray(item["static_indices"], dtype=raw_codes[0].dtype)
-        code = np.concatenate([np.array(static_indices)] + raw_codes, dtype=np.int32, casting="unsafe")
+        code = np.concatenate([static_indices, raw_codes], dtype=np.int32, casting="unsafe")
         tokens = [tokenized_codes[c] for c in code]
         code_tokens, code_mask = zip(*tokens)
 
-        numerical_value = np.concatenate([np.array(static_values)] + raw_values)
+        numerical_value = np.concatenate([static_values, raw_values])
         numerical_value_mask = ~np.isnan(numerical_value)
         # # Replace NaNs with 0s
         np.nan_to_num(numerical_value, nan=0, copy=False)
@@ -1196,7 +1291,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         static_mask = np.zeros(len(code), dtype=bool)
         static_mask[: len(static_values)] = True
 
-        lengths = np.concatenate([[len(static_values)], dynamic_data.tensors["dim1/lengths"]])
+        lengths = np.concatenate([[len(static_values)], dynamic_data["dim1/lengths"]])
         time_delta_days = np.repeat(
             np.concatenate([np.array([0], dtype=raw_times.dtype), raw_times]), lengths
         )
@@ -1238,7 +1333,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             # static_mask=static_mask,
             observation_tokens=tokenized_observations_padded,
             observation_mask=observation_mask,
-            # numerical_value=numerical_value,
+            # numeric_value=numerical_value,
             # time_delta_days=time_delta_days,
             # numerical_value_mask=numerical_value_mask,
         )
@@ -1254,7 +1349,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         with dynamic and static data from `__getitem__` method outputs.
 
         Returns:     A dictionary containing tensorized and padded data for each key. The keys include 'mask',
-        'static_mask', 'code_text', 'code_text_mask', 'numerical_value', 'numerical_value_mask',     and
+        'static_mask', 'code_text', 'code_text_mask', 'numeric_value', 'numerical_value_mask',     and
         'time_delta_days'.
         """
 
@@ -1336,7 +1431,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         outputs.
 
         Returns:     A dictionary containing tensorized and padded data for each key. The keys include 'mask',
-        'static_mask', 'code_text', 'code_text_mask', 'numerical_value', 'numerical_value_mask',     and
+        'static_mask', 'code_text', 'code_text_mask', 'numeric_value', 'numerical_value_mask',     and
         'time_delta_days'.
         """
         processed_batch = [
@@ -1388,8 +1483,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             return self.collate_event_stream(batch)
         elif collate_type == CollateType.triplet_prompt:
             return self.collate_triplet_prompt(batch)
-        elif collate_type == CollateType.triplet:
+        elif collate_type == CollateType.eic:
             return self.collate_triplet(batch)
+        elif collate_type == CollateType.triplet:
+            return self.collate_triplet(batch, self.config.do_prepend_static_data)
         elif collate_type == CollateType.text_code:
             # check this
             if not hasattr(self, "tokenized_codes"):

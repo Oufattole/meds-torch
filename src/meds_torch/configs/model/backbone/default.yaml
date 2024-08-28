@@ -1,0 +1,9 @@
+nheads: 2
+n_layers: 2
+dropout: 0.1
+token_dim: ${model.token_dim}
+max_seq_len: ${model.max_seq_len}
+vocab_size: ${model.vocab_size}
+get_last_token: true
+pos_encoding: "absolute_sinusoidal"
+use_xtransformers_token_emb: false # If true, applies x_transformers token encoder, and user should not use the input_encoder

@@ -1,0 +1,31 @@
+defaults:
+  - input_encoder: triplet_encoder
+  - backbone: lstm
+  - _self_
+_target_: meds_torch.models.value_forecasting.ValueForecastingModule.initialize
+
+optimizer:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: 0.001
+  weight_decay: 0.0
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+  _partial_: true
+  mode: min
+  factor: 0.1
+  patience: 10
+
+max_seq_len: ${data.max_seq_len}
+token_dim: 4
+vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.num_value_code_quantiles}}
+get_representations: false
+task_name: ${data.task_name}
+batch_size: ${data.dataloader.batch_size}
+
+input_window_name: pre
+forecast_window_name: post
+
+# compile model for faster training with pytorch 2.0
+compile: false

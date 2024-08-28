@@ -1,0 +1,76 @@
+site_name: meds-torch
+repo_url: https://github.com/oufattole/meds-torch
+site_description: Documentation for the MEDS torch package
+site_author: Nassim Oufattole
+
+nav:
+  - Home: index.md
+  - "MIMICIV Tutorial": tutorial.md
+  - "Terminology": terminology.md
+  - "Input Encoding Methods": input_encoding_methods.md
+  - API: api/
+  - Issues: https://github.com/oufattole/meds-torch/issues
+
+theme:
+  features:
+    - announce.dismiss
+    - content.action.edit
+    - content.action.view
+    - content.code.annotate
+    - content.code.copy
+  custom_dir: docs/overrides
+  logo: assets/light_logo.png
+  name: material
+  locale: en
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/link
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch-off
+        name: Switch to system preference
+  font:
+    text: Roboto
+    code: Roboto Mono
+  favicon: assets/light_logo.png
+
+markdown_extensions:
+  - smarty
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.superfences
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+plugins:
+  - search
+  - gen-files:
+      scripts:
+        - docs/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - section-index
+  - mkdocstrings
+  - git-authors
+  - git-revision-date-localized

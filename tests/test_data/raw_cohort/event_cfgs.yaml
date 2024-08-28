@@ -1,0 +1,47 @@
+subjects:
+  patient_id_col: MRN
+  eye_color:
+    code:
+      - EYE_COLOR
+      - col(eye_color)
+    time: null
+    _metadata:
+      demo_metadata:
+        description: description
+  height:
+    code: HEIGHT
+    time: null
+    numeric_value: height
+  dob:
+    code: DOB
+    time: col(dob)
+    time_format: "%m/%d/%Y"
+admit_vitals:
+  admissions:
+    code:
+      - ADMISSION
+      - col(department)
+    time: col(admit_date)
+    time_format: "%m/%d/%Y, %H:%M:%S"
+  discharge:
+    code: DISCHARGE
+    time: col(disch_date)
+    time_format: "%m/%d/%Y, %H:%M:%S"
+  HR:
+    code: HR
+    time: col(vitals_date)
+    time_format: "%m/%d/%Y, %H:%M:%S"
+    numeric_value: HR
+    _metadata:
+      input_metadata:
+        description: { "title": { "lab_code": "HR" } }
+        parent_codes: { "LOINC/{loinc}": { "lab_code": "HR" } }
+  temp:
+    code: TEMP
+    time: col(vitals_date)
+    time_format: "%m/%d/%Y, %H:%M:%S"
+    numeric_value: temp
+    _metadata:
+      input_metadata:
+        description: { "title": { "lab_code": "temp" } }
+        parent_codes: { "LOINC/{loinc}": { "lab_code": "temp" } }

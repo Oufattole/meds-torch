@@ -52,7 +52,7 @@ class TextCodeEncoder(nn.Module, Module):
         static_mask = batch["static_mask"]
         code_tokens = batch["code_tokens"]
         code_mask = batch["code_mask"]
-        numerical_value = batch["numerical_value"]
+        numerical_value = batch["numeric_value"]
         time_delta_days = batch["time_delta_days"]
         numerical_value_mask = batch["numerical_value_mask"]
 

@@ -19,7 +19,7 @@ class TransformerDecoderModel(torch.nn.Module, Module):
             num_tokens=cfg.token_dim,  # placeholder as this is not used
             max_seq_len=cfg.max_seq_len,
             emb_dropout=dropout,
-            use_abs_pos_emb=False,
+            use_abs_pos_emb=(cfg.pos_encoding == "absolute_sinusoidal"),
             attn_layers=Decoder(
                 dim=cfg.token_dim,
                 depth=cfg.n_layers,
@@ -29,7 +29,10 @@ class TransformerDecoderModel(torch.nn.Module, Module):
                 ff_dropout=dropout,  # feedforward dropout
             ),
         )
-        self.model.token_emb = nn.Identity()
+        if cfg.pos_encoding != "absolute_sinusoidal" and cfg.pos_encoding is not None:
+            raise ValueError(f"Unknown positional encoding: {cfg.pos_encoding}")
+        if not cfg.use_xtransformers_token_emb:
+            self.model.token_emb = nn.Identity()
 
         # Setup LM Heads
         self.value_head = nn.Linear(cfg.token_dim, 1, bias=False)

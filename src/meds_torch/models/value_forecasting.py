@@ -31,7 +31,7 @@ class ValueForecastingModule(BaseModule):
         forecast_window_data = batch[self.cfg.forecast_window_name]
         batch = self.model(self.input_encoder(batch[self.cfg.input_window_name]))
 
-        numerical_values = forecast_window_data["numerical_value"]
+        numerical_values = forecast_window_data["numeric_value"]
         codes = forecast_window_data["code"]
         vocab_size = self.cfg.vocab_size
 

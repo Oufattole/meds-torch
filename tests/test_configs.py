@@ -20,7 +20,7 @@ from meds_torch.models.components.transformer_encoder import TransformerEncoderM
 from meds_torch.models.components.transformer_encoder_attn_avg import (
     AttentionAveragedTransformerEncoderModel,
 )
-from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
+from tests.conftest import create_cfg
 
 
 @pytest.mark.parametrize("data", ["pytorch_dataset", "multiwindow_pytorch_dataset"])
@@ -44,9 +44,7 @@ def test_train_config(
         f"model/backbone={backbone}",
         f"model={model}",
     ]
-    if model == "supervised":
-        overrides.append(f"data.task_name={SUPERVISED_TASK_NAME}")
-    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir, supervised=(model == "supervised"))
     assert isinstance(cfg, DictConfig)
     assert isinstance(cfg.data, DictConfig)
     assert isinstance(cfg.model.input_encoder, DictConfig)

@@ -27,6 +27,7 @@ class LstmModel(torch.nn.Module, Module):
             batch_first=True,
             dropout=dropout,
         )
+        # TODO (oufattole): add support for other positional encodings
         self.get_last_token = cfg.get_last_token
 
     def forward(self, batch):
