@@ -29,7 +29,7 @@ Key features include:
 - **Supervised Models**: Support for supervised training on arbitrary tasks defined on MEDS format data.
 - **Transfer Learning**: Pretrain via contrastive learning, forecasting, and other pre-training methods, and finetune to supervised tasks.
 
-The goal of this project is to push the boundaries of what's possible in healthcare machine learning by providing a flexible, robust, and scalable sequence model tools that accommodates a wide range of research and operational needs. Whether you're conducting academic research or developing clinical applications with MEDS format EHR data, this repository offers tools and flexibility to develop deep sequence models.
+The goal of this project is to push the boundaries of what's possible in healthcare machine learning by providing a flexible, robust, and scalable sequence model tools that accommodate a wide range of research and operational needs. Whether you're conducting academic research or developing clinical applications with MEDS format EHR data, this repository offers tools and flexibility to develop deep sequence models.
 
 ## Installation
 
