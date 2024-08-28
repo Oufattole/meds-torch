@@ -429,10 +429,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             self.static_dfs[shard] = df
             patient_ids = df["patient_id"]
             n_events = df.select(pl.col("time").list.len().alias("n_events")).get_column("n_events")
-            for i, (subj, n_events) in enumerate(zip(patient_ids, n_events)):
-                # TODO fix bug where n_events is not the same as the number of events in the
+            for i, (subj, n_events_count) in enumerate(zip(patient_ids, n_events)):
+                # TODO fix bug where n_events_count is not the same as the number of events in the
                 # tensorized data, seems to be shifting up by 1 multiple times
-                # if not n_events == JointNestedRaggedTensorDict.load_slice(
+                # if not n_events_count == JointNestedRaggedTensorDict.load_slice(
                 #     Path(self.config.tensorized_root)
                 #     / f"{shard}.nrt", i).tensors["dim0/time_delta_days"].shape[0]:
                 #     logger.info(f"Event count mismatch for {subj} in {shard}!")
@@ -440,7 +440,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                     raise ValueError(f"Duplicate subject {subj} in {shard}!")
 
                 self.subj_indices[subj] = i
-                self.subj_seq_bounds[subj] = (0, n_events)
+                self.subj_seq_bounds[subj] = (0, n_events_count)
 
         if self.has_task:
             if self.config.task_root_dir is None:
