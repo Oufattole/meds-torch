@@ -392,6 +392,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         all_shards = generate_patient_split_dict(Path(self.config.meds_cohort_dir) / "data")
         self.shards = {sp: subjs for sp, subjs in all_shards.items() if sp.startswith(f"{self.split}")}
         self.subj_map = {subj: sp for sp, subjs in self.shards.items() for subj in subjs}
+        if not self.shards:
+            logger.warning(
+                f"No shards found for split {self.split}. Check the directory structure and file names."
+            )
 
     def read_patient_descriptors(self):
         """Reads the patient schemas and static data."""

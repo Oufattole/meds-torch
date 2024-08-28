@@ -34,9 +34,8 @@ class TransformerEncoderModel(torch.nn.Module, Module):
                 ff_dropout=dropout,  # feedforward dropout
             ),
         )
-        if not cfg.pos_encoding == "absolute_sinusoidal":
-            if cfg.pos_encoding is not None:
-                raise ValueError(f"Unknown positional encoding: {cfg.pos_encoding}")
+        if cfg.pos_encoding != "absolute_sinusoidal" and cfg.pos_encoding is not None:
+            raise ValueError(f"Unknown positional encoding: {cfg.pos_encoding}")
         if not cfg.use_xtransformers_token_emb:
             self.model.token_emb = nn.Identity()
         self.rep_token = torch.nn.Parameter(torch.randn(1, 1, cfg.token_dim))
