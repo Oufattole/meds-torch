@@ -2,9 +2,6 @@
 requires = ["setuptools>=61.0", "setuptools-scm>=8.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.dynamic]
-version = {attr = "meds_torch.__version__"}
-
 [tool.setuptools.package-data]
 meds_torch = ["**/*.yaml"]
 
@@ -33,6 +30,8 @@ dependencies = [
     "lightning", "x-transformers", "rich", "hydra-colorlog", "hydra-optuna-sweeper", "wandb", "torchmetrics",
     "torchvision", "transformers", "ray[tune]",
 ]
+
+[tool.setuptools_scm]
 
 [project.optional-dependencies]
 mamba = ["mamba-ssm", "causal-conv1d>=1.4.0"]
