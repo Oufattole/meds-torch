@@ -172,3 +172,6 @@ tests.ipynb
 data/*
 logs/*
 **/.logs/*
+
+# mkdocs generated files directory
+/tmp/mkdocs_gen_files_*
