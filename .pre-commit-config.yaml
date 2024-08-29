@@ -112,6 +112,7 @@ repos:
           - mdformat-black
           - mdformat-config
           - mdformat-shfmt
+        exclude: "docs/index.md|docs/tutorial.md"
 
   # word spelling linter
   - repo: https://github.com/codespell-project/codespell
