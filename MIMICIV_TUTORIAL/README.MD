@@ -1,4 +1,6 @@
-`pip install -e .` in this repo to get setup.
+### WIP
+
+`pip install meds-torch==0.0.2` in this repo to get setup.
 
 Follow this MIMICIV `MEDS_Transform` tutorial [here](https://github.com/mmcdermott/MEDS_transforms/tree/main/MIMIC-IV_Example), to convert MIMIC IV to MEDS format.
 
