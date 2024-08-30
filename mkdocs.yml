@@ -8,7 +8,8 @@ nav:
   - "MIMICIV Tutorial": tutorial.md
   - "Terminology": terminology.md
   - "Input Encoding Methods": input_encoding_methods.md
-  - API: api/
+  - API Reference: reference/api/
+  - Config Reference: reference/config/
   - Issues: https://github.com/oufattole/meds-torch/issues
 
 theme:

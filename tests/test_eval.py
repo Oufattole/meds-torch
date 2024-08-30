@@ -9,11 +9,11 @@ from omegaconf import open_dict
 from meds_torch.eval import evaluate
 from meds_torch.train import train
 from tests.conftest import create_cfg
-from tests.test_train import get_overrides_and_exceptions
+from tests.test_train import get_overrides_and_exceptions, kwargs  # noqa: F401
 
 
 @pytest.mark.slow
-def test_train_eval(tmp_path: Path, kwargs: dict, meds_dir) -> None:
+def test_train_eval(tmp_path: Path, kwargs: dict, meds_dir) -> None:  # noqa: F811
     """Tests training and evaluation by training for 1 epoch with `train.py` then evaluating with `eval.py`.
 
     :param tmp_path: The temporary logging path.

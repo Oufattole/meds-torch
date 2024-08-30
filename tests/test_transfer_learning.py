@@ -14,11 +14,11 @@ from omegaconf import open_dict
 from meds_torch.train import train
 from meds_torch.transfer_learning import transfer_learning
 from tests.conftest import create_cfg
-from tests.test_train import get_overrides_and_exceptions
+from tests.test_train import get_overrides_and_exceptions, kwargs  # noqa: F401
 
 
 @pytest.mark.slow
-def test_transfer_learning(tmp_path: Path, kwargs: dict, meds_dir) -> None:
+def test_transfer_learning(tmp_path: Path, kwargs: dict, meds_dir) -> None:  # noqa: F811
     """Run 1 epoch, finish, and resume for another epoch.
 
     :param tmp_path: The temporary logging path.
