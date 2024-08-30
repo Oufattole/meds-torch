@@ -14,8 +14,7 @@
   <a href="https://github.com/Oufattole/meds-torch/graphs/contributors"><img alt="Contributors" src="https://img.shields.io/github/contributors/oufattole/meds-torch.svg"></a>
   <a href="https://github.com/Oufattole/meds-torch/pulls"><img alt="Pull Requests" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg"></a>
   <a href="https://github.com/Oufattole/meds-torch#license"><img alt="License" src="https://img.shields.io/badge/License-MIT-green.svg?labelColor=gray"></a>
-  <a href='https://meds-torch.readthedocs.io/en/stable/?badge=stable'><img src='https://readthedocs.org/projects/meds-torch/badge/?version=stable' alt='Documentation Status' />
-</a>
+<a href='https://meds-torch.readthedocs.io/en/latest/?badge=latest'><img src='https://readthedocs.org/projects/meds-torch/badge/?version=latest' alt='Documentation Status' /></a>
 </p>
 
 ## Description
