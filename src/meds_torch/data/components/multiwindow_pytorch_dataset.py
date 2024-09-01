@@ -108,7 +108,7 @@ def cache_window_indexes(cfg: DictConfig, split: str, static_dfs) -> pl.DataFram
     window_df = window_df.group_by("patient_id").agg(pl.all())
     timeseries_df = pl.concat(static_dfs.values()).select("patient_id", "time")
     cached_window_df = get_window_indexes(timeseries_df, window_df)
-    cache_window_fp = Path(cfg.cached_windows_dir) / f"{split}.parquet"
+    cache_window_fp = Path(cfg.cache_dir) / f"{split}.parquet"
     cache_window_fp.parent.mkdir(parents=True, exist_ok=True)
     cached_window_df.write_parquet(cache_window_fp)
 
@@ -127,7 +127,7 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         self.config = cfg
         self.split = split
         self.pytorch_dataset = PytorchDataset(cfg, split)
-        cached_windows_fp = Path(cfg.cached_windows_dir) / f"{split}.parquet"
+        cached_windows_fp = Path(cfg.cache_dir) / f"{split}.parquet"
         if cached_windows_fp.exists():
             window_df = pl.read_parquet(cached_windows_fp)
         else:

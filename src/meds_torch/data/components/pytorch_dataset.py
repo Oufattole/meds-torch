@@ -430,12 +430,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             patient_ids = df["patient_id"]
             n_events = df.select(pl.col("time").list.len().alias("n_events")).get_column("n_events")
             for i, (subj, n_events_count) in enumerate(zip(patient_ids, n_events)):
-                # TODO fix bug where n_events_count is not the same as the number of events in the
-                # tensorized data, seems to be shifting up by 1 multiple times
-                # if not n_events_count == JointNestedRaggedTensorDict.load_slice(
-                #     Path(self.config.tensorized_root)
-                #     / f"{shard}.nrt", i).tensors["dim0/time_delta_days"].shape[0]:
-                #     logger.info(f"Event count mismatch for {subj} in {shard}!")
                 if subj in self.subj_indices or subj in self.subj_seq_bounds:
                     raise ValueError(f"Duplicate subject {subj} in {shard}!")
 
@@ -660,6 +654,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         This function is a seedable version of `__getitem__`.
         """
+        og_st, og_end = st, end
         shard = self.subj_map[patient_id]
         patient_idx = self.subj_indices[patient_id]
         static_row = self.static_dfs[shard][patient_idx].to_dict()
@@ -669,25 +664,25 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             "static_values": static_row["static_values"].item().to_list(),
         }
 
-        # TODO: remove this check after fixing the end bug, sometimes it is for the wrong patient
-        # TODO check the dataset ground truth length where n_event and end differ!
-        end = min(patient_dynamic_data.tensors["dim0/time_delta_days"].shape[0], end)
         # TODO: remove this and handle flattening in the NRT class
-        # if self.config.collate_type == CollateType.triplet:
-        #     end = sum(len(array) for array in patient_dynamic_data.tensors["dim1/numeric_value"])
         if self.config.collate_type == CollateType.event_stream:
             seq_len = end - st
         if self.config.collate_type != CollateType.event_stream:
+            event_seq_len = end - st
             tensors = patient_dynamic_data.tensors
-            tensors["dim1/numeric_value"] = np.concatenate(tensors["dim1/numeric_value"], axis=0)
-            tensors["dim1/code"] = np.concatenate(tensors["dim1/code"], axis=0)
+            seq_len = sum([array.size for array in tensors["dim1/code"][st:end]])
+            if not seq_len >= event_seq_len:
+                raise ValueError(f"Measurement sequence length {seq_len} is less than event sequence length {event_seq_len}!")
+            tensors["dim1/numeric_value"] = np.concatenate(tensors["dim1/numeric_value"][st:end], axis=0)
+            tensors["dim1/code"] = np.concatenate(tensors["dim1/code"][st:end], axis=0)
             seq_len = tensors["dim1/code"].shape[0]
-            st = 0
             if self.config.collate_type != CollateType.eic:
                 # TODO: pad times
                 tensors["dim0/time_delta_days"] = subpad_vectors(
-                    tensors["dim0/time_delta_days"], tensors["dim1/bounds"]
+                    tensors["dim0/time_delta_days"][st:end], tensors["dim1/bounds"][st:end]
                 )
+            st = 0
+            end = st + seq_len
 
         if seq_len > self.max_seq_len:
             match self.config.subsequence_sampling_strategy:
@@ -723,6 +718,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         if end - st > self.config.max_seq_len:
             raise ValueError(f"Sequence length {end - st} exceeds max_seq_len {self.config.max_seq_len}!")
+        if self.config.min_seq_len and (end - st < self.config.min_seq_len):
+            raise ValueError(f"Sequence length {end - st} is less than min_seq_len {self.config.min_seq_len}!")
 
         if end == st:
             raise ValueError(f"Sequence length {end - st} is 0!")

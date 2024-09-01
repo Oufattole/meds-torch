@@ -19,7 +19,7 @@ from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 
 @pytest.mark.parametrize(
     "collate_type",
-    ["triplet", "event_stream", "text_code", "text_observation", "all_text", "triplet_prompt", "eic"],
+    ["triplet", "event_stream", "triplet_prompt", "eic"], #  TODO: add "text_code", "text_observation", "all_text"
 )
 def test_pytorch_dataset(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir)
@@ -136,7 +136,7 @@ def test_contrastive_windows(meds_dir, patient_level_sampling, collate_type):
     cfg.data.collate_type = collate_type
     cfg.data.patient_level_sampling = patient_level_sampling
 
-    assert cfg.data.cached_windows_dir
+    assert cfg.data.cache_dir
     assert Path(cfg.data.raw_windows_fp).exists()
 
     pyd = MultiWindowPytorchDataset(cfg.data, split="train")

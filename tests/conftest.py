@@ -68,7 +68,6 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml", supervised=F
 
             # Additional settings for specific fixtures
             if "data=multiwindow_pytorch_dataset" in overrides:
-                cfg.data.cached_windows_dir = str(meds_dir / "cached_windows")
                 cfg.data.raw_windows_fp = str(meds_dir / "windows" / "raw_windows.parquet")
 
     return cfg
