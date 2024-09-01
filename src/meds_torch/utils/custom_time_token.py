@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Transformations for adding time-derived measurements (e.g., a patient's age) to a MEDS dataset."""
+"""Transformations for adding time-derived measurements (e.g., a subject's age) to a MEDS dataset."""
 from collections.abc import Callable
 
 import hydra
@@ -27,7 +27,7 @@ def add_new_events_fntr(fn: Callable[[pl.DataFrame], pl.DataFrame]) -> Callable[
         >>> from datetime import datetime
         >>> df = pl.DataFrame(
         ...     {
-        ...         "patient_id": [1, 1, 1, 1, 2, 2, 3, 3],
+        ...         "subject_id": [1, 1, 1, 1, 2, 2, 3, 3],
         ...         "time": [
         ...             None,
         ...             datetime(1990, 1, 1),
@@ -40,12 +40,12 @@ def add_new_events_fntr(fn: Callable[[pl.DataFrame], pl.DataFrame]) -> Callable[
         ...         ],
         ...         "code": ["static", "DOB", "lab//A", "lab//B", "DOB", "lab//A", "lab//B", "dx//1"],
         ...     },
-        ...     schema={"patient_id": pl.UInt32, "time": pl.Datetime, "code": pl.Utf8},
+        ...     schema={"subject_id": pl.UInt32, "time": pl.Datetime, "code": pl.Utf8},
         ... )
         >>> df
         shape: (8, 3)
         ┌────────────┬─────────────────────┬────────┐
-        │ patient_id ┆ time                ┆ code   │
+        │ subject_id ┆ time                ┆ code   │
         │ ---        ┆ ---                 ┆ ---    │
         │ u32        ┆ datetime[μs]        ┆ str    │
         ╞════════════╪═════════════════════╪════════╡
@@ -64,7 +64,7 @@ def add_new_events_fntr(fn: Callable[[pl.DataFrame], pl.DataFrame]) -> Callable[
         >>> age_fn(df)
         shape: (2, 4)
         ┌────────────┬─────────────────────┬──────┬───────────────┐
-        │ patient_id ┆ time                ┆ code ┆ numeric_value │
+        │ subject_id ┆ time                ┆ code ┆ numeric_value │
         │ ---        ┆ ---                 ┆ ---  ┆ ---           │
         │ u32        ┆ datetime[μs]        ┆ str  ┆ f32           │
         ╞════════════╪═════════════════════╪══════╪═══════════════╡
@@ -76,7 +76,7 @@ def add_new_events_fntr(fn: Callable[[pl.DataFrame], pl.DataFrame]) -> Callable[
         >>> add_age_fn(df)
         shape: (10, 4)
         ┌────────────┬─────────────────────┬────────┬───────────────┐
-        │ patient_id ┆ time                ┆ code   ┆ numeric_value │
+        │ subject_id ┆ time                ┆ code   ┆ numeric_value │
         │ ---        ┆ ---                 ┆ ---    ┆ ---           │
         │ u32        ┆ datetime[μs]        ┆ str    ┆ f32           │
         ╞════════════╪═════════════════════╪════════╪═══════════════╡
@@ -98,7 +98,7 @@ def add_new_events_fntr(fn: Callable[[pl.DataFrame], pl.DataFrame]) -> Callable[
         df = df.with_row_index("__idx")
         new_events = new_events.with_columns(pl.lit(0, dtype=df.schema["__idx"]).alias("__idx"))
         return (
-            pl.concat([df, new_events], how="diagonal").sort(by=["patient_id", "time", "__idx"]).drop("__idx")
+            pl.concat([df, new_events], how="diagonal").sort(by=["subject_id", "time", "__idx"]).drop("__idx")
         )
 
     return out_fn
@@ -172,7 +172,7 @@ def normalize_time_unit(unit: str) -> tuple[str, float]:
 
 
 def age_fntr(cfg: DictConfig) -> Callable[[pl.DataFrame], pl.DataFrame]:
-    """Create a function that adds a patient's age to a DataFrame.
+    """Create a function that adds a subject's age to a DataFrame.
 
     Args:
         cfg: The configuration for the age function. This must contain the following mandatory keys:
@@ -181,8 +181,8 @@ def age_fntr(cfg: DictConfig) -> Callable[[pl.DataFrame], pl.DataFrame]:
             - "age_unit": The unit for the age event when converted to a numeric value in the output data.
 
     Returns:
-        A function that returns the to-be-added "age" events with the patient's age for all input events with
-        unique, non-null times in the data, for all patients who have an observed date of birth. It does
+        A function that returns the to-be-added "age" events with the subject's age for all input events with
+        unique, non-null times in the data, for all subjects who have an observed date of birth. It does
         not add an event for times that are equal to the date of birth.
 
     Raises:
@@ -192,7 +192,7 @@ def age_fntr(cfg: DictConfig) -> Callable[[pl.DataFrame], pl.DataFrame]:
         >>> from datetime import datetime
         >>> df = pl.DataFrame(
         ...     {
-        ...         "patient_id": [1, 1, 1, 1, 1, 2, 2, 3, 3],
+        ...         "subject_id": [1, 1, 1, 1, 1, 2, 2, 3, 3],
         ...         "time": [
         ...             None,
         ...             datetime(1990, 1, 1),
@@ -206,12 +206,12 @@ def age_fntr(cfg: DictConfig) -> Callable[[pl.DataFrame], pl.DataFrame]:
         ...         ],
         ...         "code": ["static", "DOB", "lab//A", "lab//B", "rx", "DOB", "lab//A", "lab//B", "dx//1"],
         ...     },
-        ...     schema={"patient_id": pl.UInt32, "time": pl.Datetime, "code": pl.Utf8},
+        ...     schema={"subject_id": pl.UInt32, "time": pl.Datetime, "code": pl.Utf8},
         ... )
         >>> df
         shape: (9, 3)
         ┌────────────┬─────────────────────┬────────┐
-        │ patient_id ┆ time                ┆ code   │
+        │ subject_id ┆ time                ┆ code   │
         │ ---        ┆ ---                 ┆ ---    │
         │ u32        ┆ datetime[μs]        ┆ str    │
         ╞════════════╪═════════════════════╪════════╡
@@ -230,7 +230,7 @@ def age_fntr(cfg: DictConfig) -> Callable[[pl.DataFrame], pl.DataFrame]:
         >>> age_fn(df)
         shape: (3, 4)
         ┌────────────┬─────────────────────┬──────┬───────────────┐
-        │ patient_id ┆ time                ┆ code ┆ numeric_value │
+        │ subject_id ┆ time                ┆ code ┆ numeric_value │
         │ ---        ┆ ---                 ┆ ---  ┆ ---           │
         │ u32        ┆ datetime[μs]        ┆ str  ┆ f32           │
         ╞════════════╪═════════════════════╪══════╪═══════════════╡
@@ -248,15 +248,15 @@ def age_fntr(cfg: DictConfig) -> Callable[[pl.DataFrame], pl.DataFrame]:
     microseconds_in_unit = int(1e6) * seconds_in_unit
 
     def fn(df: pl.LazyFrame) -> pl.LazyFrame:
-        dob_expr = pl.when(pl.col("code") == cfg.DOB_code).then(pl.col("time")).min().over("patient_id")
+        dob_expr = pl.when(pl.col("code") == cfg.DOB_code).then(pl.col("time")).min().over("subject_id")
         age_expr = (pl.col("time") - dob_expr).dt.total_microseconds() / microseconds_in_unit
         age_expr = age_expr.cast(pl.Float32, strict=False)
 
         return (
             df.drop_nulls(subset=["time"])
-            .unique(subset=["patient_id", "time"], maintain_order=True)
+            .unique(subset=["subject_id", "time"], maintain_order=True)
             .select(
-                "patient_id",
+                "subject_id",
                 "time",
                 pl.lit(cfg.age_code, dtype=df.schema["code"]).alias("code"),
                 age_expr.alias("numeric_value"),
@@ -299,7 +299,7 @@ def time_delta_fntr(cfg: DictConfig) -> Callable[[pl.DataFrame], pl.DataFrame]:
 
     Returns:
         A function that returns the to-be-added "time_delta" events with the quantile of the time delta
-        for all input events with unique, non-null times in the data. The very first event for a patient
+        for all input events with unique, non-null times in the data. The very first event for a subject
         has a null time_delta, so it is imputed with a special time start token.
 
     Raises:
@@ -309,7 +309,7 @@ def time_delta_fntr(cfg: DictConfig) -> Callable[[pl.DataFrame], pl.DataFrame]:
         >>> from datetime import datetime
         >>> df = pl.DataFrame(
         ...     {
-        ...         "patient_id": [1, 1, 1, 1, 1, 2, 2, 3, 3],
+        ...         "subject_id": [1, 1, 1, 1, 1, 2, 2, 3, 3],
         ...         "time": [
         ...             None,
         ...             datetime(1990, 1, 1),
@@ -323,12 +323,12 @@ def time_delta_fntr(cfg: DictConfig) -> Callable[[pl.DataFrame], pl.DataFrame]:
         ...         ],
         ...         "code": ["static", "DOB", "lab//A", "lab//B", "rx", "DOB", "lab//A", "lab//B", "dx//1"],
         ...     },
-        ...     schema={"patient_id": pl.UInt32, "time": pl.Datetime, "code": pl.Utf8},
+        ...     schema={"subject_id": pl.UInt32, "time": pl.Datetime, "code": pl.Utf8},
         ... )
         >>> df
         shape: (9, 3)
         ┌────────────┬─────────────────────┬────────┐
-        │ patient_id ┆ time                ┆ code   │
+        │ subject_id ┆ time                ┆ code   │
         │ ---        ┆ ---                 ┆ ---    │
         │ u32        ┆ datetime[μs]        ┆ str    │
         ╞════════════╪═════════════════════╪════════╡
@@ -351,7 +351,7 @@ def time_delta_fntr(cfg: DictConfig) -> Callable[[pl.DataFrame], pl.DataFrame]:
         ...     time_delta_fn(df)
         shape: (6, 4)
         ┌────────────┬─────────────────────┬───────────────┬────────────────────┐
-        │ patient_id ┆ time                ┆ numeric_value ┆ code               │
+        │ subject_id ┆ time                ┆ numeric_value ┆ code               │
         │ ---        ┆ ---                 ┆ ---           ┆ ---                │
         │ u32        ┆ datetime[μs]        ┆ f64           ┆ str                │
         ╞════════════╪═════════════════════╪═══════════════╪════════════════════╡
@@ -369,9 +369,10 @@ def time_delta_fntr(cfg: DictConfig) -> Callable[[pl.DataFrame], pl.DataFrame]:
 
     def fn(df: pl.LazyFrame) -> pl.LazyFrame:
         # Apply the function to create the quantile sequence
-        df = df.select("patient_id", "time").unique().sort(["patient_id", "time"]).drop_nulls()
+        assert "subject_id" in df.columns
+        df = df.select("subject_id", "time").unique().sort(["subject_id", "time"]).drop_nulls()
         df = df.with_columns(
-            (pl.col("time").diff().over("patient_id").dt.total_microseconds() / microseconds_in_unit)
+            (pl.col("time").diff().over("subject_id").dt.total_microseconds() / microseconds_in_unit)
             .alias("numeric_value")
             .cast(pl.Float32)
         )

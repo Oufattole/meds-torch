@@ -23,7 +23,7 @@ def convert_to_discrete_quantiles(
     >>> from datetime import datetime
     >>> MEDS_df = pl.DataFrame(
     ...     {
-    ...         "patient_id": [1, 1, 1, 2, 2, 2, 3],
+    ...         "subject_id": [1, 1, 1, 2, 2, 2, 3],
     ...         "time": [
     ...             datetime(2021, 1, 1),
     ...             datetime(2021, 1, 1),
@@ -37,7 +37,7 @@ def convert_to_discrete_quantiles(
     ...         "numeric_value": [1, 3, None, 3, None, None, None],
     ...     },
     ...     schema = {
-    ...         "patient_id": pl.UInt32,
+    ...         "subject_id": pl.UInt32,
     ...         "time": pl.Datetime,
     ...         "code": pl.Utf8,
     ...         "numeric_value": pl.Float64,
@@ -76,10 +76,10 @@ def convert_to_discrete_quantiles(
     >>> custom_quantiles = {"lab//C": {"values/quantile/0.5": 0}}
     >>> result = convert_to_discrete_quantiles(
     ...    MEDS_df, code_metadata, custom_quantiles)
-    >>> result.sort("patient_id", "time", "code")
+    >>> result.sort("subject_id", "time", "code")
     shape: (7, 4)
     ┌────────────┬─────────────────────┬──────────────┬───────────────┐
-    │ patient_id ┆ time                ┆ code         ┆ numeric_value │
+    │ subject_id ┆ time                ┆ code         ┆ numeric_value │
     │ ---        ┆ ---                 ┆ ---          ┆ ---           │
     │ u32        ┆ datetime[μs]        ┆ str          ┆ f64           │
     ╞════════════╪═════════════════════╪══════════════╪═══════════════╡
@@ -93,10 +93,10 @@ def convert_to_discrete_quantiles(
     └────────────┴─────────────────────┴──────────────┴───────────────┘
     >>> custom_quantiles = {"lab//A": {"values/quantile/0.5": 3}}
     >>> convert_to_discrete_quantiles(MEDS_df, code_metadata, custom_quantiles
-    ...     ).sort("patient_id", "time", "code")
+    ...     ).sort("subject_id", "time", "code")
     shape: (7, 4)
     ┌────────────┬─────────────────────┬──────────────┬───────────────┐
-    │ patient_id ┆ time                ┆ code         ┆ numeric_value │
+    │ subject_id ┆ time                ┆ code         ┆ numeric_value │
     │ ---        ┆ ---                 ┆ ---          ┆ ---           │
     │ u32        ┆ datetime[μs]        ┆ str          ┆ f64           │
     ╞════════════╪═════════════════════╪══════════════╪═══════════════╡
@@ -299,7 +299,7 @@ def quantile_normalize(
     """Normalize a MEDS dataset across both categorical and continuous dimensions.
 
     This function expects a MEDS dataset in flattened form, with columns for:
-      - `patient_id`
+      - `subject_id`
       - `time`
       - `code`
       - `numeric_value`
@@ -344,7 +344,7 @@ def quantile_normalize(
         >>> from datetime import datetime
         >>> MEDS_df = pl.DataFrame(
         ...     {
-        ...         "patient_id": [1, 1, 1, 2, 2, 2, 3],
+        ...         "subject_id": [1, 1, 1, 2, 2, 2, 3],
         ...         "time": [
         ...             datetime(2021, 1, 1),
         ...             datetime(2021, 1, 1),
@@ -358,7 +358,7 @@ def quantile_normalize(
         ...         "numeric_value": [1, 3, None, 3, None, None, None],
         ...     },
         ...     schema = {
-        ...         "patient_id": pl.UInt32,
+        ...         "subject_id": pl.UInt32,
         ...         "time": pl.Datetime,
         ...         "code": pl.Utf8,
         ...         "numeric_value": pl.Float64,
@@ -405,10 +405,10 @@ def quantile_normalize(
         │ dx//E  ┆ 4                ┆ {-3.0,-1.0,1.0,3.0}   │
         │ lab//F ┆ 5                ┆ {-3.0,-1.0,1.0,3.0}   │
         └────────┴──────────────────┴───────────────────────┘
-        >>> quantile_normalize(MEDS_df.lazy(), code_metadata).collect().sort("patient_id", "time", "code")
+        >>> quantile_normalize(MEDS_df.lazy(), code_metadata).collect().sort("subject_id", "time", "code")
         shape: (4, 4)
         ┌────────────┬─────────────────────┬──────┬───────────────┐
-        │ patient_id ┆ time                ┆ code ┆ numeric_value │
+        │ subject_id ┆ time                ┆ code ┆ numeric_value │
         │ ---        ┆ ---                 ┆ ---  ┆ ---           │
         │ u32        ┆ datetime[μs]        ┆ u32  ┆ f64           │
         ╞════════════╪═════════════════════╪══════╪═══════════════╡
@@ -419,10 +419,10 @@ def quantile_normalize(
         └────────────┴─────────────────────┴──────┴───────────────┘
         >>> custom_quantiles = {"lab//A": {"values/quantile/0.5": 2}}
         >>> quantile_normalize(MEDS_df.lazy(), code_metadata, custom_quantiles=custom_quantiles
-        ...     ).collect().sort("patient_id", "time", "code")
+        ...     ).collect().sort("subject_id", "time", "code")
         shape: (4, 4)
         ┌────────────┬─────────────────────┬──────┬───────────────┐
-        │ patient_id ┆ time                ┆ code ┆ numeric_value │
+        │ subject_id ┆ time                ┆ code ┆ numeric_value │
         │ ---        ┆ ---                 ┆ ---  ┆ ---           │
         │ u32        ┆ datetime[μs]        ┆ u32  ┆ f64           │
         ╞════════════╪═════════════════════╪══════╪═══════════════╡

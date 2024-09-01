@@ -1,5 +1,5 @@
 subjects:
-  patient_id_col: MRN
+  subject_id_col: MRN
   eye_color:
     code:
       - EYE_COLOR

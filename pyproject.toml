@@ -31,13 +31,10 @@ dependencies = [
     "torchvision", "transformers", "ray[tune]",
 ]
 
-[tool.setuptools_scm]
-local_scheme = "no-local-version"
-
 [project.optional-dependencies]
 mamba = ["mamba-ssm", "causal-conv1d>=1.4.0"]
 dev = ["pre-commit","notebook", "pdbpp"]
-tests = ["pytest", "pytest-cov[toml]", "rootutils", "pytest-sugar", "pytest-instafail", "pytest-xdist", "sh", "MEDS-transforms==0.0.6"]
+tests = ["pytest", "pytest-cov[toml]", "rootutils", "pytest-sugar", "pytest-instafail", "pytest-xdist", "sh", "MEDS-transforms==0.0.7"]
 docs = [
     "mkdocs==1.6.0",
     "mkdocs-gen-files==0.5.0",

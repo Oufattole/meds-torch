@@ -6,3 +6,5 @@ set -e
 python tests/helpers/extract_test_data.py
 
 python tests/helpers/generate_test_data_tensors.py
+
+python tests/helpers/generate_test_windows.py

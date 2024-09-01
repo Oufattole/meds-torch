@@ -3,5 +3,5 @@ defaults:
   - _self_
 name: multiwindow_pytorch_dataset
 
-patient_level_sampling: false
+subject_level_sampling: false
 raw_windows_fp: ???

@@ -34,8 +34,8 @@ class CollateType(StrEnum):
     eic = "eic"
 
 
-def generate_patient_split_dict(meds_dir):
-    patient_split_dict = {}
+def generate_subject_split_dict(meds_dir):
+    subject_split_dict = {}
 
     for split_dir in os.listdir(meds_dir):
         split_path = Path(meds_dir) / split_dir
@@ -43,12 +43,12 @@ def generate_patient_split_dict(meds_dir):
             for shard_file in split_path.glob("*.parquet"):
                 split_name = f"{split_dir}/{shard_file.stem}"
                 df = pl.read_parquet(shard_file)
-                patient_ids = df["patient_id"].unique().to_list()
-                patient_split_dict[split_name] = patient_ids
+                subject_ids = df["subject_id"].unique().to_list()
+                subject_split_dict[split_name] = subject_ids
         else:
             logger.warning(f"Directory {split_path} does not exist or is not a directory.")
 
-    return patient_split_dict
+    return subject_split_dict
 
 
 def debug_fn(data_dict, max_seq_len=None):
@@ -200,14 +200,14 @@ def to_int_index(col: pl.Expr) -> pl.Expr:
 
 
 def merge_task_with_static(task_df, static_dfs):
-    """Merges a DataFrame containing task information with multiple static DataFrames on the 'patient_id'
-    column. The function performs a sequence of operations to merge these dataframes based on patient
+    """Merges a DataFrame containing task information with multiple static DataFrames on the 'subject_id'
+    column. The function performs a sequence of operations to merge these dataframes based on subject
     identifiers and respective timestamps.
 
     Parameters:
-    - task_df (DataFrame): A DataFrame with columns 'patient_id', 'start_time', 'end_time', and 'label'.
+    - task_df (DataFrame): A DataFrame with columns 'subject_id', 'start_time', 'end_time', and 'label'.
     - static_dfs (dict of DataFrames): A dictionary of DataFrames indexed by their source names,
-      each containing 'patient_id', 'start_time', 'static_indices', 'static_values', and "time".
+      each containing 'subject_id', 'start_time', 'static_indices', 'static_values', and "time".
 
     Returns:
     - DataFrame: The merged DataFrame containing data from task_df and all static_dfs.
@@ -216,14 +216,14 @@ def merge_task_with_static(task_df, static_dfs):
     # >>> from datetime import datetime
     # >>> import polars as pl
     # >>> task_df = pl.DataFrame({
-    # ...     "patient_id": [1, 2],
+    # ...     "subject_id": [1, 2],
     # ...     "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
     # ...     "end_time": [datetime(2020, 1, 2), datetime(2020, 1, 3)],
     # ...     "label": [0, 1]
     # ... })
     # >>> static_dfs = {
     # ...     'train/0': pl.DataFrame({
-    # ...         "patient_id": [1, 2],
+    # ...         "subject_id": [1, 2],
     # ...         "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
     # ...         "time": [[datetime(2020, 1, 1, 1), datetime(2020, 1, 1, 3)],
     # ...                       [datetime(2020, 1, 2), datetime(2020, 1, 1, 2, 3)]]
@@ -232,7 +232,7 @@ def merge_task_with_static(task_df, static_dfs):
     # >>> merge_task_with_static(task_df, static_dfs)
     # shape: (2, 6)
     # ┌────────────┬────────────┬─────────────┬────────────┬────────────┬────────────┐
-    # │ _row_index ┆ patient_id ┆ start_time  ┆ end_time   ┆ start_time ┆ timestamp  │
+    # │ _row_index ┆ subject_id ┆ start_time  ┆ end_time   ┆ start_time ┆ timestamp  │
     # │ ---        ┆ ---        ┆ ---         ┆ ---        ┆ _global    ┆ ---        │
     # │ u32        ┆ i64        ┆ list[dateti ┆ list[datet ┆ ---        ┆ list[datet │
     # │            ┆            ┆ me[μs]]     ┆ ime[μs]]   ┆ datetime[μ ┆ ime[μs]]   │
@@ -249,15 +249,15 @@ def merge_task_with_static(task_df, static_dfs):
     # └────────────┴────────────┴─────────────┴────────────┴────────────┴────────────┘
     """
     task_df_joint = (
-        task_df.select("patient_id", "start_time", "end_time")
+        task_df.select("subject_id", "start_time", "end_time")
         .with_row_index(IDX_COL)
-        .group_by(IDX_COL, "patient_id", maintain_order=True)
+        .group_by(IDX_COL, "subject_id", maintain_order=True)
         .agg("start_time", "end_time")
         .join(
             pl.concat(static_dfs.values()).select(
-                "patient_id", pl.col("start_time").alias("start_time_global"), "time"
+                "subject_id", pl.col("start_time").alias("start_time_global"), "time"
             ),
-            on="patient_id",
+            on="subject_id",
             how="left",
         )
         .with_columns(pl.col("time"))
@@ -266,7 +266,7 @@ def merge_task_with_static(task_df, static_dfs):
 
 
 def get_task_indexes(task_df_joint) -> list[tuple[int, int, int]]:
-    """Processes the joint DataFrame to determine the index range for each patient's tasks.
+    """Processes the joint DataFrame to determine the index range for each subject's tasks.
 
     For each row in task_df_joint, it is assumed that `timestamp` is a sorted column
     and the start index and end index of the span of timestamps in between `start_time` and `end_time`
@@ -276,13 +276,13 @@ def get_task_indexes(task_df_joint) -> list[tuple[int, int, int]]:
     - task_df_joint (DataFrame): A DataFrame resulting from the merge_task_with_static function.
 
     Returns:
-    - list: list of tuples (patient_id, start_idx, end_idx).
+    - list: list of tuples (subject_id, start_idx, end_idx).
 
     Example:
     >>> from datetime import datetime
     >>> df = pl.DataFrame({
     ...     IDX_COL: [i for i in range(5)],
-    ...     "patient_id": [i for i in range(5)],
+    ...     "subject_id": [i for i in range(5)],
     ...     "start_time": [
     ...         [datetime(2021, 1, 1)],
     ...         [datetime(2021, 1, 1)],
@@ -311,15 +311,15 @@ def get_task_indexes(task_df_joint) -> list[tuple[int, int, int]]:
     task_df_joint = (
         task_df_joint.explode("start_time", "end_time")
         .explode("time")
-        .group_by(IDX_COL, "patient_id", "start_time", "end_time", maintain_order=True)
+        .group_by(IDX_COL, "subject_id", "start_time", "end_time", maintain_order=True)
         .agg(start_idx_expr, end_idx_expr)
     )
 
-    patient_ids = task_df_joint["patient_id"]
+    subject_ids = task_df_joint["subject_id"]
     start_indices = task_df_joint["start_idx"]
     end_indices = task_df_joint["end_idx"]
 
-    indexes = list(zip(patient_ids, start_indices, end_indices))
+    indexes = list(zip(subject_ids, start_indices, end_indices))
 
     return indexes
 
@@ -373,11 +373,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         logger.info("Scanning code metadata")
         self.code_metadata = pl.scan_parquet(self.config.code_metadata_fp)
 
-        logger.info("Reading splits & patient shards")
+        logger.info("Reading splits & subject shards")
         self.read_shards()
 
-        logger.info("Reading patient descriptors")
-        self.read_patient_descriptors()
+        logger.info("Reading subject descriptors")
+        self.read_subject_descriptors()
 
         if self.config.min_seq_len is not None and self.config.min_seq_len > 1:
             logger.info(f"Restricting to subjects with at least {self.config.min_seq_len} events")
@@ -390,8 +390,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         self.set_inter_event_time_stats()
 
     def read_shards(self):
-        """Reads the split-specific patient shards from the ESGPT or MEDS dataset."""
-        all_shards = generate_patient_split_dict(Path(self.config.meds_cohort_dir) / "data")
+        """Reads the split-specific subject shards from the ESGPT or MEDS dataset."""
+        all_shards = generate_subject_split_dict(Path(self.config.meds_cohort_dir) / "data")
         self.shards = {sp: subjs for sp, subjs in all_shards.items() if sp.startswith(f"{self.split}")}
         self.subj_map = {subj: sp for sp, subjs in self.shards.items() for subj in subjs}
         if not self.shards:
@@ -399,8 +399,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 f"No shards found for split {self.split}. Check the directory structure and file names."
             )
 
-    def read_patient_descriptors(self):
-        """Reads the patient schemas and static data."""
+    def read_subject_descriptors(self):
+        """Reads the subject schemas and static data."""
         self.static_dfs = {}
         self.subj_indices = {}
         self.subj_seq_bounds = {}
@@ -411,7 +411,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 pl.read_parquet(
                     static_fp,
                     columns=[
-                        "patient_id",
+                        "subject_id",
                         "start_time",
                         "code",
                         "numeric_value",
@@ -427,9 +427,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             )
 
             self.static_dfs[shard] = df
-            patient_ids = df["patient_id"]
+            subject_ids = df["subject_id"]
             n_events = df.select(pl.col("time").list.len().alias("n_events")).get_column("n_events")
-            for i, (subj, n_events_count) in enumerate(zip(patient_ids, n_events)):
+            for i, (subj, n_events_count) in enumerate(zip(subject_ids, n_events)):
                 if subj in self.subj_indices or subj in self.subj_seq_bounds:
                     raise ValueError(f"Duplicate subject {subj} in {shard}!")
 
@@ -464,14 +464,14 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 idx_col = f"_{idx_col}"
 
             task_df_joint = merge_task_with_static(task_df, self.static_dfs)
-            # Filter out patients that are not in the split
-            split_patients = set(
+            # Filter out subjects that are not in the split
+            split_subjects = set(
                 pl.concat(self.static_dfs.values())
-                .select(pl.col("patient_id").unique())
+                .select(pl.col("subject_id").unique())
                 .to_series()
                 .to_list()
             )
-            task_df_joint = task_df_joint.filter(pl.col("patient_id").is_in(split_patients))
+            task_df_joint = task_df_joint.filter(pl.col("subject_id").is_in(split_subjects))
             # Convert dates to indexes in the nested ragged tensor, (for fast indexing of data)
             self.index = get_task_indexes(task_df_joint)
             self.labels = {t: task_df.get_column(t).to_list() for t in self.tasks}
@@ -484,7 +484,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
     def get_task_info(self, task_df: pl.DataFrame):
         """Gets the task information from the task dataframe."""
-        self.tasks = sorted([c for c in task_df.columns if c not in ["patient_id", "start_time", "end_time"]])
+        self.tasks = sorted([c for c in task_df.columns if c not in ["subject_id", "start_time", "end_time"]])
 
         self.task_types = {}
         self.task_vocabs = {}
@@ -517,14 +517,14 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             )
 
         orig_len = len(self)
-        orig_n_subjects = len(set(self.patient_ids))
+        orig_n_subjects = len(set(self.subject_ids))
         valid_indices = [
             i for i, (subj, start, end) in enumerate(self.index) if end - start >= self.config.min_seq_len
         ]
         self.index = [self.index[i] for i in valid_indices]
         self.labels = {t: [t_labels[i] for i in valid_indices] for t, t_labels in self.labels.items()}
         new_len = len(self)
-        new_n_subjects = len(set(self.patient_ids))
+        new_n_subjects = len(set(self.subject_ids))
         logger.info(
             f"Filtered data due to sequence length constraint (>= {self.config.min_seq_len}) from "
             f"{orig_len} to {new_len} rows and {orig_n_subjects} to {new_n_subjects} subjects."
@@ -534,10 +534,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         """Filters the dataset to only include a subset of subjects."""
 
         orig_len = len(self)
-        orig_n_subjects = len(set(self.patient_ids))
+        orig_n_subjects = len(set(self.subject_ids))
         rng = np.random.default_rng(self.config.train_subset_seed)
         subset_subjects = rng.choice(
-            list(set(self.patient_ids)),
+            list(set(self.subject_ids)),
             size=count_or_proportion(orig_n_subjects, self.config.train_subset_size),
             replace=False,
         )
@@ -545,7 +545,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         self.index = [self.index[i] for i in valid_indices]
         self.labels = {t: [t_labels[i] for i in valid_indices] for t, t_labels in self.labels.items()}
         new_len = len(self)
-        new_n_subjects = len(set(self.patient_ids))
+        new_n_subjects = len(set(self.subject_ids))
         logger.info(
             f"Filtered data to subset of {self.config.train_subset_size} subjects from "
             f"{orig_len} to {new_len} rows and {orig_n_subjects} to {new_n_subjects} subjects."
@@ -594,10 +594,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             bad_inter_event_times = data_for_stats.filter(
                 pl.col("time").list.diff().list.min() <= 0
             ).collect()
-            bad_patient_ids = set(bad_inter_event_times["patient_id"].to_list())
+            bad_subject_ids = set(bad_inter_event_times["subject_id"].to_list())
             warning_strs = [
                 f"Observed inter-event times <= 0 for {len(bad_inter_event_times)} subjects!",
-                f"Bad Subject IDs: {', '.join(str(x) for x in bad_patient_ids)}",
+                f"Bad Subject IDs: {', '.join(str(x) for x in bad_subject_ids)}",
                 f"Global min: {stats['min'].item()}",
             ]
             if self.config.meds_dir is not None:
@@ -608,13 +608,13 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
             logger.warning("\n".join(warning_strs))
 
-            self.index = [x for x in self.index if x[0] not in bad_patient_ids]
+            self.index = [x for x in self.index if x[0] not in bad_subject_ids]
 
         self.mean_log_inter_event_time_min = stats["mean_log"].item()
         self.std_log_inter_event_time_min = stats["std_log"].item()
 
     @property
-    def patient_ids(self) -> list[int]:
+    def subject_ids(self) -> list[int]:
         return [x[0] for x in self.index]
 
     def __len__(self):
@@ -647,17 +647,16 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return self._seeded_getitem(idx)
 
     @SeedableMixin.WithSeed
-    def load_patient(
-        self, patient_dynamic_data, patient_id: int, st: int, end: int
+    def load_subject(
+        self, subject_dynamic_data, subject_id: int, st: int, end: int
     ) -> dict[str, list[float]]:
         """Returns a Returns a dictionary corresponding to a single subject's data.
 
         This function is a seedable version of `__getitem__`.
         """
-        og_st, og_end = st, end
-        shard = self.subj_map[patient_id]
-        patient_idx = self.subj_indices[patient_id]
-        static_row = self.static_dfs[shard][patient_idx].to_dict()
+        shard = self.subj_map[subject_id]
+        subject_idx = self.subj_indices[subject_id]
+        static_row = self.static_dfs[shard][subject_idx].to_dict()
 
         out = {
             "static_indices": static_row["static_indices"].item().to_list(),
@@ -669,10 +668,13 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             seq_len = end - st
         if self.config.collate_type != CollateType.event_stream:
             event_seq_len = end - st
-            tensors = patient_dynamic_data.tensors
+            tensors = subject_dynamic_data.tensors
             seq_len = sum([array.size for array in tensors["dim1/code"][st:end]])
             if not seq_len >= event_seq_len:
-                raise ValueError(f"Measurement sequence length {seq_len} is less than event sequence length {event_seq_len}!")
+                raise ValueError(
+                    f"Measurement sequence length {seq_len} is less than event sequence length"
+                    f" {event_seq_len}!"
+                )
             tensors["dim1/numeric_value"] = np.concatenate(tensors["dim1/numeric_value"][st:end], axis=0)
             tensors["dim1/code"] = np.concatenate(tensors["dim1/code"][st:end], axis=0)
             seq_len = tensors["dim1/code"].shape[0]
@@ -705,7 +707,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             out["end_idx"] = end
 
         if self.config.collate_type == CollateType.event_stream:
-            out["dynamic"] = patient_dynamic_data[st:end]
+            out["dynamic"] = subject_dynamic_data[st:end]
         else:
             tensors["dim1/code"] = tensors["dim1/code"][st:end]
             if self.config.collate_type != CollateType.eic:
@@ -719,7 +721,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         if end - st > self.config.max_seq_len:
             raise ValueError(f"Sequence length {end - st} exceeds max_seq_len {self.config.max_seq_len}!")
         if self.config.min_seq_len and (end - st < self.config.min_seq_len):
-            raise ValueError(f"Sequence length {end - st} is less than min_seq_len {self.config.min_seq_len}!")
+            raise ValueError(
+                f"Sequence length {end - st} is less than min_seq_len {self.config.min_seq_len}!"
+            )
 
         if end == st:
             raise ValueError(f"Sequence length {end - st} is 0!")
@@ -733,23 +737,23 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         This function is a seedable version of `__getitem__`.
         """
 
-        patient_id, st, end = self.index[idx]
+        subject_id, st, end = self.index[idx]
 
-        shard = self.subj_map[patient_id]
-        patient_idx = self.subj_indices[patient_id]
+        shard = self.subj_map[subject_id]
+        subject_idx = self.subj_indices[subject_id]
 
-        patient_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-            Path(self.config.data_dir) / "data" / f"{shard}.nrt", patient_idx
+        subject_dynamic_data = JointNestedRaggedTensorDict.load_slice(
+            Path(self.config.data_dir) / "data" / f"{shard}.nrt", subject_idx
         )
-        out = self.load_patient(patient_dynamic_data, patient_id, st, end)
+        out = self.load_subject(subject_dynamic_data, subject_id, st, end)
 
-        if self.config.do_include_patient_id:
-            out["patient_id"] = patient_id
+        if self.config.do_include_subject_id:
+            out["subject_id"] = subject_id
 
         for t, t_labels in self.labels.items():
             out[t] = t_labels[idx]
 
-        assert "dynamic" in out, f"Failed to load dynamic data for patient {patient_id} in {shard}!"
+        assert "dynamic" in out, f"Failed to load dynamic data for subject {subject_id} in {shard}!"
         return out
 
     def __dynamic_only_collate(self, batch: list[dict[str, list[float]]]) -> dict:
@@ -795,8 +799,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         if self.config.do_include_subsequence_indices:
             out_batch["start_idx"] = collated["start_idx"].long()
             out_batch["end_idx"] = collated["end_idx"].long()
-        if self.config.do_include_patient_id:
-            out_batch["patient_id"] = collated["patient_id"].long()
+        if self.config.do_include_subject_id:
+            out_batch["subject_id"] = collated["subject_id"].long()
 
         if not self.has_task:
             return out_batch

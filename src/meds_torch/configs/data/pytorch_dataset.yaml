@@ -21,7 +21,7 @@ train_subset_seed: 1
 # Tokenization params
 collate_type: triplet
 tokenizer: "bert-base-uncased"
-do_include_patient_id: false
+do_include_subject_id: false
 do_include_subsequence_indices: false
 do_include_start_time_min: false
 do_prepend_static_data: false

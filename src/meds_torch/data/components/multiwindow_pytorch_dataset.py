@@ -18,7 +18,7 @@ def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) ->
     fall between 'start' and 'end' times specified in `windows_df`.
 
     Parameters:
-    - timeseries_df (pl.Series): A Polars dataframe containing sorted datetime values for each patient.
+    - timeseries_df (pl.Series): A Polars dataframe containing sorted datetime values for each subject.
     - windows_df (pl.DataFrame): A DataFrame with columns 'name', 'start', and 'end' specifying the time
         windows.
 
@@ -29,7 +29,7 @@ def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) ->
 
     Example:
     >>> timeseries_df = pl.DataFrame({
-    ...     "patient_id": [1, 2],
+    ...     "subject_id": [1, 2],
     ...     "time": [
     ...         pl.Series(["1978-03-09 00:00:00", "2010-05-26 02:30:56", "2010-05-26 04:51:52"]
     ...             ).str.strptime(pl.Datetime),
@@ -38,7 +38,7 @@ def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) ->
     ...     ]
     ... })
     >>> windows_df = pl.DataFrame({
-    ...     "patient_id": [1, 2],
+    ...     "subject_id": [1, 2],
     ...     "pre.start": [["1978-03-09 00:00:00", "2010-05-26 02:30:56"], ["1969-05-26 02:30:56"]],
     ...     "pre.end": [["2010-05-26 02:30:56", "2010-05-26 04:51:52"], ["1971-05-26 04:51:52"]],
     ...     "post.start": [["1978-03-09 00:00:00", "2010-05-26 02:30:56"], ["1971-05-26 02:30:56"]],
@@ -52,7 +52,7 @@ def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) ->
     >>> timeseries_df
     shape: (2, 2)
     ┌────────────┬─────────────────────────────────┐
-    │ patient_id ┆ timestamp                       │
+    │ subject_id ┆ timestamp                       │
     │ ---        ┆ ---                             │
     │ i64        ┆ list[datetime[μs]]              │
     ╞════════════╪═════════════════════════════════╡
@@ -62,7 +62,7 @@ def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) ->
     >>> windows_df
     shape: (2, 5)
     ┌────────────┬─────────────────────┬─────────────────────┬────────────────────┬────────────────────┐
-    │ patient_id ┆ pre.start           ┆ pre.end             ┆ post.start         ┆ post.end           │
+    │ subject_id ┆ pre.start           ┆ pre.end             ┆ post.start         ┆ post.end           │
     │ ---        ┆ ---                 ┆ ---                 ┆ ---                ┆ ---                │
     │ i64        ┆ list[datetime[μs]]  ┆ list[datetime[μs]]  ┆ list[datetime[μs]] ┆ list[datetime[μs]] │
     ╞════════════╪═════════════════════╪═════════════════════╪════════════════════╪════════════════════╡
@@ -73,10 +73,10 @@ def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) ->
     │            ┆ 02:30:56]           ┆ 04:51:52]           ┆ 02:30:56]          ┆ 04:51:52]          │
     └────────────┴─────────────────────┴─────────────────────┴────────────────────┴────────────────────┘
     >>> get_window_indexes(
-    ...     timeseries_df, windows_df).select("patient_id", pl.col("^.*_idx$")).sort("patient_id")
+    ...     timeseries_df, windows_df).select("subject_id", pl.col("^.*_idx$")).sort("subject_id")
     shape: (2, 5)
     ┌────────────┬───────────────┬─────────────┬────────────────┬──────────────┐
-    │ patient_id ┆ pre.start_idx ┆ pre.end_idx ┆ post.start_idx ┆ post.end_idx │
+    │ subject_id ┆ pre.start_idx ┆ pre.end_idx ┆ post.start_idx ┆ post.end_idx │
     │ ---        ┆ ---           ┆ ---         ┆ ---            ┆ ---          │
     │ i64        ┆ list[u32]     ┆ list[u32]   ┆ list[u32]      ┆ list[u32]    │
     ╞════════════╪═══════════════╪═════════════╪════════════════╪══════════════╡
@@ -85,28 +85,28 @@ def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) ->
     └────────────┴───────────────┴─────────────┴────────────────┴──────────────┘
     """
     datetime_cols = [col for col in windows_df.columns if col.endswith(".start") or col.endswith(".end")]
-    windows_df = windows_df.join(how="inner", other=timeseries_df, on="patient_id")
+    windows_df = windows_df.join(how="inner", other=timeseries_df, on="subject_id")
     expr = [
         pl.col("time").explode().search_sorted(pl.col(col).explode()).alias(f"{col}_idx")
         for col in datetime_cols
     ]
-    return windows_df.group_by(pl.col("patient_id")).agg(expr)
+    return windows_df.group_by(pl.col("subject_id")).agg(expr)
 
 
 def cache_window_indexes(cfg: DictConfig, split: str, static_dfs) -> pl.DataFrame:
-    # TODO add support for windows between different patients
+    # TODO add support for windows between different subjects
     # Parse windows
     window_df = pl.read_parquet(cfg.raw_windows_fp)
     window_cols = [col for col in window_df.columns if col.endswith("_summary")]
     col = "pre.start_summary"
-    exprs = [pl.col("patient_id")]
+    exprs = [pl.col("subject_id")]
     for col in window_cols:
         for side in ("start", "end"):
             parsed_col = col.split(".")[0] + f".{side}"
             exprs.append(pl.col(col).struct.field(f"timestamp_at_{side}").alias(parsed_col))
     window_df = window_df.select(exprs)
-    window_df = window_df.group_by("patient_id").agg(pl.all())
-    timeseries_df = pl.concat(static_dfs.values()).select("patient_id", "time")
+    window_df = window_df.group_by("subject_id").agg(pl.all())
+    timeseries_df = pl.concat(static_dfs.values()).select("subject_id", "time")
     cached_window_df = get_window_indexes(timeseries_df, window_df)
     cache_window_fp = Path(cfg.cache_dir) / f"{split}.parquet"
     cache_window_fp.parent.mkdir(parents=True, exist_ok=True)
@@ -137,8 +137,8 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         self.window_cols = sorted(
             list({col.split(".")[0] for col in window_df.columns if col.endswith("_idx")})
         )
-        if self.config.patient_level_sampling:
-            # index by patient_id
+        if self.config.subject_level_sampling:
+            # index by subject_id
             self.index = window_df.to_dicts()
         else:
             # index by windows
@@ -156,7 +156,7 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return out
 
     @property
-    def patient_ids(self) -> list[int]:
+    def subject_ids(self) -> list[int]:
         return [x[0] for x in self.index]
 
     def __len__(self):
@@ -194,39 +194,39 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         This function is a seedable version of `__getitem__`.
         """
-        if self.config.patient_level_sampling:
-            # index by patient_id
-            patient_data = self.index[idx]
-            num_windows = len(patient_data[f"{self.window_cols[0]}.start_idx"])
+        if self.config.subject_level_sampling:
+            # index by subject_id
+            subject_data = self.index[idx]
+            num_windows = len(subject_data[f"{self.window_cols[0]}.start_idx"])
             selected_window_idx = np.random.choice(num_windows)
-            patient_id = patient_data["patient_id"]
+            subject_id = subject_data["subject_id"]
             windows = {
                 col: [
-                    patient_data[f"{col}.start_idx"][selected_window_idx],
-                    patient_data[f"{col}.end_idx"][selected_window_idx],
+                    subject_data[f"{col}.start_idx"][selected_window_idx],
+                    subject_data[f"{col}.end_idx"][selected_window_idx],
                 ]
                 for col in self.window_cols
             }
         else:
             # index by windows
-            patient_data = self.index[idx]
+            subject_data = self.index[idx]
             windows = {
-                col: [patient_data[f"{col}.start_idx"], patient_data[f"{col}.end_idx"]]
+                col: [subject_data[f"{col}.start_idx"], subject_data[f"{col}.end_idx"]]
                 for col in self.window_cols
             }
-            patient_id = patient_data["patient_id"]
+            subject_id = subject_data["subject_id"]
 
-        shard = self.pytorch_dataset.subj_map[patient_id]
-        patient_idx = self.pytorch_dataset.subj_indices[patient_id]
+        shard = self.pytorch_dataset.subj_map[subject_id]
+        subject_idx = self.pytorch_dataset.subj_indices[subject_id]
         out = {}
         for window in self.window_cols:
-            patient_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-                Path(self.config.data_dir) / "data" / f"{shard}.nrt", patient_idx
+            subject_dynamic_data = JointNestedRaggedTensorDict.load_slice(
+                Path(self.config.data_dir) / "data" / f"{shard}.nrt", subject_idx
             )
-            out[window] = self.pytorch_dataset.load_patient(
-                patient_dynamic_data, patient_id, windows[window][0], windows[window][1]
+            out[window] = self.pytorch_dataset.load_subject(
+                subject_dynamic_data, subject_id, windows[window][0], windows[window][1]
             )
 
-        if self.config.do_include_patient_id:
-            out["patient_id"] = patient_id
+        if self.config.do_include_subject_id:
+            out["subject_id"] = subject_id
         return out

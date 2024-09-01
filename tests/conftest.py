@@ -25,10 +25,10 @@ def meds_dir(tmp_path_factory) -> Path:
     # copy test data to temporary directory
     shutil.copytree(Path("./tests/test_data"), meds_dir, dirs_exist_ok=True)
     label_df = pl.read_parquet(meds_dir / "MEDS_cohort" / "data/*/*.parquet")
-    label_df = label_df.sort(["patient_id", "time"]).filter(pl.col("time").is_not_null())
+    label_df = label_df.sort(["subject_id", "time"]).filter(pl.col("time").is_not_null())
     start_time_expr = pl.col("time").get(0).alias("start_time")
     end_time_expr = pl.col("time").get(pl.len() // 2).alias("end_time")
-    label_df = label_df.group_by("patient_id", maintain_order=True).agg(start_time_expr, end_time_expr)
+    label_df = label_df.group_by("subject_id", maintain_order=True).agg(start_time_expr, end_time_expr)
     rng = np.random.default_rng(0)
     label_df = label_df.with_columns(pl.lit(rng.integers(0, 2, label_df.height)).alias(SUPERVISED_TASK_NAME))
     tasks_dir = meds_dir / "tasks"
