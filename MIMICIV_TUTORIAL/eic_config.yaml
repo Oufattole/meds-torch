@@ -63,6 +63,7 @@ stages:
   - aggregate_code_metadata
   - filter_subjects
   - filter_measurements
+  - aggregate_code_metadata
   - fit_vocabulary_indices
   - custom_normalization
   - tokenization

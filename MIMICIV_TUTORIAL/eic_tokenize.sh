@@ -78,6 +78,24 @@ MEDS_transform-filter_measurements --multirun \
     stage="filter_measurements" \
     hydra.searchpath="[pkg://MEDS_transforms.configs]"
 
+# We rerun aggregate_code_metadata to remove the filtered out codes, it seems the filter_measurements stage does not do that in meds v0.0.6
+rm -rf "${MODEL_DIR}/aggregate_code_metadata"
+rm -f "${MODEL_DIR}/metadata/codes.parquet"
+echo "Converting to code metadata..."
+MEDS_transform-aggregate_code_metadata \
+    --config-path="$CONFIG_DIR" \
+    --config-name="$CONFIG_NAME" \
+    input_dir="$MODEL_DIR" \
+    cohort_dir="$MODEL_DIR" \
+    stage="aggregate_code_metadata" \
+    hydra.searchpath="[pkg://MEDS_transforms.configs]" \
+    ++stage_configs.aggregate_code_metadata.data_input_dir="${MODEL_DIR}/filter_measurements/" \
+    ++stage_configs.aggregate_code_metadata.metadata_input_dir="${MODEL_DIR}/metadata/" \
+    polling_time=5
+
+mkdir -p "${MODEL_DIR}/metadata/"
+cp "${MODEL_DIR}/aggregate_code_metadata/codes.parquet" "${MODEL_DIR}/metadata/codes.parquet"
+
 echo "Fitting vocabulary indices..."
 MEDS_transform-fit_vocabulary_indices --multirun \
     --config-path="$CONFIG_DIR" \
@@ -89,10 +107,9 @@ MEDS_transform-fit_vocabulary_indices --multirun \
     hydra.searchpath="[pkg://MEDS_transforms.configs]"
 
 echo "Normalizing data (converting codes to use integer encodings)..."
-python -m meds_torch.utils.custom_normalization --multirun \
+python -m meds_torch.utils.custom_normalization \
     --config-path="$CONFIG_DIR" \
     --config-name="$CONFIG_NAME" \
-    worker="range(0,${N_PARALLEL_WORKERS})" \
     input_dir="$MEDS_DIR" \
     cohort_dir="$MODEL_DIR" \
     stage="custom_normalization" \
