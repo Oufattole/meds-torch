@@ -10,7 +10,7 @@ up from this one).
 
 Run the following command to download the MEDS data from the gcp bucket:
 
-```bash
+```console
 export MIMICIV_MEDS_DIR=??? # set to the directory in which you want to store the raw MIMIC-IV data
 
 cd $MIMICIV_MEDS_DIR
@@ -19,7 +19,7 @@ unzip meds_extract_0.0.7_data.zip
 rm meds_extract_0.0.7_data.zip
 ```
 
-```bash
+```console
 conda create -n meds-torch python=3.12
 conda activate meds-torch
 pip install "meds-torch==0.0.3"
@@ -36,7 +36,7 @@ We support two tensorization scripts corresponding to `triplet` and `eic` tokeni
 
 Run the following end to end script to generate triplet tensors
 
-```bash
+```console
 export MIMICIV_MEDS_DIR=??? # set to the directory in which you want to store the MIMIC-IV MEDS data
 export MIMICIV_TRIPLET_TENSOR_DIR=??? # set to the directory in which you want to output the tensorized MIMIC-IV data
 export N_PARALLEL_WORKERS=1 # set to the number of parallel workers you want to use
@@ -48,7 +48,7 @@ bash MIMICIV_TUTORIAL/triplet_tokenize.sh $MIMICIV_MEDS_DIR $MIMICIV_TRIPLET_TEN
 
 Run the following end to end script to generate eic tensors
 
-```bash
+```console
 export MIMICIV_MEDS_DIR=??? # set to the directory in which you want to store the raw MIMIC-IV data
 export MIMICIV_EIC_DIR=??? # set to the directory in which you want to output the tensorized MIMIC-IV data
 export N_PARALLEL_WORKERS=1 # set to the number of parallel workers you want to use
