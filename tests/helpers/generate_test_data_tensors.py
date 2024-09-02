@@ -17,9 +17,9 @@ from tests.helpers.run_sh_command import run_command
 
 AGGREGATIONS = [
     "code/n_occurrences",
-    "code/n_patients",
+    "code/n_subjects",
     "values/n_occurrences",
-    "values/n_patients",
+    "values/n_subjects",
     "values/sum",
     "values/sum_sqd",
     "values/n_ints",
@@ -40,13 +40,13 @@ def aggregate_metadata(meds_outputs, unique_codes):
 
         # Summarize data
         code_occurrences = sum(df.shape[0] for df in filtered_dfs)
-        patient_ids = set()
+        subject_ids = set()
         values_sum = 0.0
         values_sum_sqd = 0.0
         values_occurrences = 0
 
         for df in filtered_dfs:
-            patient_ids.update(df.select(pl.col("patient_id")).to_series().to_list())
+            subject_ids.update(df.select(pl.col("subject_id")).to_series().to_list())
 
             valid_values_df = df.filter(pl.col("numeric_value").is_not_null())
             values_occurrences += valid_values_df.shape[0]
@@ -60,18 +60,18 @@ def aggregate_metadata(meds_outputs, unique_codes):
             {
                 "code": code,
                 "code_occurrences": code_occurrences,
-                "patient_counts": len(patient_ids),
+                "subject_counts": len(subject_ids),
                 "values_occurrences": values_occurrences,
                 "values_sum": values_sum,
                 "values_sum_sqd": values_sum_sqd,
             }
         )
 
-    metadata_str = "code,code/n_occurrences,code/n_patients,values/n_occurrences,values/sum,values/sum_sqd\n"
+    metadata_str = "code,code/n_occurrences,code/n_subjects,values/n_occurrences,values/sum,values/sum_sqd\n"
     for entry in metadata_entries:
         metadata_str += (
             f"{entry['code']},{entry['code_occurrences']},"
-            f"{entry['patient_counts']},{entry['values_occurrences']},"
+            f"{entry['subject_counts']},{entry['values_occurrences']},"
             f"{entry['values_sum']},{entry['values_sum_sqd']}\n"
         )
     return metadata_str
@@ -98,7 +98,7 @@ def generate_test_triplet_tokenize(tmp_path):
         },
         "stages": [
             "aggregate_code_metadata",
-            "filter_patients",
+            "filter_subjects",
             "add_time_derived_measurements",
             "filter_measurements",
             "occlude_outliers",
@@ -109,7 +109,7 @@ def generate_test_triplet_tokenize(tmp_path):
         ],
     }
     # config = OmegaConf.create(config_kwargs)
-    config_name = "preprocess"
+    config_name = "_preprocess"
     if config_name is None:
         raise ValueError("config_name must be provided if do_use_config_yaml is True.")
 
@@ -133,8 +133,8 @@ def generate_test_triplet_tokenize(tmp_path):
 
     logger.info("Converting to code metadata...")
 
-    logger.info("Filtering patients...")
-    stderr, stdout = run_command("MEDS_transform-filter_patients", args, {}, "filter patients")
+    logger.info("Filtering subjects...")
+    stderr, stdout = run_command("MEDS_transform-filter_subjects", args, {}, "filter subjects")
 
     logger.info("Generating time derived measurements...")
     stderr, stdout = run_command(
@@ -188,7 +188,7 @@ def generate_test_eic_tokenize(tmp_path):
         "stages": [
             "custom_time_token",
             "aggregate_code_metadata",
-            "filter_patients",
+            "filter_subjects",
             "filter_measurements",
             "fit_vocabulary_indices",
             "custom_normalization",
@@ -196,7 +196,7 @@ def generate_test_eic_tokenize(tmp_path):
             "tensorization",
         ],
     }
-    config_name = "preprocess"
+    config_name = "_preprocess"
     if config_name is None:
         raise ValueError("config_name must be provided if do_use_config_yaml is True.")
 
@@ -223,8 +223,8 @@ def generate_test_eic_tokenize(tmp_path):
         "MEDS_transform-aggregate_code_metadata", args, {}, "aggregate code metadata"
     )
 
-    logger.info("Filtering patients...")
-    stderr, stdout = run_command("MEDS_transform-filter_patients", args, {}, "filter patients")
+    logger.info("Filtering subjects...")
+    stderr, stdout = run_command("MEDS_transform-filter_subjects", args, {}, "filter subjects")
 
     logger.info("Filtering measurements...")
     stderr, stdout = run_command("MEDS_transform-filter_measurements", args, {}, "filter_codes")

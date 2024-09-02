@@ -1,6 +1,6 @@
 # Methods for Tokenizing MEDS Data
 
-Let's explore different tokenization strategies using a unified example: a patient with two lab observations - a potassium lab and a creatinine lab - taken one day apart.
+Let's explore different tokenization strategies using a unified example: a subject with two lab observations - a potassium lab and a creatinine lab - taken one day apart.
 
 ### Everything Is a CODE (EIC)
 
@@ -31,11 +31,11 @@ We can apply this approach at different levels:
 
 1. Code text: "potassium lab", "creatinine lab"
 2. Observation text: "potassium lab 5.2", "time One day code creatinine lab value 0.7"
-3. All text: The entire patient history as a narrative: "code potassium lab value 5.2. time One day code creatinine lab value 0.7."
+3. All text: The entire subject history as a narrative: "code potassium lab value 5.2. time One day code creatinine lab value 0.7."
 
 Process:
 
-1. Convert data to text (at code, observation, or patient history level)
+1. Convert data to text (at code, observation, or subject history level)
 2. Use a language model to tokenize the text
 3. Generate embeddings for downstream tasks
 

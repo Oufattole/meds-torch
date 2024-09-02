@@ -8,7 +8,7 @@ def get_last_token(output, mask):
     lengths[~mask_max.values] = mask.shape[1]
     lengths -= 1
     # TODO: This is a temporary fix to avoid negative lengths,
-    # dataloader should filter out patients with no data
+    # dataloader should filter out subjects with no data
     if (lengths < 0).any():
         logger.warning("Negative lengths found, setting to 0")
     lengths = lengths.clip(min=0)

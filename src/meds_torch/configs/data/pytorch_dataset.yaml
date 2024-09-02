@@ -3,6 +3,7 @@ name: pytorch_dataset
 # Path params
 data_dir: ${paths.data_dir}
 meds_cohort_dir: ${paths.meds_cohort_dir}
+cache_dir: ${paths.data_dir}/.pytorch_dataset_cache_dir/
 code_metadata_fp: ${paths.data_dir}/metadata/codes.parquet
 schema_files_root: ${paths.data_dir}/tokenization/schemas
 tasks_root: ${paths.meds_cohort_dir}/tasks
@@ -20,7 +21,7 @@ train_subset_seed: 1
 # Tokenization params
 collate_type: triplet
 tokenizer: "bert-base-uncased"
-do_include_patient_id: false
+do_include_subject_id: false
 do_include_subsequence_indices: false
 do_include_start_time_min: false
 do_prepend_static_data: false

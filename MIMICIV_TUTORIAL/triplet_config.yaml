@@ -1,0 +1,43 @@
+defaults:
+  - _preprocess
+  - override hydra/launcher: joblib
+  - _self_
+input_dir: ???
+cohort_dir: ???
+stage_configs:
+  aggregate_code_metadata:
+    aggregations:
+      - code/n_occurrences
+      - code/n_subjects
+      - values/n_occurrences
+      - values/n_subjects
+      - values/sum
+      - values/sum_sqd
+      - values/n_ints
+      - values/min
+      - values/max
+      - name: values/quantiles
+        quantiles:
+          - 0.1
+          - 0.2
+          - 0.3
+          - 0.4
+          - 0.5
+          - 0.6
+          - 0.7
+          - 0.8
+          - 0.9
+    do_summarize_over_all_codes: true
+  filter_measurements:
+    min_subjects_per_code: 10000
+stages:
+  - aggregate_code_metadata
+  - filter_subjects
+  - add_time_derived_measurements
+  - filter_measurements
+  - occlude_outliers
+  - aggregate_code_metadata
+  - fit_vocabulary_indices
+  - normalization
+  - tokenization
+  - tensorization

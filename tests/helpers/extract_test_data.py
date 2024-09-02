@@ -17,7 +17,7 @@ extraction_root = code_root / "extract"
 
 if os.environ.get("DO_USE_LOCAL_SCRIPTS", "0") == "1":
     SHARD_EVENTS_SCRIPT = extraction_root / "shard_events.py"
-    SPLIT_AND_SHARD_SCRIPT = extraction_root / "split_and_shard_patients.py"
+    SPLIT_AND_SHARD_SCRIPT = extraction_root / "split_and_shard_subjects.py"
     CONVERT_TO_SHARDED_EVENTS_SCRIPT = extraction_root / "convert_to_sharded_events.py"
     MERGE_TO_MEDS_COHORT_SCRIPT = extraction_root / "merge_to_MEDS_cohort.py"
     AGGREGATE_CODE_METADATA_SCRIPT = code_root / "aggregate_code_metadata.py"
@@ -26,7 +26,7 @@ if os.environ.get("DO_USE_LOCAL_SCRIPTS", "0") == "1":
     FINALIZE_METADATA_SCRIPT = extraction_root / "finalize_MEDS_metadata.py"
 else:
     SHARD_EVENTS_SCRIPT = "MEDS_extract-shard_events"
-    SPLIT_AND_SHARD_SCRIPT = "MEDS_extract-split_and_shard_patients"
+    SPLIT_AND_SHARD_SCRIPT = "MEDS_extract-split_and_shard_subjects"
     CONVERT_TO_SHARDED_EVENTS_SCRIPT = "MEDS_extract-convert_to_sharded_events"
     MERGE_TO_MEDS_COHORT_SCRIPT = "MEDS_extract-merge_to_MEDS_cohort"
     AGGREGATE_CODE_METADATA_SCRIPT = "MEDS_transform-aggregate_code_metadata"
@@ -64,7 +64,7 @@ GREEN,"Green eyes. These are rare."
 
 EVENT_CFGS_YAML = """
 subjects:
-  patient_id_col: MRN
+  subject_id_col: MRN
   eye_color:
     code:
       - EYE_COLOR
@@ -113,29 +113,29 @@ admit_vitals:
 """
 
 
-def generate_patient_data(rng, num_patients=100):
-    patients = []
+def generate_subject_data(rng, num_subjects=100):
+    subjects = []
     eye_colors = ["BLUE", "BROWN", "HAZEL", "GREEN"]
     departments = ["CARDIAC", "PULMONARY", "ORTHOPEDIC", "NEUROLOGY", "ONCOLOGY"]
 
-    for _i in range(1, num_patients + 1):
+    for _i in range(1, num_subjects + 1):
         mrn = f"{rng.randint(100000, 999999)}"
         dob = (datetime.now() - timedelta(days=rng.randint(365 * 18, 365 * 80))).strftime("%m/%d/%Y")
         eye_color = rng.choice(eye_colors)
         height = round(rng.uniform(150, 190), 2)
         department = rng.choice(departments)
 
-        patients.append(f"{mrn},{dob},{eye_color},{height},{department}")
+        subjects.append(f"{mrn},{dob},{eye_color},{height},{department}")
 
-    return "\n".join(["MRN,dob,eye_color,height,department"] + patients)
+    return "\n".join(["MRN,dob,eye_color,height,department"] + subjects)
 
 
-def generate_admit_vitals(rng, patients, num_visits_per_patient=2):
+def generate_admit_vitals(rng, subjects, num_visits_per_subject=2):
     admit_vitals = []
 
-    for patient in patients.split("\n")[1:]:  # Skip header
-        mrn = patient.split(",")[0]
-        for _ in range(num_visits_per_patient):
+    for subject in subjects.split("\n")[1:]:  # Skip header
+        mrn = subject.split(",")[0]
+        for _ in range(num_visits_per_subject):
             admit_date = datetime.now() - timedelta(days=rng.randint(1, 365))
             discharge_date = admit_date + timedelta(hours=rng.randint(1, 48))
             department = rng.choice(["CARDIAC", "PULMONARY", "ORTHOPEDIC", "NEUROLOGY", "ONCOLOGY"])
@@ -153,7 +153,7 @@ def generate_admit_vitals(rng, patients, num_visits_per_patient=2):
                     f"{vitals_date.strftime('%m/%d/%Y, %H:%M:%S')}\",{hr},{temp}"
                 )
 
-    return "\n".join(["patient_id,admit_date,disch_date,department,vitals_date,HR,temp"] + admit_vitals)
+    return "\n".join(["subject_id,admit_date,disch_date,department,vitals_date,HR,temp"] + admit_vitals)
 
 
 def test_extraction(output_dir: Path):
@@ -172,9 +172,9 @@ def test_extraction(output_dir: Path):
         demo_metadata_csv = raw_cohort_dir / "demo_metadata.csv"
         input_metadata_csv = raw_cohort_dir / "input_metadata.csv"
 
-        # Generate data for 100 patients
+        # Generate data for 100 subjects
         rng = random.Random(42)
-        SUBJECTS_CSV = generate_patient_data(rng, 100)
+        SUBJECTS_CSV = generate_subject_data(rng, 100)
         ADMIT_VITALS_CSV = generate_admit_vitals(rng, SUBJECTS_CSV)
 
         # Write the CSV files
@@ -196,11 +196,11 @@ def test_extraction(output_dir: Path):
             "input_dir": str(raw_cohort_dir.resolve()),
             "cohort_dir": str(MEDS_cohort_dir.resolve()),
             "event_conversion_config_fp": str(event_cfgs_yaml.resolve()),
-            "stage_configs.split_and_shard_patients.split_fracs.train": 0.7,
-            "stage_configs.split_and_shard_patients.split_fracs.tuning": 0.15,
-            "stage_configs.split_and_shard_patients.split_fracs.held_out": 0.15,
+            "stage_configs.split_and_shard_subjects.split_fracs.train": 0.7,
+            "stage_configs.split_and_shard_subjects.split_fracs.tuning": 0.15,
+            "stage_configs.split_and_shard_subjects.split_fracs.held_out": 0.15,
             "stage_configs.shard_events.row_chunksize": 100,
-            "stage_configs.split_and_shard_patients.n_patients_per_shard": 20,
+            "stage_configs.split_and_shard_subjects.n_subjects_per_shard": 20,
             "hydra.verbose": True,
             "etl_metadata.dataset_name": "TEST",
             "etl_metadata.dataset_version": "1.0",
@@ -217,11 +217,11 @@ def test_extraction(output_dir: Path):
         all_stderrs.append(stderr)
         all_stdouts.append(stdout)
 
-        # Stage 2: Collect the patient splits
+        # Stage 2: Collect the subject splits
         stderr, stdout = run_command(
             SPLIT_AND_SHARD_SCRIPT,
             extraction_config_kwargs,
-            "split_and_shard_patients",
+            "split_and_shard_subjects",
         )
 
         all_stderrs.append(stderr)
@@ -232,12 +232,12 @@ def test_extraction(output_dir: Path):
             assert shards_fp.is_file(), f"Expected splits @ {str(shards_fp.resolve())} to exist."
 
         except AssertionError as e:
-            print("Failed to split patients")
+            print("Failed to split subjects")
             print(f"stderr:\n{stderr}")
             print(f"stdout:\n{stdout}")
             raise e
 
-        # Stage 3: Extract the events and sub-shard by patient
+        # Stage 3: Extract the events and sub-shard by subject
         stderr, stdout = run_command(
             CONVERT_TO_SHARDED_EVENTS_SCRIPT,
             extraction_config_kwargs,
@@ -246,8 +246,8 @@ def test_extraction(output_dir: Path):
         all_stderrs.append(stderr)
         all_stdouts.append(stdout)
 
-        patient_subsharded_folder = MEDS_cohort_dir / "convert_to_sharded_events"
-        assert patient_subsharded_folder.is_dir(), f"Expected {patient_subsharded_folder} to be a directory."
+        subject_subsharded_folder = MEDS_cohort_dir / "convert_to_sharded_events"
+        assert subject_subsharded_folder.is_dir(), f"Expected {subject_subsharded_folder} to be a directory."
 
         # Stage 4: Merge to the final output
         stderr, stdout = run_command(
@@ -311,7 +311,7 @@ def test_extraction(output_dir: Path):
         got_json.pop("etl_version")  # We don't test this as it changes with the commits.
 
         # Check the splits parquet
-        output_file = MEDS_cohort_dir / "metadata" / "patient_splits.parquet"
+        output_file = MEDS_cohort_dir / "metadata" / "subject_splits.parquet"
         assert output_file.is_file(), f"Expected {output_file} to exist: stderr:\n{stderr}\nstdout:\n{stdout}"
 
         got_df = pl.read_parquet(output_file, glob=False, use_pyarrow=True)
