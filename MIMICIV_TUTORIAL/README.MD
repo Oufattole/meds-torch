@@ -49,8 +49,8 @@ bash MIMICIV_TUTORIAL/triplet_tokenize.sh $MIMICIV_MEDS_DIR $MIMICIV_TRIPLET_TEN
 Run the following end to end script to generate eic tensors
 
 ```bash
-export MIMICIV_MEDS_DIR=/home/shared/mimiciv2.2/gcp/ # set to the directory in which you want to store the raw MIMIC-IV data
-export MIMICIV_EIC_DIR=/home/shared/mimiciv2.2/eic_tensors/ # set to the directory in which you want to output the tensorized MIMIC-IV data
+export MIMICIV_MEDS_DIR=??? # set to the directory in which you want to store the raw MIMIC-IV data
+export MIMICIV_EIC_DIR=??? # set to the directory in which you want to output the tensorized MIMIC-IV data
 export N_PARALLEL_WORKERS=1 # set to the number of parallel workers you want to use
 export CONFIG_DIR="$(pwd)/MIMICIV_TUTORIAL/" # set to the directory in which the config file is stored, must be an absolute path.
 export CONFIG_NAME="eic_config" # set to the name of the config file
