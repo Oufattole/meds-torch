@@ -16,6 +16,7 @@ stages:
 
 stage_configs:
   custom_time_token:
+    _script: "python -m meds_torch.utils.custom_time_token"
     time_delta:
       time_unit: years
   filter_subjects:
@@ -36,6 +37,7 @@ stage_configs:
       - name: values/quantiles
         quantiles: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]          
   custom_normalization:
+    _script: "python -m meds_torch.utils.custom_normalization"
     custom_quantiles:
       TIME//DELTA//TOKEN:
         values/quantile/1: 0.00000190258 # 1 minute
