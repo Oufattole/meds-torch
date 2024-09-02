@@ -13,8 +13,7 @@ function display_help() {
     echo "Arguments:"
     echo "  MEDS_DIR                              Output directory for processed MEDS data."
     echo "  N_PARALLEL_WORKERS                    Number of parallel workers for processing."
-    echo "  CONFIG_DIR                            Directory for config files."
-    echo "  CONFIG_NAME                           Name of config file."
+    echo "  PIPELINE_CONFIG_PATH                  Pipeline configuration file."
     echo
     echo "Options:"
     echo "  -h, --help          Display this help message and exit."
@@ -27,7 +26,7 @@ if [[ "$1" == "-h" || "$1" == "--help" ]]; then
 fi
 
 # Check for mandatory parameters
-if [ "$#" -lt 5 ]; then
+if [ "$#" -lt 4 ]; then
     echo "Error: Incorrect number of arguments provided."
     display_help
 fi
@@ -35,102 +34,7 @@ fi
 MEDS_DIR="$1"
 MODEL_DIR="$2"
 N_PARALLEL_WORKERS="$3"
-CONFIG_DIR="$4"
-CONFIG_NAME="$5"
+PIPELINE_CONFIG_PATH="$4"
 
-echo "Running custom time token script..."
-python -m meds_torch.utils.custom_time_token --multirun \
-    --config-path="$CONFIG_DIR" \
-    --config-name="$CONFIG_NAME" \
-    worker="range(0,${N_PARALLEL_WORKERS})" \
-    input_dir="$MEDS_DIR" \
-    cohort_dir="$MODEL_DIR" \
-    stage="custom_time_token" \
-    hydra.searchpath="[pkg://MEDS_transforms.configs]"
-
-echo "Aggregating code metadata..."
-MEDS_transform-aggregate_code_metadata --multirun \
-    --config-path="$CONFIG_DIR" \
-    --config-name="$CONFIG_NAME" \
-    worker="range(0,${N_PARALLEL_WORKERS})" \
-    input_dir="$MEDS_DIR" \
-    cohort_dir="$MODEL_DIR" \
-    stage="aggregate_code_metadata" \
-    hydra.searchpath="[pkg://MEDS_transforms.configs]"
-
-echo "Filtering subjects..."
-MEDS_transform-filter_subjects --multirun \
-    --config-path="$CONFIG_DIR" \
-    --config-name="$CONFIG_NAME" \
-    worker="range(0,${N_PARALLEL_WORKERS})" \
-    input_dir="$MEDS_DIR" \
-    cohort_dir="$MODEL_DIR" \
-    stage="filter_subjects" \
-    hydra.searchpath="[pkg://MEDS_transforms.configs]"
-
-echo "Filtering measurements..."
-MEDS_transform-filter_measurements --multirun \
-    --config-path="$CONFIG_DIR" \
-    --config-name="$CONFIG_NAME" \
-    worker="range(0,${N_PARALLEL_WORKERS})" \
-    input_dir="$MEDS_DIR" \
-    cohort_dir="$MODEL_DIR" \
-    stage="filter_measurements" \
-    hydra.searchpath="[pkg://MEDS_transforms.configs]"
-
-# We rerun aggregate_code_metadata to remove the filtered out codes, it seems the filter_measurements stage does not do that in meds v0.0.6
-rm -rf "${MODEL_DIR}/aggregate_code_metadata"
-rm -f "${MODEL_DIR}/metadata/codes.parquet"
-echo "Converting to code metadata..."
-MEDS_transform-aggregate_code_metadata \
-    --config-path="$CONFIG_DIR" \
-    --config-name="$CONFIG_NAME" \
-    input_dir="$MODEL_DIR" \
-    cohort_dir="$MODEL_DIR" \
-    stage="aggregate_code_metadata" \
-    hydra.searchpath="[pkg://MEDS_transforms.configs]" \
-    ++stage_configs.aggregate_code_metadata.data_input_dir="${MODEL_DIR}/filter_measurements/" \
-    ++stage_configs.aggregate_code_metadata.metadata_input_dir="${MODEL_DIR}/metadata/" \
-    polling_time=5
-
-mkdir -p "${MODEL_DIR}/metadata/"
-cp "${MODEL_DIR}/aggregate_code_metadata/codes.parquet" "${MODEL_DIR}/metadata/codes.parquet"
-
-echo "Fitting vocabulary indices..."
-MEDS_transform-fit_vocabulary_indices --multirun \
-    --config-path="$CONFIG_DIR" \
-    --config-name="$CONFIG_NAME" \
-    worker="range(0,${N_PARALLEL_WORKERS})" \
-    input_dir="$MEDS_DIR" \
-    cohort_dir="$MODEL_DIR" \
-    stage="fit_vocabulary_indices" \
-    hydra.searchpath="[pkg://MEDS_transforms.configs]"
-
-echo "Normalizing data (converting codes to use integer encodings)..."
-python -m meds_torch.utils.custom_normalization \
-    --config-path="$CONFIG_DIR" \
-    --config-name="$CONFIG_NAME" \
-    input_dir="$MEDS_DIR" \
-    cohort_dir="$MODEL_DIR" \
-    stage="custom_normalization" \
-    hydra.searchpath="[pkg://MEDS_transforms.configs]"
-
-echo "Converting to tokenization..."
-MEDS_transform-tokenization --multirun \
-    --config-path="$CONFIG_DIR" \
-    --config-name="$CONFIG_NAME" \
-    worker="range(0,${N_PARALLEL_WORKERS})" \
-    input_dir="$MEDS_DIR" \
-    cohort_dir="$MODEL_DIR" \
-    stage="tokenization" \
-    hydra.searchpath="[pkg://MEDS_transforms.configs]"
-
-echo "Converting to tensor..."
-MEDS_transform-tensorization --multirun \
-    --config-path="$CONFIG_DIR" \
-    --config-name="$CONFIG_NAME" \
-    worker="range(0,${N_PARALLEL_WORKERS})" \
-    input_dir="$MEDS_DIR" \
-    cohort_dir="$MODEL_DIR" \
-    stage="tensorization" \
-    hydra.searchpath="[pkg://MEDS_transforms.configs]"
+echo "Running extraction pipeline."
+MEDS_transform-runner "pipeline_config_fp=$PIPELINE_CONFIG_PATH" "$@"
