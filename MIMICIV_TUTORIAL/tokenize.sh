@@ -31,10 +31,12 @@ if [ "$#" -lt 4 ]; then
     display_help
 fi
 
-MEDS_DIR="$1"
-MODEL_DIR="$2"
-N_PARALLEL_WORKERS="$3"
-PIPELINE_CONFIG_PATH="$4"
+export MEDS_DIR="$1"
+export MODEL_DIR="$2"
+export N_WORKERS="$3"
+export PIPELINE_CONFIG_PATH="$4"
+
+shift 4
 
 echo "Running extraction pipeline."
 MEDS_transform-runner "pipeline_config_fp=$PIPELINE_CONFIG_PATH" "$@"
