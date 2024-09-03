@@ -405,6 +405,8 @@ def add_time_derived_measurements_fntr(stage_cfg: DictConfig) -> Callable[[pl.La
                 compute_fns.append(add_new_events_fntr(time_delta_fntr(feature_cfg)))
             case str() if feature_name in INFERRED_STAGE_KEYS:
                 continue
+            case "_script":
+                continue
             case _:
                 raise ValueError(f"Unknown time-derived measurement: {feature_name}")
 
