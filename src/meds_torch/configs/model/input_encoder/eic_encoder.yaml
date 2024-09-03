@@ -1,0 +1,2 @@
+_target_: meds_torch.input_encoder.eic_encoder.EicEncoder.initialize
+collate_style: eic
