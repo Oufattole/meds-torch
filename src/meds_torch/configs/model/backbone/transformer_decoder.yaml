@@ -1,7 +1,0 @@
-defaults:
-  - default
-  - _self_
-
-_target_: meds_torch.models.components.transformer_decoder.TransformerDecoderModel.initialize
-
-token_emb: null

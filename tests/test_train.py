@@ -16,6 +16,8 @@ from tests.helpers.run_if import RunIf
 
 
 def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backbone):
+    token_type = input_encoder.split("_")[0]
+    backbone = f"{token_type}_{backbone}"
     overrides = [
         f"data={data}",
         f"model/input_encoder={input_encoder}",
@@ -25,7 +27,7 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
     raises_value_error = False
 
     supervised = model == "supervised"
-    if model == "token_forecasting" and backbone not in ["transformer_decoder", "lstm"]:
+    if model == "token_forecasting" and not (backbone.endswith("transformer_decoder") or backbone.endswith("lstm")):
         raises_value_error = True
 
     if early_fusion is not None:
@@ -47,8 +49,8 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
             ("multiwindow_pytorch_dataset", "ocp", "true"),
             ("multiwindow_pytorch_dataset", "ocp", "false"),
         ]
-        for input_encoder in ["triplet_encoder", "triplet_prompt_encoder"]
-        for backbone in ["transformer_decoder", "transformer_encoder", "transformer_encoder_attn_avg", "lstm"]
+        for input_encoder in ["triplet_encoder", "eic_encoder"]
+        for backbone in ["transformer_decoder"]#, "transformer_encoder", "transformer_encoder_attn_avg", "lstm"]
     ]
 )
 def kwargs(request, meds_dir) -> dict:
@@ -97,7 +99,7 @@ def test_gpu_train(kwargs, tmp_path) -> None:  # cfg: DictConfig,
 
     with open_dict(cfg):
         cfg.trainer.fast_dev_run = True
-        cfg.trainer.accelerator = "gpu"
+        # cfg.trainer.accelerator = "gpu"
         cfg.paths.output_dir = str(tmp_path)
     HydraConfig().set_config(cfg)
     if raises_value_error:

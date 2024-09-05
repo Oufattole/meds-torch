@@ -38,3 +38,8 @@ dataloader:
   batch_size: 128 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
   num_workers: 0
   pin_memory: False
+
+vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.VOCAB_SPECIAL_TOKEN_ID_OFFSET}}
+EOS_TOKEN_ID: 1
+VOCAB_SPECIAL_TOKEN_ID_OFFSET: 1
+postpend_eos_token: ${model.backbone.postpend_eos_token}

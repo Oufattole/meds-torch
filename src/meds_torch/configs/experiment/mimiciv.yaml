@@ -8,7 +8,7 @@ defaults:
   - override /paths/data_dir: /path/to/mimiciv/meds/data/MEDS_cohort
   - override /paths/meds_dir: /path/to/mimiciv/meds/data/
   - override /logger: wandb
-  - override /model/backbone: mamba
+  - override /model/backbone: triplet_transformer_encoder
   - override /model/input_encoder: triplet_encoder
   - override /model: token_forecasting
   - override /callbacks: default
@@ -17,7 +17,7 @@ defaults:
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters
 
-tags: ["mimiciv", "mamba-triplet_encoder-forecasting"]
+tags: ["mimiciv", "transformer_encoder-triplet_encoder-forecasting"]
 
 seed: 12345
 
@@ -34,4 +34,4 @@ logger:
     tags: ${tags}
     group: "mimiciv"
   aim:
-    experiment: "mimiciv-mamba-triplet_encoder-forecasting"
+    experiment: "mimiciv-transformer_encoder-triplet_encoder-forecasting"

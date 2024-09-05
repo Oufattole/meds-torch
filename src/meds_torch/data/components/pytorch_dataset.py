@@ -679,7 +679,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             tensors["dim1/code"] = np.concatenate(tensors["dim1/code"][st:end], axis=0)
             seq_len = tensors["dim1/code"].shape[0]
             if self.config.collate_type != CollateType.eic:
-                # TODO: pad times
                 tensors["dim0/time_delta_days"] = subpad_vectors(
                     tensors["dim0/time_delta_days"][st:end], tensors["dim1/bounds"][st:end]
                 )
@@ -727,6 +726,33 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         if end == st:
             raise ValueError(f"Sequence length {end - st} is 0!")
+
+        if self.config.postpend_eos_token:
+            if self.config.collate_type == CollateType.event_stream:
+                # Append EOS token to the end of the sequence
+                eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["dim1/code"].dtype)
+                out["dynamic"]["dim1/code"] = np.append(out["dynamic"]["dim1/code"], eos_token)
+
+                # Extend other relevant arrays
+                numeric_dtype = out["dynamic"]["dim1/numeric_value"].dtype
+                time_dtype = out["dynamic"]["dim0/time_delta_days"].dtype
+                out["dynamic"]["dim1/numeric_value"] = np.append(out["dynamic"]["dim1/numeric_value"], np.array([0], dtype=numeric_dtype))
+                out["dynamic"]["dim0/time_delta_days"] = np.append(out["dynamic"]["dim0/time_delta_days"], np.array([0], dtype=time_dtype))
+
+            else:
+                # For other collate types
+                eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["dim1/code"].dtype)
+                out["dynamic"]["dim1/code"] = np.append(out["dynamic"]["dim1/code"], eos_token)
+
+                if self.config.collate_type != CollateType.eic:
+                    numeric_dtype = out["dynamic"]["dim1/numeric_value"].dtype
+                    time_dtype = out["dynamic"]["dim0/time_delta_days"].dtype
+                    out["dynamic"]["dim1/numeric_value"] = np.append(out["dynamic"]["dim1/numeric_value"], np.array([0], dtype=numeric_dtype))
+                    out["dynamic"]["dim0/time_delta_days"] = np.append(out["dynamic"]["dim0/time_delta_days"], np.array([0], dtype=time_dtype))
+
+        # Update end_idx if it's included
+        if self.config.do_include_subsequence_indices:
+            out["end_idx"] = end
 
         return out
 

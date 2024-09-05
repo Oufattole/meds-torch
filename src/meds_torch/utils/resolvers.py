@@ -7,11 +7,9 @@ import polars as pl
 from omegaconf import OmegaConf
 
 
-def get_vocab_size(code_metadata_fp, num_value_code_quantiles):
-    if not num_value_code_quantiles:
-        num_value_code_quantiles = 1
-    num_codes = pl.scan_parquet(code_metadata_fp).select("code/vocab_index").max().collect().item() + 1
-    vocab_size = num_codes * num_value_code_quantiles
+def get_vocab_size(code_metadata_fp, num_special_tokens):
+    vocab_size = pl.scan_parquet(code_metadata_fp).select("code/vocab_index").max().collect().item() + 1
+    vocab_size += num_special_tokens
     return vocab_size
 
 
