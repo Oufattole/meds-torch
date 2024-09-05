@@ -1107,7 +1107,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return tensorized_batch
 
     @classmethod
-    def process_text_code(cls, item: dict, tokenized_codes: dict) -> dict:
+    def process_text_code(cls, item: dict, tokenized_codes: dict, do_prepend_static_data=True) -> dict:
         """Processes a single triplet of dynamic and static data.
 
         This function takes a dictionary containing dynamic and static data,
@@ -1172,33 +1172,32 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             numerical_value_mask [ True  True  True False False]
         """
         dynamic_data = item["dynamic"]
-        raw_codes = dynamic_data["dim1/code"]
-        raw_values = dynamic_data["dim1/numeric_value"]
-        raw_times = dynamic_data["dim0/time_delta_days"]
+        code = dynamic_data["dim1/code"]
+        numerical_value = dynamic_data["dim1/numeric_value"]
+        time_delta_days = dynamic_data["dim0/time_delta_days"]
 
-        static_values = np.asarray(item["static_values"], dtype=raw_values[0].dtype)
-        static_indices = np.asarray(item["static_indices"], dtype=raw_codes[0].dtype)
-        code = np.concatenate([static_indices, raw_codes], dtype=np.int32, casting="unsafe")
+        static_mask = np.zeros(len(code), dtype=bool)
+        if do_prepend_static_data:
+            static_values = np.asarray(item["static_values"], dtype=np.float32)
+            static_indices = np.asarray(item["static_indices"], dtype=np.int32)
+            code = np.concatenate([static_indices, code], dtype=np.int32, casting="unsafe")
+            numerical_value = np.concatenate([static_values, numerical_value])
+            static_mask = np.zeros(len(code), dtype=bool)
+            static_mask[: len(static_values)] = True
+
+        numerical_value_mask = ~np.isnan(numerical_value)
+        # Replace NaNs with 0s
+        np.nan_to_num(numerical_value, nan=0, copy=False)
+        np.nan_to_num(time_delta_days, nan=0, copy=False)
+
+        mask = np.ones(len(time_delta_days), dtype=bool)
+
         tokens = [tokenized_codes[c] for c in code]
         code_tokens, code_mask = zip(*tokens)
         code_tokens = np.array(code_tokens)
         code_mask = np.array(code_mask)
-        numerical_value = np.concatenate([static_values, raw_values])
-        numerical_value_mask = ~np.isnan(numerical_value)
-        # Replace NaNs with 0s
-        np.nan_to_num(numerical_value, nan=0, copy=False)
-        np.nan_to_num(raw_times, nan=0, copy=False)
 
-        static_mask = np.zeros(len(code), dtype=bool)
-        static_mask[: len(static_values)] = True
-
-        lengths = np.concatenate([[len(static_values)], dynamic_data["dim1/lengths"]])
-        time_delta_days = np.repeat(
-            np.concatenate([np.array([0], dtype=raw_times.dtype), raw_times]), lengths
-        )
-        mask = np.ones(len(time_delta_days), dtype=bool)
-
-        return dict(
+        output = dict(
             mask=mask,
             static_mask=static_mask,
             code_tokens=code_tokens,
@@ -1207,6 +1206,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             time_delta_days=time_delta_days,
             numerical_value_mask=numerical_value_mask,
         )
+        return output
 
     @classmethod
     def process_text_observation(
@@ -1366,7 +1366,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         )
 
     @classmethod
-    def collate_text_code(cls, tokenized_codes: dict, batch: list[dict]) -> dict:
+    def collate_text_code(cls, tokenized_codes: dict, batch: list[dict], prepend_static_data) -> dict:
         """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
 
         This function handles conversion of arrays to tensors and padding of elements within the batch across
@@ -1511,7 +1511,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         elif collate_type == CollateType.triplet_prompt:
             return self.collate_triplet_prompt(batch)
         elif collate_type == CollateType.eic:
-            return self.collate_triplet(batch)
+            return self.collate_triplet(batch, self.config.do_prepend_static_data)
         elif collate_type == CollateType.triplet:
             return self.collate_triplet(batch, self.config.do_prepend_static_data)
         elif collate_type == CollateType.text_code:
@@ -1519,7 +1519,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             if not hasattr(self, "tokenized_codes"):
                 tokenizer = AutoTokenizer.from_pretrained(self.config.tokenizer)
                 self.tokenized_codes = self.tokenize_metadata(tokenizer, self.code_metadata)
-            return self.collate_text_code(self.tokenized_codes, batch)
+            return self.collate_text_code(self.tokenized_codes, batch, self.config.do_prepend_static_data)
         elif collate_type == CollateType.text_observation:
             if not hasattr(self, "tokenized_codes"):
                 self.tokenizer = AutoTokenizer.from_pretrained(self.config.tokenizer)

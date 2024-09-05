@@ -24,7 +24,8 @@ from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
         "event_stream",
         "triplet_prompt",
         "eic",
-    ],  # TODO: add "text_code", "text_observation", "all_text"
+        "text_code",
+    ],  # TODO: add "text_observation", "all_text"
 )
 def test_pytorch_dataset(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir)
@@ -98,7 +99,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
         raise NotImplementedError(f"{collate_type} not implemented")
 
 
-@pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt"])
+@pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt", "text_code", "eic"])
 def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir, supervised=True)
     cfg.data.collate_type = collate_type
@@ -125,6 +126,27 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             "mask",
             "static_mask",
             "code",
+            "numeric_value",
+            "time_delta_days",
+            "numerical_value_mask",
+            SUPERVISED_TASK_NAME,
+        }
+    elif collate_type == "eic":
+        assert batch.keys() == {
+            "mask",
+            "static_mask",
+            "code",
+            "numeric_value",
+            "time_delta_days",
+            "numerical_value_mask",
+            SUPERVISED_TASK_NAME,
+        }
+    elif collate_type == "text_code":
+        assert set(batch.keys()) == {
+            "mask",
+            "static_mask",
+            "code_tokens",
+            "code_mask",
             "numeric_value",
             "time_delta_days",
             "numerical_value_mask",
