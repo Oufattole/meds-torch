@@ -23,11 +23,11 @@ from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
 
 
-NUMERICAL_VALUE_LOGITS = "MODEL//NUMERICAL_VALUE_LOGITS"
+NUMERIC_VALUE_LOGITS = "MODEL//NUMERIC_VALUE_LOGITS"
 CODE_LOGITS = "MODEL//CODE_LOGITS"
 TIME_LOGITS = "MODEL//TIME_LOGITS"
 
-NUMERICAL_VALUE_LOSS = "MODEL//NUMERICAL_VALUE_LOSS"
+NUMERIC_VALUE_LOSS = "MODEL//NUMERIC_VALUE_LOSS"
 CODE_LOSS = "MODEL//CODE_LOSS"
 TIME_LOSS = "MODEL//TIME_LOSS"
 
@@ -96,7 +96,7 @@ class TokenForecastingModule(BaseModule):
 
     def setup_heads(self):
         if isinstance(self.input_encoder, TripletEncoder):
-            self.numerical_value_head = nn.Linear(
+            self.numeric_value_head = nn.Linear(
                 self.cfg.token_dim,
                 self.cfg.vocab_size,
                 bias=False,
@@ -116,11 +116,11 @@ class TokenForecastingModule(BaseModule):
         else:
             raise NotImplementedError(f"Unsupported input encoder type: {type(self.input_encoder)}")
 
-    def process_numerical_values(self, numerical_value_logits, code_target):
+    def process_numeric_values(self, numeric_value_logits, code_target):
         if isinstance(self.input_encoder, TripletEncoder):
-            return select_values_from_logits(numerical_value_logits, code_target)
+            return select_values_from_logits(numeric_value_logits, code_target)
         elif isinstance(self.input_encoder, TripletPromptEncoder):
-            return numerical_value_logits.squeeze(dim=-1)
+            return numeric_value_logits.squeeze(dim=-1)
         else:
             raise NotImplementedError(f"Unsupported input encoder type: {type(self.input_encoder)}")
 
@@ -138,15 +138,15 @@ class TokenForecastingModule(BaseModule):
         batch,
     ):
         code_logits = batch[CODE_LOGITS]
-        numerical_value_logits = batch[NUMERICAL_VALUE_LOGITS]
+        numeric_value_logits = batch[NUMERIC_VALUE_LOGITS]
         time_logits = batch[TIME_LOGITS]
         # Code Mask
         dynamic_mask = ~batch["static_mask"]
         code_target = batch["code"]
         # Load data
-        numerical_value_target = batch["numeric_value"]
+        numeric_value_target = batch["numeric_value"]
         time_delta_days_target = batch["time_delta_days"]
-        numerical_value_mask = batch["numerical_value_mask"]
+        numeric_value_mask = batch["numeric_value_mask"]
         # Code Loss
         code_loss = F.cross_entropy(
             code_logits.view(-1, code_logits.size(-1)),
@@ -155,22 +155,22 @@ class TokenForecastingModule(BaseModule):
         )
         if isinstance(self.input_encoder, (TripletEncoder, TripletPromptEncoder)):
             # Numerical Value Loss
-            numerical_value_preds = self.process_numerical_values(numerical_value_logits, code_target)
-            numerical_value_loss = F.mse_loss(numerical_value_preds, numerical_value_target, reduction="none")
-            numerical_value_loss = (
-                numerical_value_loss * numerical_value_mask
-            ).sum() / numerical_value_mask.sum()
+            numeric_value_preds = self.process_numeric_values(numeric_value_logits, code_target)
+            numeric_value_loss = F.mse_loss(numeric_value_preds, numeric_value_target, reduction="none")
+            numeric_value_loss = (
+                numeric_value_loss * numeric_value_mask
+            ).sum() / numeric_value_mask.sum()
             # Time Loss
             time_loss = self.get_time_loss(time_logits, time_delta_days_target, dynamic_mask)
 
-            total_loss = code_loss + numerical_value_loss + time_loss
+            total_loss = code_loss + numeric_value_loss + time_loss
         else:
             total_loss = code_loss
-            numerical_value_loss = 0
+            numeric_value_loss = 0
             time_loss = 0
 
         batch[MODEL_LOSS_KEY] = total_loss
-        batch[NUMERICAL_VALUE_LOSS] = numerical_value_loss
+        batch[NUMERIC_VALUE_LOSS] = numeric_value_loss
         batch[CODE_LOSS] = code_loss
         batch[TIME_LOSS] = time_loss
         return batch
@@ -181,11 +181,11 @@ class TokenForecastingModule(BaseModule):
         else:
             all_token_embeddings = model_output[BACKBONE_TOKENS_KEY]
         if isinstance(self.input_encoder, (TripletEncoder, TripletPromptEncoder)):
-            numerical_value_logits = self.numerical_value_head(all_token_embeddings)
+            numeric_value_logits = self.numeric_value_head(all_token_embeddings)
             code_logits = self.code_head(all_token_embeddings)
         else:
             code_logits = all_token_embeddings
-            numerical_value_logits = None
+            numeric_value_logits = None
         if not code_logits.shape[-1] == self.cfg.vocab_size:
             raise ValueError(
                 f"Code logits shape {code_logits.shape} does not match vocab size {self.cfg.vocab_size}"
@@ -195,7 +195,7 @@ class TokenForecastingModule(BaseModule):
         else:
             time_logits = None
         return {
-            NUMERICAL_VALUE_LOGITS: numerical_value_logits,
+            NUMERIC_VALUE_LOGITS: numeric_value_logits,
             CODE_LOGITS: code_logits,
             TIME_LOGITS: time_logits,
         }
@@ -205,7 +205,7 @@ class TokenForecastingModule(BaseModule):
         model_output = self.model(batch)
 
         forecast = self.get_forecast_logits(model_output)
-        batch[NUMERICAL_VALUE_LOGITS] = forecast[NUMERICAL_VALUE_LOGITS]
+        batch[NUMERIC_VALUE_LOGITS] = forecast[NUMERIC_VALUE_LOGITS]
         batch[CODE_LOGITS] = forecast[CODE_LOGITS]
         batch[TIME_LOGITS] = forecast[TIME_LOGITS]
 
@@ -214,7 +214,7 @@ class TokenForecastingModule(BaseModule):
 
     def _log(self, batch, split):
         self.log(split + "/code_loss", batch[CODE_LOSS])
-        self.log(split + "/numerical_value_loss", batch[NUMERICAL_VALUE_LOSS])
+        self.log(split + "/numeric_value_loss", batch[NUMERIC_VALUE_LOSS])
         self.log(split + "/time_loss", batch[TIME_LOSS])
         self.log(split + "/loss", batch[MODEL_LOSS_KEY])
 

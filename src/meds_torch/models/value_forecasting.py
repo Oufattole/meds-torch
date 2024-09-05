@@ -31,7 +31,7 @@ class ValueForecastingModule(BaseModule):
         forecast_window_data = batch[self.cfg.forecast_window_name]
         batch = self.model(self.input_encoder(batch[self.cfg.input_window_name]))
 
-        numerical_values = forecast_window_data["numeric_value"]
+        numeric_values = forecast_window_data["numeric_value"]
         codes = forecast_window_data["code"]
         vocab_size = self.cfg.vocab_size
 
@@ -45,22 +45,22 @@ class ValueForecastingModule(BaseModule):
             presence_target[row_indices, col_indices] = 1
 
             # create value target
-            numerical_value_mask = forecast_window_data["numerical_value_mask"]
-            numerical_value_codes = codes * numerical_value_mask
+            numeric_value_mask = forecast_window_data["numeric_value_mask"]
+            numeric_value_codes = codes * numeric_value_mask
             value_target = torch.zeros(
-                (numerical_value_codes.shape[0], vocab_size), dtype=torch.float32, device=codes.device
+                (numeric_value_codes.shape[0], vocab_size), dtype=torch.float32, device=codes.device
             )
             row_indices = (
-                torch.arange(numerical_value_codes.shape[0])
+                torch.arange(numeric_value_codes.shape[0])
                 .unsqueeze(-1)
-                .expand_as(numerical_value_codes)
+                .expand_as(numeric_value_codes)
                 .reshape(-1)
             )
             col_indices = codes.reshape(-1)
-            numerical_value_indices = (
-                torch.arange(numerical_value_codes.shape[1]).expand_as(numerical_value_codes).reshape(-1)
+            numeric_value_indices = (
+                torch.arange(numeric_value_codes.shape[1]).expand_as(numeric_value_codes).reshape(-1)
             )
-            value_target[row_indices, col_indices] = numerical_values[row_indices, numerical_value_indices]
+            value_target[row_indices, col_indices] = numeric_values[row_indices, numeric_value_indices]
 
         value_forecast = self.value_projection(batch[BACKBONE_EMBEDDINGS_KEY])
         presence_forecast = self.presence_projection(batch[BACKBONE_EMBEDDINGS_KEY])

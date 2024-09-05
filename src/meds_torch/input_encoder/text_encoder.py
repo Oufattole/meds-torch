@@ -69,7 +69,7 @@ class TextCodeEncoder(nn.Module, Module):
         cfg (DictConfig): Configuration object containing model parameters.
         date_embedder (CVE): Encoder for date information.
         code_embedder (AutoEmbedder): Encoder for medical codes.
-        numerical_value_embedder (CVE): Encoder for numerical values.
+        numeric_value_embedder (CVE): Encoder for numerical values.
     """
 
     def __init__(self, cfg: DictConfig):
@@ -77,7 +77,8 @@ class TextCodeEncoder(nn.Module, Module):
         self.cfg = cfg
         self.date_embedder = CVE(cfg)
         self.code_embedder = AutoEmbedder(cfg)
-        self.numerical_value_embedder = CVE(cfg)
+        self.code_head = nn.Linear(cfg.pretrained_model_token_dim, cfg.token_dim)
+        self.numeric_value_embedder = CVE(cfg)
 
     def embed_func(self, embedder, x):
         out = embedder.forward(x[None, :].transpose(2, 0)).permute(1, 2, 0)
@@ -95,15 +96,16 @@ class TextCodeEncoder(nn.Module, Module):
         static_mask = batch["static_mask"]
         code_tokens = batch["code_tokens"]
         code_mask = batch["code_mask"]
-        numerical_value = batch["numeric_value"]
+        numeric_value = batch["numeric_value"]
         time_delta_days = batch["time_delta_days"]
         numeric_value_mask = batch["numeric_value_mask"]
 
         # Embed times and mask static value times
         time_emb = self.embed_func(self.date_embedder, time_delta_days) * ~static_mask.unsqueeze(dim=1)
-        code_emb = self.code_embedder.forward(code_tokens, code_mask).permute(0, 2, 1)
+
+        code_emb = self.code_head(self.code_embedder.forward(code_tokens, code_mask)).permute(0, 2, 1)
         val_emb = self.embed_func(
-            self.numerical_value_embedder, numerical_value
+            self.numeric_value_embedder, numeric_value
         ) * numeric_value_mask.unsqueeze(dim=1)
 
         # Sum the (time, code, value) triplets and
@@ -112,7 +114,7 @@ class TextCodeEncoder(nn.Module, Module):
         assert embedding.isfinite().all(), "Embedding is not finite"
         return embedding
 
-    def embed(self, batch):
+    def forward(self, batch):
         """Embed the input batch and update it with the generated embeddings.
 
         Args:
@@ -152,7 +154,7 @@ class TextObservationEncoder(nn.Module, Module):
         assert embedding.isfinite().all(), "Embedding is not finite"
         return embedding
 
-    def embed(self, batch):
+    def forward(self, batch):
         """Embed the input batch of observations and update it with the generated embeddings.
 
         Args:

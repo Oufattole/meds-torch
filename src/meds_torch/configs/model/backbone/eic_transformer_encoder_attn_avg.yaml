@@ -22,5 +22,4 @@ model:
     rotary_pos_emb: true
   average_pool_embed: true
 
-token_emb:
-  _target_: torch.nn.Identity # assume data is pre-embedded by the input_encoder
+token_emb: null # use x-transformers to embed tokens

@@ -2,7 +2,8 @@ _target_: meds_torch.input_encoder.text_encoder.TextCodeEncoder.initialize
 collate_style: text_code
 tokenizer: "bert-base-uncased"
 max_seq_len: ${data.max_seq_len}
-token_dim: ${data.token_dim}
+token_dim: ${model.token_dim}
 vocab_size: ${data.vocab_size}
 
 pretrained_model: "bert-base-uncased"
+pretrained_model_token_dim: 768

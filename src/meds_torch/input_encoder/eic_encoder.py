@@ -11,8 +11,14 @@ class EicEncoder(nn.Module, Module):
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
+        if self.cfg.model_type == "eic_lstm":
+            self.code_embedder = nn.Embedding(cfg.vocab_size, cfg.token_dim)
 
     def forward(self, batch):
         batch[INPUT_ENCODER_MASK_KEY] = batch["mask"]
-        batch[INPUT_ENCODER_TOKENS_KEY] = batch["code"]
+        if self.cfg.model_type == "eic_lstm":
+            embedded_codes = self.code_embedder(batch["code"])
+            batch[INPUT_ENCODER_TOKENS_KEY] = embedded_codes
+        else:
+            batch[INPUT_ENCODER_TOKENS_KEY] = batch["code"]
         return batch

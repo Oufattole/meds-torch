@@ -13,9 +13,18 @@ def get_vocab_size(code_metadata_fp, num_special_tokens):
     return vocab_size
 
 
+def get_eos_token_id(vocab_size, eos_offset):
+    return vocab_size - eos_offset
+
+
 def setup_resolvers():
     OmegaConf.register_new_resolver(
         "get_vocab_size",
         get_vocab_size,
+        replace=True,
+    )
+    OmegaConf.register_new_resolver(
+        "get_eos_token_id",
+        get_eos_token_id,
         replace=True,
     )

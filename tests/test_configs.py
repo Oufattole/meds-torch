@@ -23,18 +23,29 @@ from tests.conftest import create_cfg
 
 def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backbone):
     token_type = input_encoder.split("_")[0]
-    if backbone.startswith("transformer"):
-        if token_type == "text":
-            backbone_token_type = "triplet"
-        else:
-            backbone_token_type = token_type
-        backbone = f"{backbone_token_type}_{backbone}"
+    if token_type == "text":
+        backbone_token_type = "triplet"
+    else:
+        backbone_token_type = token_type
+
+    if token_type == "text":
+        collate_type_override = "data.collate_type=text_code"
+    elif token_type == "triplet":
+        collate_type_override = "data.collate_type=triplet"
+    elif token_type == "eic":
+        collate_type_override = "data.collate_type=eic"
+    else:
+        raise NotImplementedError(f"Unsupported token type {token_type}!")
+
+    backbone = f"{backbone_token_type}_{backbone}"
     overrides = [
         f"data={data}",
         f"model/input_encoder={input_encoder}",
         f"model/backbone={backbone}",
         f"model={model}",
+        collate_type_override,
     ]
+
     raises_value_error = False
 
     supervised = model == "supervised"

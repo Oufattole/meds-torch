@@ -11,61 +11,8 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import open_dict
 
 from meds_torch.train import train
-from tests.conftest import create_cfg
 from tests.helpers.run_if import RunIf
-
-
-def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backbone):
-    token_type = input_encoder.split("_")[0]
-    backbone = f"{token_type}_{backbone}"
-    overrides = [
-        f"data={data}",
-        f"model/input_encoder={input_encoder}",
-        f"model/backbone={backbone}",
-        f"model={model}",
-    ]
-    raises_value_error = False
-
-    supervised = model == "supervised"
-    if model == "token_forecasting" and not (backbone.endswith("transformer_decoder") or backbone.endswith("lstm")):
-        raises_value_error = True
-
-    if early_fusion is not None:
-        overrides.append(f"model.early_fusion={early_fusion}")
-    return overrides, raises_value_error, supervised
-
-
-@pytest.fixture(
-    params=[
-        pytest.param(
-            (data, model, early_fusion, input_encoder, backbone),
-            id=f"{data}-{model}-earlyfusion{early_fusion}-{input_encoder}-{backbone}",
-        )
-        for data, model, early_fusion in [
-            ("pytorch_dataset", "supervised", None),
-            ("pytorch_dataset", "token_forecasting", None),
-            ("multiwindow_pytorch_dataset", "ebcl", None),
-            ("multiwindow_pytorch_dataset", "value_forecasting", None),
-            ("multiwindow_pytorch_dataset", "ocp", "true"),
-            ("multiwindow_pytorch_dataset", "ocp", "false"),
-        ]
-        for input_encoder in ["triplet_encoder", "eic_encoder"]
-        for backbone in ["transformer_decoder"]#, "transformer_encoder", "transformer_encoder_attn_avg", "lstm"]
-    ]
-)
-def kwargs(request, meds_dir) -> dict:
-    data, model, early_fusion, input_encoder, backbone = request.param
-    overrides, raises_value_error, supervised = get_overrides_and_exceptions(
-        data, model, early_fusion, input_encoder, backbone
-    )
-    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir, supervised=supervised)
-    return dict(
-        cfg=cfg,
-        raises_value_error=raises_value_error,
-        input_kwargs=dict(
-            data=data, model=model, early_fusion=early_fusion, input_encoder=input_encoder, backbone=backbone
-        ),
-    )
+from tests.test_configs import kwargs
 
 
 def test_fast_dev_train(kwargs: dict, tmp_path):
@@ -81,6 +28,7 @@ def test_fast_dev_train(kwargs: dict, tmp_path):
         cfg.trainer.accelerator = "cpu"
         cfg.paths.output_dir = str(tmp_path)
     HydraConfig().set_config(cfg)
+
     if raises_value_error:
         with pytest.raises(hydra.errors.InstantiationException):
             train(cfg)

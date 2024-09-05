@@ -63,7 +63,6 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml", supervised=F
             cfg.extras.print_config = False
             cfg.extras.enforce_tags = False
             cfg.logger = None
-            cfg.data.collate_type = "triplet"
             cfg.data.dataloader.batch_size = 2
 
             # Additional settings for specific fixtures

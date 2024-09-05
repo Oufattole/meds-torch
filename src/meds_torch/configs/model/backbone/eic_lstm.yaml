@@ -1,0 +1,6 @@
+defaults:
+  - default
+  - _self_
+_target_: meds_torch.models.components.lstm.LstmModel.initialize
+token_emb: "eic"
+model_type: "eic_lstm"

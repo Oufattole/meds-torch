@@ -53,7 +53,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "code",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
         }
     elif collate_type == "text_code":
         assert set(batch.keys()) == {
@@ -63,7 +63,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "code_mask",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
         }
     elif collate_type == "text_observation":
         assert set(batch.keys()) == {
@@ -84,7 +84,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "code",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
         }
     elif collate_type == "eic":
         assert batch.keys() == {
@@ -93,7 +93,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "code",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
         }
     else:
         raise NotImplementedError(f"{collate_type} not implemented")
@@ -128,7 +128,7 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             "code",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
             SUPERVISED_TASK_NAME,
         }
     elif collate_type == "eic":
@@ -138,7 +138,7 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             "code",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
             SUPERVISED_TASK_NAME,
         }
     elif collate_type == "text_code":
@@ -149,7 +149,7 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             "code_mask",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
             SUPERVISED_TASK_NAME,
         }
     else:
@@ -181,7 +181,7 @@ def test_contrastive_windows(meds_dir, subject_level_sampling, collate_type):
             "code",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
         }
 
 

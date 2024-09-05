@@ -20,6 +20,7 @@ class LstmModel(torch.nn.Module, Module):
     def __init__(self, cfg: DictConfig):
         super().__init__()
         dropout = cfg.dropout
+        self.cfg = cfg
         self.model = nn.LSTM(
             cfg.token_dim,
             cfg.token_dim,
@@ -31,8 +32,10 @@ class LstmModel(torch.nn.Module, Module):
     def forward(self, batch):
         input_data, mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
         # pass tokens and attention mask to the lstm
-        output = self.model(input_data.transpose(1, 2))[0]
+        if self.cfg.token_emb == "triplet":
+            input_data = input_data.transpose(1, 2)
+        output = self.model(input_data)[0]
         # extract the representation token's embedding
         batch[BACKBONE_TOKENS_KEY] = output
-        batch[BACKBONE_EMBEDDINGS_KEY] = get_last_token(output, mask)
+        batch[BACKBONE_EMBEDDINGS_KEY] = get_last_token(output, ~mask)
         return batch

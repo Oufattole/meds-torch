@@ -1,6 +1,6 @@
 defaults:
   - input_encoder: triplet_encoder
-  - backbone: lstm
+  - backbone: triplet_transformer_encoder
   - _self_
 _target_: meds_torch.models.ocp_model.OCPModule.initialize
 

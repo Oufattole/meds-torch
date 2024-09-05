@@ -56,7 +56,7 @@ class TripletEncoder(nn.Module, Module):
         # Define Triplet Embedders
         self.date_embedder = CVE(cfg)
         self.code_embedder = torch.nn.Embedding(cfg.vocab_size, embedding_dim=cfg.token_dim)
-        self.numerical_value_embedder = CVE(cfg)
+        self.numeric_value_embedder = CVE(cfg)
 
     def embed_func(self, embedder, x):
         out = embedder.forward(x[None, :].transpose(2, 0)).permute(1, 2, 0)
@@ -65,17 +65,17 @@ class TripletEncoder(nn.Module, Module):
     def get_embedding(self, batch):
         static_mask = batch["static_mask"]
         code = batch["code"]
-        numerical_value = batch["numeric_value"]
+        numeric_value = batch["numeric_value"]
         time_delta_days = batch["time_delta_days"]
-        numerical_value_mask = batch["numerical_value_mask"]
+        numeric_value_mask = batch["numeric_value_mask"]
         # Embed times and mask static value times
         time_emb = self.embed_func(self.date_embedder, time_delta_days) * ~static_mask.unsqueeze(dim=1)
         # Embed codes
         code_emb = self.code_embedder.forward(code).permute(0, 2, 1)
         # Embed numerical values and mask nan values
         val_emb = self.embed_func(
-            self.numerical_value_embedder, numerical_value
-        ) * numerical_value_mask.unsqueeze(dim=1)
+            self.numeric_value_embedder, numeric_value
+        ) * numeric_value_mask.unsqueeze(dim=1)
 
         # Sum the (time, code, value) triplets and
         embedding = time_emb + code_emb + val_emb
