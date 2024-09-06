@@ -353,7 +353,7 @@ def time_delta_fntr(cfg: DictConfig) -> Callable[[pl.DataFrame], pl.DataFrame]:
         ┌────────────┬─────────────────────┬───────────────┬────────────────────┐
         │ subject_id ┆ time                ┆ numeric_value ┆ code               │
         │ ---        ┆ ---                 ┆ ---           ┆ ---                │
-        │ u32        ┆ datetime[μs]        ┆ f64           ┆ str                │
+        │ u32        ┆ datetime[μs]        ┆ f32           ┆ str                │
         ╞════════════╪═════════════════════╪═══════════════╪════════════════════╡
         │ 1          ┆ 1990-01-01 00:00:00 ┆ null          ┆ TIME//START//TOKEN │
         │ 1          ┆ 2021-01-01 00:00:00 ┆ 11323.0       ┆ TIME//DELTA//TOKEN │

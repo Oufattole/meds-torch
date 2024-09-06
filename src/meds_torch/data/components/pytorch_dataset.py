@@ -75,7 +75,7 @@ def subpad_vectors(a, b):
     >>> a = np.array([2, 4, 5])
     >>> b = np.array([3, 5, 10])
     >>> subpad_vectors(a, b)
-    array([0, 0, 0, 2, 0, 4, 0, 0, 0, 5, 0])
+    array([2, 0, 0, 4, 0, 5, 0, 0, 0, 0])
     """
     total_length = b[-1]
     result = np.zeros(total_length, dtype=a.dtype)
@@ -922,11 +922,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> import tempfile, json, os
             >>> from omegaconf import DictConfig
             >>> item =  {
-            ...         'dynamic': JointNestedRaggedTensorDict({
-            ...                 'code': [np.array([5, 6]), np.array([1, 2])],
-            ...                 'numeric_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
-            ...                 'time_delta_days': np.array([np.nan, 12])
-            ...         }),
+            ...         'dynamic': {
+            ...                 'dim1/code': np.array([5, 6, 1, 2]),
+            ...                 'dim1/numeric_value': np.array([50.0, 60.0, np.nan, np.nan]),
+            ...                 'dim0/time_delta_days': np.array([0, 0, 12, 0])
+            ...         },
             ...         'static_values': [70.0],
             ...         'static_indices': [2]
             ...     }
@@ -941,9 +941,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> for key, value in triplet_item.items(): print(key, value);
             mask [ True  True  True  True  True]
             static_mask [ True False False False False]
-            code [2 5 6 1 2]
+            code tensor([2, 5, 6, 1, 2])
             numeric_value [70. 50. 60.  0.  0.]
-            time_delta_days [ 0.  0.  0. 12. 12.]
+            time_delta_days [ 0  0  0 12  0]
             numeric_value_mask [ True  True  True False False]
         """
         dynamic_data = item["dynamic"]
@@ -1006,19 +1006,19 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> import numpy as np
             >>> batch = [
             ...     {
-            ...         'dynamic': JointNestedRaggedTensorDict(
-            ...             {'code': [np.array([1])],
-            ...              'numeric_value': [np.array([10.0])],
-            ...              'time_delta_days': np.array([0])}),
+            ...         'dynamic': {
+            ...              'dim1/code': np.array([1]),
+            ...              'dim1/numeric_value': np.array([10.0]),
+            ...              'dim0/time_delta_days': np.array([0])},
             ...         'static_values': [20.0],
             ...         'static_indices': [0],
             ...         'label': 0,
             ...     },
             ...     {
-            ...         'dynamic': JointNestedRaggedTensorDict(
-            ...             {'code': [np.array([5, 6]), np.array([1, 2])],
-            ...              'numeric_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
-            ...              'time_delta_days': np.array([np.nan, 12])}),
+            ...         'dynamic':{
+            ...              'dim1/code': np.array([5, 6, 1, 2]),
+            ...              'dim1/numeric_value': np.array([50.0, 60.0, 0, 0]),
+            ...              'dim0/time_delta_days': np.array([0, 0, 12, 0])},
             ...         'static_values': [70.0],
             ...         'static_indices': [2],
             ...         'label': 1,
@@ -1028,18 +1028,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> from pprint import pprint
             >>> pprint(collated_batch)
             {'code': tensor([[0, 1, 0, 0, 0],
-                    [2, 5, 6, 1, 2]], dtype=torch.int32),
+                    [2, 5, 6, 1, 2]]),
              'label': tensor([0., 1.]),
              'mask': tensor([[ True,  True, False, False, False],
                     [ True,  True,  True,  True,  True]]),
              'numeric_value': tensor([[20., 10.,  0.,  0.,  0.],
-                    [70., 50., 60.,  0.,  0.]]),
+                    [70., 50., 60.,  0.,  0.]], dtype=torch.float64),
              'numeric_value_mask': tensor([[ True,  True, False, False, False],
-                    [ True,  True,  True, False, False]]),
+                    [ True,  True,  True,  True,  True]]),
              'static_mask': tensor([[ True, False, False, False, False],
                     [ True, False, False, False, False]]),
              'time_delta_days': tensor([[ 0,  0,  0,  0,  0],
-                    [ 0,  0,  0, 12, 12]], dtype=torch.uint8)}
+                    [ 0,  0,  0, 12,  0]])}
         """
         processed_batch = [cls.process_triplet(item, do_prepend_static_data) for item in batch]
         tensorized_batch = {
@@ -1056,77 +1056,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             if k not in ("dynamic", "static_values", "static_indices"):
                 tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
         # debug_fn(tensorized_batch)
-        return tensorized_batch
-
-    @classmethod
-    def collate_triplet_prompt(cls, batch: list[dict]) -> dict:
-        """Combines the ragged dictionaries  into a triplet format (times, codes, values) batch.
-
-        This function handles conversion of arrays to tensors and padding of elements within the
-        batch across static data elements, sequence events, and dynamic data elements. It ensures
-        that each batch has uniform shape by padding shorter sequences with zeros.
-
-        Args:
-            batch: A list of dictionaries with dynamic and static data from `__getitem__` method outputs.
-
-        Returns:
-            A dictionary containing tensorized and padded data for each key. The keys include 'mask',
-            'static_mask', 'code', 'numeric_value', 'numeric_value_mask', and 'time_delta_days'.
-
-        Examples:
-            >>> import torch
-            >>> import numpy as np
-            >>> batch = [
-            ...     {
-            ...         'dynamic': JointNestedRaggedTensorDict(
-            ...             {'code': [np.array([1])],
-            ...              'numeric_value': [np.array([10.0])],
-            ...              'time_delta_days': np.array([0])}),
-            ...         'static_values': [20.0],
-            ...         'static_indices': [0],
-            ...         'label': 0,
-            ...     },
-            ...     {
-            ...         'dynamic': JointNestedRaggedTensorDict(
-            ...             {'code': [np.array([5, 6]), np.array([1, 2])],
-            ...              'numeric_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
-            ...              'time_delta_days': np.array([np.nan, 12])}),
-            ...         'static_values': [70.0],
-            ...         'static_indices': [2],
-            ...         'label': 1,
-            ...         },
-            ... ]
-            >>> collated_batch = PytorchDataset.collate_triplet(batch)
-            >>> from pprint import pprint
-            >>> pprint(collated_batch)
-            {'code': tensor([[0, 1, 0, 0, 0],
-                    [2, 5, 6, 1, 2]], dtype=torch.int32),
-             'label': tensor([0., 1.]),
-             'mask': tensor([[ True,  True, False, False, False],
-                    [ True,  True,  True,  True,  True]]),
-             'numeric_value': tensor([[20., 10.,  0.,  0.,  0.],
-                    [70., 50., 60.,  0.,  0.]]),
-             'numeric_value_mask': tensor([[ True,  True, False, False, False],
-                    [ True,  True,  True, False, False]]),
-             'static_mask': tensor([[ True, False, False, False, False],
-                    [ True, False, False, False, False]]),
-             'time_delta_days': tensor([[ 0,  0,  0,  0,  0],
-                    [ 0,  0,  0, 12, 12]], dtype=torch.uint8)}
-        """
-        processed_batch = [cls.process_triplet(item) for item in batch]
-        tensorized_batch = {
-            k: torch.nn.utils.rnn.pad_sequence(
-                [torch.as_tensor(x[k]) for x in processed_batch],
-                batch_first=True,
-                padding_value=0,
-            )
-            for k in processed_batch[0].keys()
-        }
-
-        # Add task labels to batch
-        for k in batch[0].keys():
-            if k not in ("dynamic", "static_values", "static_indices"):
-                tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
         return tensorized_batch
 
     @classmethod
@@ -1155,11 +1084,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> from torch import Tensor as tensor
             >>> from omegaconf import DictConfig
             >>> item =  {
-            ...         'dynamic': JointNestedRaggedTensorDict({
-            ...                 'code': [np.array([5, 6]), np.array([1, 2])],
-            ...                 'numeric_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
-            ...                 'time_delta_days': np.array([np.nan, 12])
-            ...         }),
+            ...         'dynamic': {
+            ...                 'dim1/code': np.array([5, 6, 1, 2]),
+            ...                 'dim1/numeric_value': np.array([50.0, 60.0, np.nan, np.nan]),
+            ...                 'dim0/time_delta_days': np.array([0, 0, 12, 0])
+            ...         },
             ...         'static_values': [70.0],
             ...         'static_indices': [2]
             ...     }
@@ -1170,6 +1099,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             ...     1: (tensor([2093, 1999, 1037, 5216]), tensor([1, 1, 1, 1]))}
             >>> text_code_item = PytorchDataset.process_text_code(item, tokenized_metadata)
             >>> for each in sorted(list(text_code_item.keys())): print(each)
+            code
             code_mask
             code_tokens
             mask
@@ -1180,6 +1110,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             >>> for key, value in text_code_item.items(): print(key, value);
             mask [ True  True  True  True  True]
             static_mask [ True False False False False]
+            code [2 5 6 1 2]
             code_tokens [[1037. 2518.    0.    0.]
              [2138.    0.    0.    0.]
              [1039.    0.    0.    0.]
@@ -1191,7 +1122,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
              [1. 1. 1. 1.]
              [1. 1. 0. 0.]]
             numeric_value [70. 50. 60.  0.  0.]
-            time_delta_days [ 0.  0.  0. 12. 12.]
+            time_delta_days [ 0  0  0 12  0]
             numeric_value_mask [ True  True  True False False]
         """
         dynamic_data = item["dynamic"]
@@ -1244,90 +1175,20 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
     ) -> dict:
         """Processes a single triplet of dynamic and static data.
 
-        This function takes a dictionary containing dynamic and static data,
-        processes the tensors, and concatenates them appropriately to create
-        a unified representation of the data.
+        This function takes a dictionary containing dynamic and static data, processes the tensors, and
+        concatenates them appropriately to create a unified representation of the data.
 
-        Args:
-            item: A dictionary containing 'dynamic' and 'static' data.
-            tokenized_codes: A dictionary containing the tokenized codes.
+        Args:     item: A dictionary containing 'dynamic' and 'static' data.     tokenized_codes: A dictionary
+        containing the tokenized codes.
 
-        Returns:
-            A dictionary with the processed data including:
-                - mask: A mask indicating valid data points.
-                - static_mask: A mask indicating static data points.
-                - code: Concatenated static and dynamic codes.
-                - numeric_value: Concatenated static and dynamic numerical values.
-                - time_delta_days: Concatenated static and dynamic time deltas.
-
-        Examples:
-            >>> import numpy as np
-            >>> import tempfile, json, os
-            >>> from torch import Tensor as tensor
-            >>> from omegaconf import DictConfig
-            >>> item =  {
-            ...         'dynamic': JointNestedRaggedTensorDict({
-            ...                 'code': [np.array([5, 6]), np.array([1, 2])],
-            ...                 'numeric_value': [np.array([50.0, 60.0]), np.array([np.nan, np.nan])],
-            ...                 'time_delta_days': np.array([np.nan, 12])
-            ...         }),
-            ...         'static_values': [70.0],
-            ...         'static_indices': [2]
-            ...     }
-            >>> tokenized_metadata = {
-            ...     2: (tensor([1037, 2518,    0,    0]), tensor([1, 1, 0, 0])),
-            ...     5: (tensor([2138,    0,    0,    0]), tensor([1, 0, 0, 0])),
-            ...     6: (tensor([1039,    0,    0,    0]), tensor([1, 0, 0, 0])),
-            ...     1: (tensor([2093, 1999, 1037, 5216]), tensor([1, 1, 1, 1]))}
-            >>> tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
-            >>> tokenized_sentence = [[3642], [2038, 3643], [7594], [2044, 1996, 3025, 8089], [1012], [10]]
-            >>> text_code_item = PytorchDataset.process_text_observation(item,
-            ...     tokenized_metadata, tokenized_sentence, tokenizer)
-            >>> for each in sorted(list(text_code_item.keys())): print(each)
-            mask
-            observation_mask
-            observation_tokens
-            >>> for key, value in text_code_item.items(): print(key, value);
-            mask tensor([True, True, True, True, True])
-            observation_tokens tensor([[3642., 1037., 2518.,    0.,    0., 2038., 3643., 3963., 1012., 1014.,
-                     7594., 1014., 1012., 1014., 2044., 1996., 3025., 8089., 1012.],
-                    [3642., 2138.,    0.,    0.,    0., 2038., 3643., 2753., 1012., 1014.,
-                     1012.,    0.,    0.,    0.,    0.,    0.,    0.,    0.,    0.],
-                    [3642., 1039.,    0.,    0.,    0., 2038., 3643., 3438., 1012., 1014.,
-                     1012.,    0.,    0.,    0.,    0.,    0.,    0.,    0.,    0.],
-                    [3642., 2093., 1999., 1037., 5216., 1012.,    0.,    0.,    0.,    0.,
-                        0.,    0.,    0.,    0.,    0.,    0.,    0.,    0.,    0.],
-                    [3642., 1037., 2518.,    0.,    0., 1012.,    0.,    0.,    0.,    0.,
-                        0.,    0.,    0.,    0.,    0.,    0.,    0.,    0.,    0.]])
-            observation_mask tensor([[1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
-                     1.],
-                    [1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0., 0.,
-                     0.],
-                    [1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0., 0.,
-                     0.],
-                    [1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                     0.],
-                    [1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                     0.]])
-            >>> all_text_items = PytorchDataset.process_text_observation(item,
-            ...         tokenized_metadata, tokenized_sentence, tokenizer, whole_observation=True)
-            >>> for each in sorted(list(all_text_items.keys())): print(each)
-            mask
-            observation_mask
-            observation_tokens
-            >>> for key, value in all_text_items.items(): print(key, value);
-            mask tensor([True])
-            observation_tokens tensor([[3642., 1037., 2518.,    0.,    0., 2038., 3643., 3963., 1012., 1014.,
-                     7594., 1014., 1012., 1014., 2044., 1996., 3025., 8089., 1012.,   10.,
-                     3642., 2138.,    0.,    0.,    0., 2038., 3643., 2753., 1012., 1014.,
-                     1012.,   10., 3642., 1039.,    0.,    0.,    0., 2038., 3643., 3438.,
-                     1012., 1014., 1012.,   10., 3642., 2093., 1999., 1037., 5216., 1012.,
-                       10., 3642., 1037., 2518.,    0.,    0., 1012.,   10.]])
-            observation_mask tensor([[1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
-                     1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
-                     1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
-                     1., 1., 1., 1.]])
+        Returns:     A dictionary with the processed data including:         - mask: A mask indicating valid
+        data points.         - static_mask: A mask indicating static data points.         - code: Concatenated
+        static and dynamic codes.         - numeric_value: Concatenated static and dynamic numerical values. -
+        time_delta_days: Concatenated static and dynamic time deltas.
         """
+        raise NotImplementedError(
+            "[Experimental] -- Do not use this function as it is still under development."
+        )
         dynamic_data = item["dynamic"]
         raw_codes = dynamic_data["dim1/code"]
         raw_values = dynamic_data["dim1/numeric_value"]
@@ -1544,7 +1405,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         if collate_type == CollateType.event_stream:
             return self.collate_event_stream(batch)
         elif collate_type == CollateType.triplet_prompt:
-            return self.collate_triplet_prompt(batch)
+            return self.collate_triplet(batch)
         elif collate_type == CollateType.eic:
             return self.collate_triplet(batch, self.config.do_prepend_static_data)
         elif collate_type == CollateType.triplet:
