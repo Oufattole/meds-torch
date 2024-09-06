@@ -1,7 +1,7 @@
 import json
 import os
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 
@@ -443,7 +443,22 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             task_info_fp = Path(self.config.task_info_path)
 
             logger.info(f"Reading task constraints for {self.config.task_name} from {task_df_fp}")
-            task_df = pl.read_parquet(task_df_fp, use_pyarrow=True)
+            task_df = pl.read_parquet(task_df_fp)
+            if "prediction_time" in task_df.columns:
+                task_df = task_df.with_columns(end_time=pl.col("prediction_time"))
+            elif "end_time" not in task_df.columns:
+                raise ValueError("Task dataframe must contain either 'prediction_time' or 'end_time' column.")
+
+            if "start_time" not in task_df.columns:
+                task_df = task_df.with_columns(start_time=pl.lit(datetime(1900, 1, 1)))
+
+            if "boolean_value" in task_df.columns:
+                task_df = task_df.with_columns(pl.col("boolean_value").alias(self.config.task_name))
+                self.tasks = [self.config.task_name]
+            else:
+                self.tasks = sorted(
+                    [c for c in task_df.columns if c not in ["subject_id", "start_time", "end_time"]]
+                )
 
             task_info = self.get_task_info(task_df)
 
@@ -484,8 +499,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
     def get_task_info(self, task_df: pl.DataFrame):
         """Gets the task information from the task dataframe."""
-        self.tasks = sorted([c for c in task_df.columns if c not in ["subject_id", "start_time", "end_time"]])
-
         self.task_types = {}
         self.task_vocabs = {}
 

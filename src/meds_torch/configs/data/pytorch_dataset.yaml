@@ -30,7 +30,6 @@ num_value_code_quantiles: null
 # Sequence Params
 max_seq_len: 512
 min_seq_len: null
-token_dim: 32
 subsequence_sampling_strategy: random
 seq_padding_side: right
 

@@ -59,14 +59,75 @@ export JOBLIB_RUNNER_CONFIG_PATH="$(pwd)/MIMICIV_TUTORIAL/configs/joblib_runner.
 bash MIMICIV_TUTORIAL/tokenize.sh $MIMICIV_MEDS_DIR $MIMICIV_EIC_DIR $N_PARALLEL_WORKERS $PIPELINE_CONFIG_PATH stage_runner_fp=$JOBLIB_RUNNER_CONFIG_PATH
 ```
 
-export MEDS_DIR="$MIMICIV_MEDS_DIR"
-export MODEL_DIR="$MIMICIV_EIC_DIR"
-export N_WORKERS="$N_PARALLEL_WORKERS"
-export PIPELINE_CONFIG_PATH="$PIPELINE_CONFIG_PATH"
+Now extract supervised task labels uses aces. First install aces:
 
 ```console
-export MIMICIV_MEDS_DIR=/storage/shared/mimic-iv/meds_v0.3.2/meds/ # set to the directory in which you want to store the raw MIMIC-IV data
-export MIMICIV_EIC_DIR=/storage/shared/mimic-iv/meds_v0.3.2/eic_tensors/ # set to the directory in which you want to output the tensorized MIMIC-IV data
-export OUTPUT_DIR=/storage/shared/mimic-iv/meds_v0.3.2/results/eic_mtr_exp/ # set to the directory in which you want to output checkpoints and results
-meds-torch-train experiment=eic_mtr paths.data_dir="${MIMICIV_EIC_DIR}" paths.meds_cohort_dir="${MIMICIV_MEDS_DIR}" paths.output_dir="${OUTPUT_DIR}" hydra.searchpath=[pkg://meds_torch.configs,"$(pwd)/MIMICIV_TUTORIAL/configs/meds-torch-configs"]
+conda create -n aces python=3.12
+conda activate aces
+pip install es-aces==0.5.0
+pip install hydra-joblib-launcher
+```
+
+Second, run the following command to extract the supervised task labels:
+
+```console
+TASK_NAME="mortality-in_hospital-first_48h" # set name of the task
+TASKS_DIR="$MIMICIV_MEDS_DIR/tasks/" # set to the directory in which you want to store all tasks
+mkdir -p "$TASKS_DIR" # create a directory for the task
+cp MIMICIV_TUTORIAL/configs/${TASK_NAME}.yaml $TASKS_DIR/${TASK_NAME}.yaml
+aces-cli --multirun hydra/launcher=joblib data=sharded data.standard=meds data.root="$MIMICIV_MEDS_DIR/data" "data.shard=$(expand_shards $MIMICIV_MEDS_DIR/data)" cohort_dir="$TASKS_DIR" cohort_name="$TASK_NAME"
+```
+
+Now we can launch a meds-torch experiment. The `eic_mtr.yaml` experiment will require around `26GB` of GPU memory and takes ~30min per epoch.
+
+```console
+export MIMICIV_MEDS_DIR=??? # set to the directory in which you want to store the raw MIMIC-IV data
+export MIMICIV_EIC_DIR=??? # set to the directory in which you want to output the tensorized MIMIC-IV data
+export OUTPUT_DIR=??? # set to the directory in which you want to output checkpoints and results
+TASK_NAME="mortality-in_hospital-first_48h" # set name of the task
+TASKS_DIR="$MIMICIV_MEDS_DIR/tasks/" # set to the directory in which you want to store all tasks
+export CUDA_VISIBLE_DEVICES=0 # set to the GPU you want to use
+conda activate meds-torch
+
+MAX_POLARS_THREADS=4 meds-torch-train experiment=eic_mtr paths.data_dir="${MIMICIV_EIC_DIR}" \
+    paths.meds_cohort_dir="${MIMICIV_MEDS_DIR}" paths.output_dir="${OUTPUT_DIR}" \
+    data.task_name="$TASK_NAME" data.task_root_dir="$TASKS_DIR" \
+    data.task_label_path="$TASKS_DIR/${TASK_NAME}/**/*.parquet" \
+    hydra.searchpath=[pkg://meds_torch.configs,"$(pwd)/MIMICIV_TUTORIAL/configs/meds-torch-configs"]
+```
+
+Now we can launch a meds-torch experiment. The `triplet_mtr.yaml` experiment will require around `26GB` of GPU memory and takes ~30min per epoch on a single V100 GPU.
+
+```console
+export MIMICIV_MEDS_DIR=??? # set to the directory in which you want to store the raw MIMIC-IV data
+export MIMICIV_TRIPLET_DIR=??? # set to the directory in which you want to output the tensorized MIMIC-IV data
+export OUTPUT_DIR=??? # set to the directory in which you want to output checkpoints and results
+TASK_NAME="mortality-in_hospital-first_48h" # set name of the task
+TASKS_DIR="$MIMICIV_MEDS_DIR/tasks/" # set to the directory in which you want to store all tasks
+export CUDA_VISIBLE_DEVICES=1 # set to the GPU you want to use
+conda activate meds-torch
+
+MAX_POLARS_THREADS=4 meds-torch-train experiment=triplet_mtr paths.data_dir="${MIMICIV_TRIPLET_DIR}" \
+    paths.meds_cohort_dir="${MIMICIV_MEDS_DIR}" paths.output_dir="${OUTPUT_DIR}" \
+    data.task_name="$TASK_NAME" data.task_root_dir="$TASKS_DIR" \
+    data.task_label_path="$TASKS_DIR/${TASK_NAME}/**/*.parquet" \
+    hydra.searchpath=[pkg://meds_torch.configs,"$(pwd)/MIMICIV_TUTORIAL/configs/meds-torch-configs"]
+```
+
+Now we can launch a meds-torch experiment. The `text_code_mtr.yaml` experiment will require around `???` of GPU memory and takes ~???min per epoch.
+
+```console
+export MIMICIV_MEDS_DIR=??? # set to the directory in which you want to store the raw MIMIC-IV data
+export MIMICIV_TRIPLET_DIR=??? # set to the directory in which you want to output the tensorized MIMIC-IV data
+export OUTPUT_DIR=??? # set to the directory in which you want to output checkpoints and results
+TASK_NAME="mortality-in_hospital-first_48h" # set name of the task
+TASKS_DIR="$MIMICIV_MEDS_DIR/tasks/" # set to the directory in which you want to store all tasks
+export CUDA_VISIBLE_DEVICES=2 # set to the GPU you want to use
+conda activate meds-torch
+
+MAX_POLARS_THREADS=4 meds-torch-train experiment=text_code_mtr paths.data_dir="${MIMICIV_TRIPLET_DIR}" \
+    paths.meds_cohort_dir="${MIMICIV_MEDS_DIR}" paths.output_dir="${OUTPUT_DIR}" \
+    data.task_name="$TASK_NAME" data.task_root_dir="$TASKS_DIR" \
+    data.task_label_path="$TASKS_DIR/${TASK_NAME}/**/*.parquet" \
+    hydra.searchpath=[pkg://meds_torch.configs,"$(pwd)/MIMICIV_TUTORIAL/configs/meds-torch-configs"]
 ```
