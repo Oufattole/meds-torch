@@ -70,9 +70,9 @@ class TripletPromptEncoder(nn.Module, Module):
         # Embed codes
         code_emb = self.code_embedder.forward(code).permute(0, 2, 1)
         # Embed numerical values and mask nan values
-        val_emb = self.embed_func(
-            self.numeric_value_embedder, numeric_value
-        ) * numeric_value_mask.unsqueeze(dim=1)
+        val_emb = self.embed_func(self.numeric_value_embedder, numeric_value) * numeric_value_mask.unsqueeze(
+            dim=1
+        )
 
         # Sum the (time, code, value) triplets and
         embedding = code_emb + val_emb

@@ -12,7 +12,6 @@ from omegaconf import open_dict
 
 from meds_torch.train import train
 from tests.helpers.run_if import RunIf
-from tests.test_configs import kwargs
 
 
 def test_fast_dev_train(kwargs: dict, tmp_path):

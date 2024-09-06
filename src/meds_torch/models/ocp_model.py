@@ -53,7 +53,9 @@ class OCPModule(BaseModule):
             max_length = max(pre.size(dim), post.size(dim))
             pre_padded = F.pad(pre, (0, max_length - pre.size(dim), 0, 0))
             post_padded = F.pad(post, (0, max_length - post.size(dim), 0, 0))
-        assert pre_padded.size(dim) == post_padded.size(dim), f"{pre_padded.size(dim)} != {post_padded.size(dim)}"
+        assert pre_padded.size(dim) == post_padded.size(
+            dim
+        ), f"{pre_padded.size(dim)} != {post_padded.size(dim)}"
         return pre_padded, post_padded
 
     @classmethod
@@ -88,7 +90,7 @@ class OCPModule(BaseModule):
             pre_padded_tokens, post_padded_tokens = self.early_fusion_pad(
                 pre_batch[INPUT_ENCODER_TOKENS_KEY], post_batch[INPUT_ENCODER_TOKENS_KEY]
             )
-            
+
             fusion_tokens = self.shuffled_concat(pre_padded_tokens, post_padded_tokens, random_flips)
 
             # Repeat the same procedure for the token embeddings

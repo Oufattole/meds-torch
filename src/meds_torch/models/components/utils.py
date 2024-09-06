@@ -2,15 +2,12 @@ import torch
 
 
 def get_last_token(output: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    """
-    Get the last non-masked token from the output tensor.
+    """Get the last non-masked token from the output tensor.
 
-    Args:
-    output (torch.Tensor): The output tensor of shape (batch_size, seq_len, hidden_dim)
-    mask (torch.Tensor): The mask tensor of shape (batch_size, seq_len) where True indicates masked positions
+    Args: output (torch.Tensor): The output tensor of shape (batch_size, seq_len, hidden_dim) mask
+    (torch.Tensor): The mask tensor of shape (batch_size, seq_len) where True indicates masked positions
 
-    Returns:
-    torch.Tensor: The last non-masked token for each sequence in the batch
+    Returns: torch.Tensor: The last non-masked token for each sequence in the batch
     """
     # Find the last non-masked position
     last_non_masked = (~mask).float().cumsum(dim=1).argmax(dim=1)
@@ -20,7 +17,9 @@ def get_last_token(output: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     last_non_masked[all_masked] = 0
 
     if all_masked.any():
-        raise ValueError(f"{all_masked.sum().item()} sequences have all positions masked. Mask should likely be negated")
+        raise ValueError(
+            f"{all_masked.sum().item()} sequences have all positions masked. Mask should likely be negated"
+        )
 
     # Create indices for gathering
     batch_size, _, hidden_dim = output.shape

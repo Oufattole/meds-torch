@@ -12,9 +12,9 @@ def cfg(request):
 
 
 from meds_torch.data.datamodule import MEDSDataModule
-from meds_torch.input_encoder.triplet_encoder import TripletEncoder
 from meds_torch.input_encoder.eic_encoder import EicEncoder
 from meds_torch.input_encoder.text_encoder import TextCodeEncoder
+from meds_torch.input_encoder.triplet_encoder import TripletEncoder
 from meds_torch.models.components.lstm import LstmModel
 from meds_torch.models.components.transformer_decoder import TransformerDecoderModel
 from meds_torch.models.components.transformer_encoder import TransformerEncoderModel
@@ -107,7 +107,7 @@ def test_train_config(kwargs: dict) -> None:  # cfg: DictConfig,
     HydraConfig().set_config(cfg)
 
     assert isinstance(hydra.utils.instantiate(cfg.data), MEDSDataModule)
-    input_encoder = kwargs['input_kwargs']['input_encoder']
+    input_encoder = kwargs["input_kwargs"]["input_encoder"]
     if input_encoder == "triplet_encoder":
         assert isinstance(hydra.utils.instantiate(cfg.model.input_encoder), TripletEncoder)
     elif input_encoder == "eic_encoder":
@@ -118,7 +118,7 @@ def test_train_config(kwargs: dict) -> None:  # cfg: DictConfig,
         raise NotImplementedError(f"Unsupported input_encoder {input_encoder}!")
 
     backbone_model = hydra.utils.instantiate(cfg.model.backbone)
-    backbone = kwargs['input_kwargs']['backbone']
+    backbone = kwargs["input_kwargs"]["backbone"]
     if backbone == "lstm":
         assert isinstance(backbone_model, LstmModel)
     elif backbone == "transformer_decoder":

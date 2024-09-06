@@ -1,8 +1,8 @@
 import torch
 import torchmetrics
+from loguru import logger
 from omegaconf import DictConfig
 from torch import nn
-from loguru import logger
 
 from meds_torch.models import BACKBONE_EMBEDDINGS_KEY, MODEL_LOSS_KEY
 from meds_torch.models.base_model import BaseModule
@@ -37,7 +37,6 @@ class ValueForecastingModule(BaseModule):
             for i, j in zip(row_indices, col_indices):
                 empty_target[i, j] = 1
 
-
     def forward(self, batch):
         forecast_window_data = batch[self.cfg.forecast_window_name]
         batch = self.model(self.input_encoder(batch[self.cfg.input_window_name]))
@@ -51,7 +50,12 @@ class ValueForecastingModule(BaseModule):
             presence_target = torch.zeros(
                 (codes.shape[0], vocab_size), dtype=torch.float32, device=codes.device
             )
-            presence_target = presence_target.scatter_(dim=1, index=codes.to(torch.int64), src=torch.ones_like(codes, dtype=torch.float32), reduce='add').clamp_(max=1)
+            presence_target = presence_target.scatter_(
+                dim=1,
+                index=codes.to(torch.int64),
+                src=torch.ones_like(codes, dtype=torch.float32),
+                reduce="add",
+            ).clamp_(max=1)
 
             # create value target
             numeric_value_mask = forecast_window_data["numeric_value_mask"]
@@ -59,9 +63,13 @@ class ValueForecastingModule(BaseModule):
             value_target = torch.zeros(
                 (numeric_value_codes.shape[0], vocab_size), dtype=torch.float32, device=codes.device
             )
-            value_target = value_target.scatter_(dim=1, index=codes.to(torch.int64), src=numeric_values, reduce='add')
+            value_target = value_target.scatter_(
+                dim=1, index=codes.to(torch.int64), src=numeric_values, reduce="add"
+            )
             count_target = torch.zeros_like(value_target)
-            count_target = count_target.scatter_(dim=1, index=codes.to(torch.int64), src=torch.ones_like(numeric_values), reduce='add')
+            count_target = count_target.scatter_(
+                dim=1, index=codes.to(torch.int64), src=torch.ones_like(numeric_values), reduce="add"
+            )
             value_target = torch.where(count_target > 0, value_target / count_target, value_target)
 
             # Set the 0 index to zero to ignore mask tokens

@@ -1,27 +1,14 @@
-from collections.abc import Callable
-
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch import nn
-from x_transformers import AutoregressiveWrapper
-from x_transformers.autoregressive_wrapper import (
-    cast_tuple,
-    contrastive_decode_fn,
-    eval_decorator,
-    exists,
-    identity,
-    top_k,
-)
 
-from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
-from meds_torch.input_encoder.triplet_encoder import TripletEncoder
 from meds_torch.input_encoder.eic_encoder import EicEncoder
+from meds_torch.input_encoder.triplet_encoder import TripletEncoder
 from meds_torch.input_encoder.triplet_prompt_encoder import TripletPromptEncoder
 from meds_torch.models import BACKBONE_TOKENS_KEY, MODEL_LOSS_KEY
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
-
 
 NUMERIC_VALUE_LOGITS = "MODEL//NUMERIC_VALUE_LOGITS"
 CODE_LOGITS = "MODEL//CODE_LOGITS"
@@ -157,9 +144,7 @@ class TokenForecastingModule(BaseModule):
             # Numerical Value Loss
             numeric_value_preds = self.process_numeric_values(numeric_value_logits, code_target)
             numeric_value_loss = F.mse_loss(numeric_value_preds, numeric_value_target, reduction="none")
-            numeric_value_loss = (
-                numeric_value_loss * numeric_value_mask
-            ).sum() / numeric_value_mask.sum()
+            numeric_value_loss = (numeric_value_loss * numeric_value_mask).sum() / numeric_value_mask.sum()
             # Time Loss
             time_loss = self.get_time_loss(time_logits, time_delta_days_target, dynamic_mask)
 

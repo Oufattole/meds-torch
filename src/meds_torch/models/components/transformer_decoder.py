@@ -1,7 +1,6 @@
 import torch
 from omegaconf import DictConfig
 from torch import nn
-from x_transformers import Decoder, TransformerWrapper
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models import BACKBONE_EMBEDDINGS_KEY, BACKBONE_TOKENS_KEY
