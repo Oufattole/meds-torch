@@ -185,11 +185,10 @@ class TokenForecastingModule(BaseModule):
             code_logits = self.code_head(all_token_embeddings)
         else:
             code_logits = all_token_embeddings
+            if not code_logits.shape[-1] == self.cfg.vocab_size:
+                code_logits = self.code_head(all_token_embeddings)
             numeric_value_logits = None
-        if not code_logits.shape[-1] == self.cfg.vocab_size:
-            raise ValueError(
-                f"Code logits shape {code_logits.shape} does not match vocab size {self.cfg.vocab_size}"
-            )
+
         if isinstance(self.input_encoder, TripletEncoder):
             time_logits = self.time_head(all_token_embeddings)
         else:

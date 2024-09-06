@@ -708,9 +708,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             out["dynamic"] = subject_dynamic_data[st:end]
         else:
             tensors["dim1/code"] = tensors["dim1/code"][st:end]
-            if self.config.collate_type != CollateType.eic:
-                tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
-                tensors["dim0/time_delta_days"] = tensors["dim0/time_delta_days"][st:end]
+            tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
+            tensors["dim0/time_delta_days"] = tensors["dim0/time_delta_days"][st:end]
             out["dynamic"] = tensors
 
         if self.config.do_include_start_time_min:
@@ -752,7 +751,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         if self.config.do_include_subsequence_indices:
             out["end_idx"] = end
 
-        if not (out["dynamic"]["dim1/code"].shape[0] == out["dynamic"]["dim1/numeric_value"].shape[0] == out["dynamic"]["dim0/time_delta_days"].shape[0]):
+        if self.config.collate_type != CollateType.event_stream and not (len(out["dynamic"]["dim1/code"]) == len(out["dynamic"]["dim1/numeric_value"]) == len(out["dynamic"]["dim0/time_delta_days"])):
             code_shape = out["dynamic"]["dim1/code"].shape
             numeric_shape = out["dynamic"]["dim1/numeric_value"].shape
             time_shape = out["dynamic"]["dim0/time_delta_days"].shape
@@ -948,6 +947,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             numeric_value = np.concatenate([static_values, numeric_value])
             static_mask = np.zeros(len(code), dtype=bool)
             static_mask[: len(static_values)] = True
+            time_delta_days = np.concatenate([np.zeros(len(static_values), dtype=time_delta_days.dtype), time_delta_days])
 
         numeric_value_mask = ~np.isnan(numeric_value)
         # Replace NaNs with 0s
@@ -1190,6 +1190,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             numeric_value = np.concatenate([static_values, numeric_value])
             static_mask = np.zeros(len(code), dtype=bool)
             static_mask[: len(static_values)] = True
+            time_delta_days = np.concatenate([np.zeros(len(static_values), dtype=time_delta_days.dtype), time_delta_days])
 
         numeric_value_mask = ~np.isnan(numeric_value)
         # Replace NaNs with 0s
@@ -1209,6 +1210,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         output = dict(
             mask=mask,
             static_mask=static_mask,
+            code=code,
             code_tokens=code_tokens,
             code_mask=code_mask,
             numeric_value=numeric_value,

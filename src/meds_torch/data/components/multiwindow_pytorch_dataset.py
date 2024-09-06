@@ -1,6 +1,5 @@
 from pathlib import Path
 
-MAX_POLARS_THREADS = 1
 import numpy as np
 import polars as pl
 import torch

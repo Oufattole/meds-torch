@@ -47,7 +47,7 @@ def test_gpu_train(kwargs, tmp_path) -> None:  # cfg: DictConfig,
 
     with open_dict(cfg):
         cfg.trainer.fast_dev_run = True
-        # cfg.trainer.accelerator = "gpu"
+        cfg.trainer.accelerator = "gpu"
         cfg.paths.output_dir = str(tmp_path)
     HydraConfig().set_config(cfg)
     if raises_value_error:

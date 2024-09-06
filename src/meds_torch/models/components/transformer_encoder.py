@@ -26,8 +26,6 @@ class TransformerEncoderModel(torch.nn.Module, Module):
 
     def forward(self, batch):
         input_data, mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
-        if isinstance(self.model.token_emb, nn.Identity):
-            input_data = input_data.transpose(1, 2)
         output, embeddings = self.model(input_data, mask=mask, return_logits_and_embeddings=True)
         batch[BACKBONE_TOKENS_KEY] = output
         batch[BACKBONE_EMBEDDINGS_KEY] = embeddings

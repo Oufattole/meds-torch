@@ -9,7 +9,7 @@ from omegaconf import open_dict
 from meds_torch.eval import evaluate
 from meds_torch.train import train
 from tests.conftest import create_cfg
-from tests.test_train import get_overrides_and_exceptions, kwargs  # noqa: F401
+from tests.test_configs import get_overrides_and_exceptions, kwargs  # noqa: F401
 
 
 @pytest.mark.slow

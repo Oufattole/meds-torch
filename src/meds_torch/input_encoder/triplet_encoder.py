@@ -86,7 +86,7 @@ class TripletEncoder(nn.Module, Module):
                 f"Triplet embedding length {embedding.shape[-1]} "
                 "is greater than max_seq_len {self.cfg.max_seq_len}"
             )
-        return embedding
+        return embedding.transpose(1, 2)
 
     def forward(self, batch):
         embedding = self.get_embedding(batch)

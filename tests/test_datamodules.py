@@ -59,6 +59,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
         assert set(batch.keys()) == {
             "mask",
             "static_mask",
+            "code",
             "code_tokens",
             "code_mask",
             "numeric_value",
@@ -145,6 +146,7 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
         assert set(batch.keys()) == {
             "mask",
             "static_mask",
+            "code",
             "code_tokens",
             "code_mask",
             "numeric_value",

@@ -15,6 +15,7 @@ Classes:
 """
 from omegaconf import DictConfig
 from torch import nn
+import torch
 from transformers import AutoModel
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
@@ -102,8 +103,8 @@ class TextCodeEncoder(nn.Module, Module):
 
         # Embed times and mask static value times
         time_emb = self.embed_func(self.date_embedder, time_delta_days) * ~static_mask.unsqueeze(dim=1)
-
-        code_emb = self.code_head(self.code_embedder.forward(code_tokens, code_mask)).permute(0, 2, 1)
+        text_code_embedding = self.code_embedder.forward(code_tokens, code_mask)
+        code_emb = torch.nan_to_num(self.code_head(text_code_embedding).permute(0, 2, 1))
         val_emb = self.embed_func(
             self.numeric_value_embedder, numeric_value
         ) * numeric_value_mask.unsqueeze(dim=1)
@@ -125,7 +126,7 @@ class TextCodeEncoder(nn.Module, Module):
         """
         embedding = self.get_embedding(batch)
         batch[INPUT_ENCODER_MASK_KEY] = batch["mask"]
-        batch[INPUT_ENCODER_TOKENS_KEY] = embedding
+        batch[INPUT_ENCODER_TOKENS_KEY] = embedding.transpose(1, 2)
         return batch
 
 

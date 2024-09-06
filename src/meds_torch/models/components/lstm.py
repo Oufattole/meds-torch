@@ -32,8 +32,6 @@ class LstmModel(torch.nn.Module, Module):
     def forward(self, batch):
         input_data, mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
         # pass tokens and attention mask to the lstm
-        if self.cfg.token_emb == "triplet":
-            input_data = input_data.transpose(1, 2)
         output = self.model(input_data)[0]
         # extract the representation token's embedding
         batch[BACKBONE_TOKENS_KEY] = output
