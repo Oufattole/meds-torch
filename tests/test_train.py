@@ -12,9 +12,10 @@ from omegaconf import open_dict
 
 from meds_torch.train import train
 from tests.helpers.run_if import RunIf
+from tests.test_configs import kwargs  # noqa: F401
 
 
-def test_fast_dev_train(kwargs: dict, tmp_path):
+def test_fast_dev_train(kwargs: dict, tmp_path):  # noqa: F811
     """Tests the training configuration provided by the `kwargs` pytest fixture.
 
     :param kwargs: A dictionary containing the configuration and a flag for expected ValueError.
@@ -36,7 +37,7 @@ def test_fast_dev_train(kwargs: dict, tmp_path):
 
 
 @RunIf(min_gpus=1)
-def test_gpu_train(kwargs, tmp_path) -> None:  # cfg: DictConfig,
+def test_gpu_train(kwargs, tmp_path) -> None:  # noqa: F811
     """Tests the training configuration provided by the `cfg_train` pytest fixture.
 
     :param cfg_train: A DictConfig containing a valid training configuration.
@@ -58,7 +59,7 @@ def test_gpu_train(kwargs, tmp_path) -> None:  # cfg: DictConfig,
 
 @RunIf(min_gpus=1)
 @pytest.mark.slow
-def test_train_epoch_gpu_amp(kwargs, tmp_path) -> None:
+def test_train_epoch_gpu_amp(kwargs, tmp_path) -> None:  # noqa: F811
     """Train 1 epoch on GPU with mixed-precision.
 
     :param cfg_train: A DictConfig containing a valid training configuration.
@@ -79,7 +80,7 @@ def test_train_epoch_gpu_amp(kwargs, tmp_path) -> None:
 
 
 @pytest.mark.slow
-def test_train_resume(tmp_path: Path, kwargs: dict) -> None:
+def test_train_resume(tmp_path: Path, kwargs: dict) -> None:  # noqa: F811
     """Run 1 epoch, finish, and resume for another epoch.
 
     :param tmp_path: The temporary logging path.
