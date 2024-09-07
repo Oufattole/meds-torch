@@ -11,62 +11,11 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import open_dict
 
 from meds_torch.train import train
-from tests.conftest import create_cfg
 from tests.helpers.run_if import RunIf
+from tests.test_configs import kwargs  # noqa: F401
 
 
-def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backbone):
-    overrides = [
-        f"data={data}",
-        f"model/input_encoder={input_encoder}",
-        f"model/backbone={backbone}",
-        f"model={model}",
-    ]
-    raises_value_error = False
-
-    supervised = model == "supervised"
-    if model == "token_forecasting" and backbone not in ["transformer_decoder", "lstm"]:
-        raises_value_error = True
-
-    if early_fusion is not None:
-        overrides.append(f"model.early_fusion={early_fusion}")
-    return overrides, raises_value_error, supervised
-
-
-@pytest.fixture(
-    params=[
-        pytest.param(
-            (data, model, early_fusion, input_encoder, backbone),
-            id=f"{data}-{model}-earlyfusion{early_fusion}-{input_encoder}-{backbone}",
-        )
-        for data, model, early_fusion in [
-            ("pytorch_dataset", "supervised", None),
-            ("pytorch_dataset", "token_forecasting", None),
-            ("multiwindow_pytorch_dataset", "ebcl", None),
-            ("multiwindow_pytorch_dataset", "value_forecasting", None),
-            ("multiwindow_pytorch_dataset", "ocp", "true"),
-            ("multiwindow_pytorch_dataset", "ocp", "false"),
-        ]
-        for input_encoder in ["triplet_encoder", "triplet_prompt_encoder"]
-        for backbone in ["transformer_decoder", "transformer_encoder", "transformer_encoder_attn_avg", "lstm"]
-    ]
-)
-def kwargs(request, meds_dir) -> dict:
-    data, model, early_fusion, input_encoder, backbone = request.param
-    overrides, raises_value_error, supervised = get_overrides_and_exceptions(
-        data, model, early_fusion, input_encoder, backbone
-    )
-    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir, supervised=supervised)
-    return dict(
-        cfg=cfg,
-        raises_value_error=raises_value_error,
-        input_kwargs=dict(
-            data=data, model=model, early_fusion=early_fusion, input_encoder=input_encoder, backbone=backbone
-        ),
-    )
-
-
-def test_fast_dev_train(kwargs: dict, tmp_path):
+def test_fast_dev_train(kwargs: dict, tmp_path):  # noqa: F811
     """Tests the training configuration provided by the `kwargs` pytest fixture.
 
     :param kwargs: A dictionary containing the configuration and a flag for expected ValueError.
@@ -79,6 +28,7 @@ def test_fast_dev_train(kwargs: dict, tmp_path):
         cfg.trainer.accelerator = "cpu"
         cfg.paths.output_dir = str(tmp_path)
     HydraConfig().set_config(cfg)
+
     if raises_value_error:
         with pytest.raises(hydra.errors.InstantiationException):
             train(cfg)
@@ -87,7 +37,7 @@ def test_fast_dev_train(kwargs: dict, tmp_path):
 
 
 @RunIf(min_gpus=1)
-def test_gpu_train(kwargs, tmp_path) -> None:  # cfg: DictConfig,
+def test_gpu_train(kwargs, tmp_path) -> None:  # noqa: F811
     """Tests the training configuration provided by the `cfg_train` pytest fixture.
 
     :param cfg_train: A DictConfig containing a valid training configuration.
@@ -109,7 +59,7 @@ def test_gpu_train(kwargs, tmp_path) -> None:  # cfg: DictConfig,
 
 @RunIf(min_gpus=1)
 @pytest.mark.slow
-def test_train_epoch_gpu_amp(kwargs, tmp_path) -> None:
+def test_train_epoch_gpu_amp(kwargs, tmp_path) -> None:  # noqa: F811
     """Train 1 epoch on GPU with mixed-precision.
 
     :param cfg_train: A DictConfig containing a valid training configuration.
@@ -130,7 +80,7 @@ def test_train_epoch_gpu_amp(kwargs, tmp_path) -> None:
 
 
 @pytest.mark.slow
-def test_train_resume(tmp_path: Path, kwargs: dict) -> None:
+def test_train_resume(tmp_path: Path, kwargs: dict) -> None:  # noqa: F811
     """Run 1 epoch, finish, and resume for another epoch.
 
     :param tmp_path: The temporary logging path.

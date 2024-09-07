@@ -1,0 +1,5 @@
+_target_: meds_torch.input_encoder.eic_encoder.EicEncoder.initialize
+collate_style: eic
+model_type: ${model.backbone.model_type}
+vocab_size: ${data.vocab_size}
+token_dim: ${model.token_dim}

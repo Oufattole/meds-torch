@@ -56,7 +56,7 @@ class TripletPromptEncoder(nn.Module, Module):
         # Define Triplet Embedders
         # TODO add to config
         self.code_embedder = torch.nn.Embedding(cfg.vocab_size + 2, embedding_dim=cfg.token_dim)
-        self.numerical_value_embedder = CVE(cfg)
+        self.numeric_value_embedder = CVE(cfg)
 
     def embed_func(self, embedder, x):
         out = embedder.forward(x[None, :].transpose(2, 0)).permute(1, 2, 0)
@@ -64,15 +64,15 @@ class TripletPromptEncoder(nn.Module, Module):
 
     def get_embedding(self, batch):
         code = batch["code"]
-        numerical_value = batch["numeric_value"]
-        numerical_value_mask = batch["numerical_value_mask"]
+        numeric_value = batch["numeric_value"]
+        numeric_value_mask = batch["numeric_value_mask"]
 
         # Embed codes
         code_emb = self.code_embedder.forward(code).permute(0, 2, 1)
         # Embed numerical values and mask nan values
-        val_emb = self.embed_func(
-            self.numerical_value_embedder, numerical_value
-        ) * numerical_value_mask.unsqueeze(dim=1)
+        val_emb = self.embed_func(self.numeric_value_embedder, numeric_value) * numeric_value_mask.unsqueeze(
+            dim=1
+        )
 
         # Sum the (time, code, value) triplets and
         embedding = code_emb + val_emb

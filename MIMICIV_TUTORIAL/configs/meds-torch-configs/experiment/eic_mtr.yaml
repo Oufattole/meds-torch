@@ -1,0 +1,50 @@
+# @package _global_
+
+# to execute this experiment run:
+# meds-torch-train experiment=eic_mtr paths.data_dir=/path/to/mimiciv/meds/data/MEDS_cohort paths.meds_cohort_dir=/path/to/mimiciv/meds/data/ paths.output_dir=/path/to/output_dir
+
+defaults:
+  - override /data: pytorch_dataset
+  - override /logger: wandb
+  - override /model/backbone: eic_transformer_encoder
+  - override /model/input_encoder: eic_encoder
+  - override /model: supervised
+  - override /trainer: gpu
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+tags: ["mimiciv", "eic", "transformer_encoder", "supervised"]
+
+seed: 0
+
+trainer:
+  min_epochs: 1
+  max_epochs: 10
+  gradient_clip_val: 1.0
+
+data:
+  dataloader:
+    batch_size: 64
+    num_workers: 8
+  max_seq_len: 512
+  collate_type: "eic"
+
+model:
+  token_dim: 512
+  optimizer:
+    lr: 0.001
+  backbone:
+    n_layers: 6
+    nheads: 8
+    dropout: 0.1
+
+
+logger:
+  wandb:
+    tags: ${tags}
+    group: "mimiciv_tokenization"
+
+# hydra:
+#   searchpath:
+#     - pkg://meds_torch.configs

@@ -1,6 +1,6 @@
 defaults:
   - input_encoder: triplet_encoder
-  - backbone: lstm
+  - backbone: triplet_transformer_encoder
   - _self_
 _target_: meds_torch.models.ocp_model.OCPModule.initialize
 
@@ -20,7 +20,7 @@ scheduler:
 early_fusion: true
 max_seq_len: ${data.max_seq_len} # doubled if early fusion
 token_dim: 4
-vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.num_value_code_quantiles}}
+vocab_size: ${data.vocab_size}
 get_representations: false
 task_name: ${data.task_name}
 batch_size: ${data.dataloader.batch_size}

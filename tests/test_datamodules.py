@@ -12,8 +12,6 @@ from meds_torch.data.components.multiwindow_pytorch_dataset import (
 )
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
 from meds_torch.data.datamodule import MEDSDataModule
-
-# from meds_torch.data.components.pytorch_dataset
 from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 
 
@@ -24,12 +22,13 @@ from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
         "event_stream",
         "triplet_prompt",
         "eic",
-    ],  # TODO: add "text_code", "text_observation", "all_text"
+        "text_code",
+    ],
 )
 def test_pytorch_dataset(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir)
     cfg.data.collate_type = collate_type
-    cfg.data.tokenizer = "bert-base-uncased"
+    cfg.data.tokenizer = "emilyalsentzer/Bio_ClinicalBERT"
     pyd = PytorchDataset(cfg.data, split="train")
     assert not pyd.has_task
     item = pyd[0]
@@ -52,29 +51,18 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "code",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
         }
     elif collate_type == "text_code":
         assert set(batch.keys()) == {
             "mask",
             "static_mask",
+            "code",
             "code_tokens",
             "code_mask",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
-        }
-    elif collate_type == "text_observation":
-        assert set(batch.keys()) == {
-            "mask",
-            "observation_tokens",
-            "observation_mask",
-        }
-    elif collate_type == "all_text":
-        assert set(batch.keys()) == {
-            "mask",
-            "observation_tokens",
-            "observation_mask",
+            "numeric_value_mask",
         }
     elif collate_type == "triplet_prompt":
         assert batch.keys() == {
@@ -83,7 +71,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "code",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
         }
     elif collate_type == "eic":
         assert batch.keys() == {
@@ -92,13 +80,13 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "code",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
         }
     else:
         raise NotImplementedError(f"{collate_type} not implemented")
 
 
-@pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt"])
+@pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt", "text_code", "eic"])
 def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir, supervised=True)
     cfg.data.collate_type = collate_type
@@ -127,7 +115,29 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             "code",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
+            SUPERVISED_TASK_NAME,
+        }
+    elif collate_type == "eic":
+        assert batch.keys() == {
+            "mask",
+            "static_mask",
+            "code",
+            "numeric_value",
+            "time_delta_days",
+            "numeric_value_mask",
+            SUPERVISED_TASK_NAME,
+        }
+    elif collate_type == "text_code":
+        assert set(batch.keys()) == {
+            "mask",
+            "static_mask",
+            "code",
+            "code_tokens",
+            "code_mask",
+            "numeric_value",
+            "time_delta_days",
+            "numeric_value_mask",
             SUPERVISED_TASK_NAME,
         }
     else:
@@ -159,7 +169,7 @@ def test_contrastive_windows(meds_dir, subject_level_sampling, collate_type):
             "code",
             "numeric_value",
             "time_delta_days",
-            "numerical_value_mask",
+            "numeric_value_mask",
         }
 
 

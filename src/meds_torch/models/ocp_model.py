@@ -43,17 +43,33 @@ class OCPModule(BaseModule):
     @classmethod
     def early_fusion_pad(cls, pre, post):
         """Determines the maximum sequence length and pad the sequences to it."""
-        max_length = max(pre.size(-1), post.size(-1))
-        pre_padded = F.pad(pre, (0, max_length - pre.size(-1)))
-        post_padded = F.pad(post, (0, max_length - post.size(-1)))
+        if len(pre.shape) == 3:
+            dim = 1
+            max_length = max(pre.size(dim), post.size(dim))
+            pre_padded = F.pad(pre, (0, 0, 0, max_length - pre.size(dim), 0, 0))
+            post_padded = F.pad(post, (0, 0, 0, max_length - post.size(dim), 0, 0))
+        else:
+            dim = 1
+            max_length = max(pre.size(dim), post.size(dim))
+            pre_padded = F.pad(pre, (0, max_length - pre.size(dim), 0, 0))
+            post_padded = F.pad(post, (0, max_length - post.size(dim), 0, 0))
+        assert pre_padded.size(dim) == post_padded.size(
+            dim
+        ), f"{pre_padded.size(dim)} != {post_padded.size(dim)}"
         return pre_padded, post_padded
 
     @classmethod
     def shuffled_concat(cls, pre, post, random_flips):
         """Shuffles the pre and post sequences and concatenates them."""
-        shuffled_pre_data = torch.where(random_flips, post, pre)
-        shuffled_post_data = torch.where(random_flips, pre, post)
-        shuffled_data = torch.concat([shuffled_pre_data, shuffled_post_data], dim=-1)
+        if len(pre.shape) == 3:
+            dim = 1
+            shuffled_pre_data = torch.where(random_flips.unsqueeze(-1), post, pre)
+            shuffled_post_data = torch.where(random_flips.unsqueeze(-1), pre, post)
+        else:
+            dim = 1
+            shuffled_pre_data = torch.where(random_flips, post, pre)
+            shuffled_post_data = torch.where(random_flips, pre, post)
+        shuffled_data = torch.concat([shuffled_pre_data, shuffled_post_data], dim=dim)
         return shuffled_data
 
     def forward(self, batch):
@@ -74,9 +90,8 @@ class OCPModule(BaseModule):
             pre_padded_tokens, post_padded_tokens = self.early_fusion_pad(
                 pre_batch[INPUT_ENCODER_TOKENS_KEY], post_batch[INPUT_ENCODER_TOKENS_KEY]
             )
-            fusion_tokens = self.shuffled_concat(
-                pre_padded_tokens, post_padded_tokens, random_flips.unsqueeze(-1)
-            )
+
+            fusion_tokens = self.shuffled_concat(pre_padded_tokens, post_padded_tokens, random_flips)
 
             # Repeat the same procedure for the token embeddings
             fused_batch = {INPUT_ENCODER_MASK_KEY: fusion_mask, INPUT_ENCODER_TOKENS_KEY: fusion_tokens}
