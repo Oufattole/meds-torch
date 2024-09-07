@@ -114,7 +114,7 @@ MAX_POLARS_THREADS=4 meds-torch-train experiment=triplet_mtr paths.data_dir="${M
     hydra.searchpath=[pkg://meds_torch.configs,"$(pwd)/MIMICIV_TUTORIAL/configs/meds-torch-configs"]
 ```
 
-Now we can launch a meds-torch experiment. The `text_code_mtr.yaml` experiment will require around `???` of GPU memory and takes ~???min per epoch.
+Now we can launch a meds-torch experiment. The `text_code_mtr.yaml` experiment will require around `26GB` of GPU memory and takes ~47min per epoch.
 
 ```console
 export MIMICIV_MEDS_DIR=??? # set to the directory in which you want to store the raw MIMIC-IV data

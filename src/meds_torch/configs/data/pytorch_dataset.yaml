@@ -20,7 +20,7 @@ train_subset_seed: 1
 
 # Tokenization params
 collate_type: triplet
-tokenizer: "bert-base-uncased"
+tokenizer: "emilyalsentzer/Bio_ClinicalBERT"
 do_include_subject_id: false
 do_include_subsequence_indices: false
 do_include_start_time_min: false
@@ -32,6 +32,7 @@ max_seq_len: 512
 min_seq_len: null
 subsequence_sampling_strategy: random
 seq_padding_side: right
+text_max_seq_len: 8
 
 dataloader:
   batch_size: 128 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)

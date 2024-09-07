@@ -12,17 +12,15 @@ An encoder for (time, code, value) triplets in medical data.     TextObservation
 observations in medical data.
 """
 import torch
-from loguru import logger
 from omegaconf import DictConfig
 from torch import nn
-from transformers import AutoModel
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.input_encoder.triplet_encoder import CVE
 from meds_torch.utils.module_class import Module
 
 
-class AutoEmbedder(nn.Module):
+class AutoEmbedder(nn.Module, Module):
     """A wrapper class for HuggingFace's AutoModel to embed code sequences.
 
     This class initializes a pre-trained model specified in the configuration and provides a forward method to
@@ -32,10 +30,9 @@ class AutoEmbedder(nn.Module):
     (AutoModel): The pre-trained model for code embedding.
     """
 
-    def __init__(self, cfg: DictConfig):
+    def __init__(self, code_embedder):
         super().__init__()
-        self.cfg = cfg
-        self.code_embedder = AutoModel.from_pretrained(self.cfg.pretrained_model)
+        self.code_embedder = code_embedder
 
     def forward(self, x, mask):
         """Embed the input sequences using the pre-trained model.
@@ -49,10 +46,9 @@ class AutoEmbedder(nn.Module):
         batch_size, sequence_length, feature_dimension = x.shape
         x_reshaped = x.view(batch_size * sequence_length, feature_dimension)
         mask_reshaped = mask.view(batch_size * sequence_length, feature_dimension)
-        outputs = self.code_embedder(input_ids=x_reshaped, attention_mask=mask_reshaped)
-        # TODO(@oufattole) generalize to other hf models
-        pooler_output = outputs["pooler_output"]
-        pooler_output = pooler_output.view(batch_size, sequence_length, -1)
+
+        outputs = self.code_embedder(x_reshaped, mask=mask_reshaped.to(bool))
+        pooler_output = outputs.view(batch_size, sequence_length, -1)
 
         return pooler_output
 
@@ -72,8 +68,8 @@ class TextCodeEncoder(nn.Module, Module):
         super().__init__()
         self.cfg = cfg
         self.date_embedder = CVE(cfg)
-        self.code_embedder = AutoEmbedder(cfg)
-        self.code_head = nn.Linear(cfg.pretrained_model_token_dim, cfg.token_dim)
+        self.code_embedder = cfg.auto_embedder
+        self.code_head = nn.Linear(cfg.text_token_dim, cfg.token_dim)
         self.numeric_value_embedder = CVE(cfg)
 
     def embed_func(self, embedder, x):
@@ -97,6 +93,8 @@ class TextCodeEncoder(nn.Module, Module):
 
         # Embed times and mask static value times
         time_emb = self.embed_func(self.date_embedder, time_delta_days) * ~static_mask.unsqueeze(dim=1)
+        for param in self.code_embedder.code_embedder.parameters():
+            param.requires_grad = False
         text_code_embedding = self.code_embedder.forward(code_tokens, code_mask)
         code_emb = torch.nan_to_num(self.code_head(text_code_embedding).permute(0, 2, 1))
         val_emb = self.embed_func(self.numeric_value_embedder, numeric_value) * numeric_value_mask.unsqueeze(
@@ -119,41 +117,4 @@ class TextCodeEncoder(nn.Module, Module):
         embedding = self.get_embedding(batch)
         batch[INPUT_ENCODER_MASK_KEY] = batch["mask"]
         batch[INPUT_ENCODER_TOKENS_KEY] = embedding.transpose(1, 2)
-        return batch
-
-
-class TextObservationEncoder(nn.Module, Module):
-    """An encoder for processing text observations in medical data.
-
-    This class uses a pre-trained model to embed textual medical observations.
-
-    Attributes:     cfg (DictConfig): Configuration object containing model parameters.     code_embedder
-    (AutoEmbedder): Encoder for text observations.
-    """
-
-    def __init__(self, cfg: DictConfig):
-        super().__init__()
-        logger.warning("TextObservationEncoder is experimental.")
-        self.cfg = cfg
-        self.code_embedder = AutoEmbedder(cfg)
-
-    def get_embedding(self, batch):
-        observation_tokens = batch["observation_tokens"]
-        observation_mask = batch["observation_mask"]
-
-        embedding = self.code_embedder.forward(observation_tokens, observation_mask).permute(0, 2, 1)
-
-        assert embedding.isfinite().all(), "Embedding is not finite"
-        return embedding
-
-    def forward(self, batch):
-        """Embed the input batch of observations and update it with the generated embeddings.
-
-        Args:     batch (dict): A dictionary containing observation data.
-
-        Returns:     dict: Updated batch dictionary with added embedding information.
-        """
-        embedding = self.get_embedding(batch)
-        batch[INPUT_ENCODER_MASK_KEY] = batch["mask"]
-        batch[INPUT_ENCODER_TOKENS_KEY] = embedding
         return batch

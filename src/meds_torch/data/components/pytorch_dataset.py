@@ -6,8 +6,6 @@ from enum import StrEnum
 from pathlib import Path
 
 import numpy as np
-
-MAX_POLARS_THREADS = 1
 import polars as pl
 import torch
 from loguru import logger
@@ -28,8 +26,6 @@ class CollateType(StrEnum):
     event_stream = "event_stream"
     triplet = "triplet"
     text_code = "text_code"
-    text_observation = "text_observation"
-    all_text = "all_text"
     triplet_prompt = "triplet_prompt"
     eic = "eic"
 
@@ -388,6 +384,22 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             self.filter_to_subset()
 
         self.set_inter_event_time_stats()
+
+        # Initialize tokenizer here
+        self.init_tokenizer()
+
+    def init_tokenizer(self):
+        if self.config.collate_type == CollateType.text_code:
+            if not hasattr(self, "tokenized_codes"):
+                # Disable parallelism for tokenization as it will cause issues when num_workers > 0 in the
+                # pytorch dataloader
+                os.environ["TOKENIZERS_PARALLELISM"] = "false"
+                tokenizer = AutoTokenizer.from_pretrained(
+                    self.config.tokenizer, model_max_length=self.config.text_max_seq_len
+                )
+                self.tokenized_codes = self.tokenize_metadata(
+                    tokenizer, self.code_metadata, special_tokens={self.config.EOS_TOKEN_ID: "[CLS]"}
+                )
 
     def read_shards(self):
         """Reads the split-specific subject shards from the ESGPT or MEDS dataset."""
@@ -1183,93 +1195,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return output
 
     @classmethod
-    def process_text_observation(
-        cls, item: dict, tokenized_codes: dict, tokenized_sentence, tokenizer, whole_observation=False
-    ) -> dict:
-        """Processes a single triplet of dynamic and static data.
-
-        This function takes a dictionary containing dynamic and static data, processes the tensors, and
-        concatenates them appropriately to create a unified representation of the data.
-
-        Args:     item: A dictionary containing 'dynamic' and 'static' data.     tokenized_codes: A dictionary
-        containing the tokenized codes.
-
-        Returns:     A dictionary with the processed data including:         - mask: A mask indicating valid
-        data points.         - static_mask: A mask indicating static data points.         - code: Concatenated
-        static and dynamic codes.         - numeric_value: Concatenated static and dynamic numerical values. -
-        time_delta_days: Concatenated static and dynamic time deltas.
-        """
-        raise NotImplementedError(
-            "[Experimental] -- Do not use this function as it is still under development."
-        )
-        dynamic_data = item["dynamic"]
-        raw_codes = dynamic_data["dim1/code"]
-        raw_values = dynamic_data["dim1/numeric_value"]
-        raw_times = dynamic_data["dim0/time_delta_days"]
-
-        static_values = np.asarray(item["static_values"], dtype=raw_values[0].dtype)
-        static_indices = np.asarray(item["static_indices"], dtype=raw_codes[0].dtype)
-        code = np.concatenate([static_indices, raw_codes], dtype=np.int32, casting="unsafe")
-        tokens = [tokenized_codes[c] for c in code]
-        code_tokens, code_mask = zip(*tokens)
-
-        numeric_value = np.concatenate([static_values, raw_values])
-        numeric_value_mask = ~np.isnan(numeric_value)
-        # # Replace NaNs with 0s
-        np.nan_to_num(numeric_value, nan=0, copy=False)
-        np.nan_to_num(raw_times, nan=0, copy=False)
-
-        static_mask = np.zeros(len(code), dtype=bool)
-        static_mask[: len(static_values)] = True
-
-        lengths = np.concatenate([[len(static_values)], dynamic_data["dim1/lengths"]])
-        time_delta_days = np.repeat(
-            np.concatenate([np.array([0], dtype=raw_times.dtype), raw_times]), lengths
-        )
-        tokenized_values = cls.tokenize_batch(tokenizer, numeric_value.astype(str).tolist(), padding=False)
-        tokenized_values = tokenized_values[list(tokenized_values.keys())[0]]
-        tokenized_time = cls.tokenize_batch(tokenizer, time_delta_days.astype(str).tolist(), padding=False)
-        tokenized_time = tokenized_time[list(tokenized_time.keys())[0]]
-
-        tokenized_observations = []
-        for i, code_token in enumerate(code_tokens):
-            observation = []
-            observation.extend(tokenized_sentence[0] + list(code_token))
-            if numeric_value_mask[i]:
-                observation.extend(tokenized_sentence[1] + tokenized_values[i])
-            if static_mask[i]:
-                observation.extend(tokenized_sentence[2] + tokenized_time[i] + tokenized_sentence[3])
-            observation.extend(tokenized_sentence[4])
-            tokenized_observations.append(torch.tensor(observation))
-
-        if whole_observation:
-            suffix_tensor = torch.tensor(tokenized_sentence[5])
-            tokenized_observations = [
-                torch.cat([torch.cat([observation, suffix_tensor]) for observation in tokenized_observations])
-            ]
-
-        tokenized_observations_padded = torch.nn.utils.rnn.pad_sequence(
-            tokenized_observations,
-            batch_first=True,
-            padding_value=0,
-        )
-        observation_mask = torch.nn.utils.rnn.pad_sequence(
-            [torch.ones(len(observation)) for observation in tokenized_observations],
-            batch_first=True,
-            padding_value=0,
-        )
-
-        return dict(
-            mask=observation_mask[:, 0].bool(),
-            # static_mask=static_mask,
-            observation_tokens=tokenized_observations_padded,
-            observation_mask=observation_mask,
-            # numeric_value=numeric_value,
-            # time_delta_days=time_delta_days,
-            # numeric_value_mask=numeric_value_mask,
-        )
-
-    @classmethod
     def collate_text_code(cls, tokenized_codes: dict, batch: list[dict], prepend_static_data) -> dict:
         """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
 
@@ -1283,7 +1208,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         'static_mask', 'code_text', 'code_text_mask', 'numeric_value', 'numeric_value_mask',     and
         'time_delta_days'.
         """
-
         processed_batch = [
             cls.process_text_code(item, tokenized_codes, prepend_static_data) for item in batch
         ]
@@ -1315,7 +1239,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         Examples:
         >>> from transformers import AutoTokenizer
         >>> import polars as pl
-        >>> tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        >>> tokenizer = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
         >>> code_metadata = pl.LazyFrame({
         ...     "code": ["A//thing", "Because", "C", "three//in_a//row"],
         ...     "code/vocab_index": [2, 5, 6, 1]
@@ -1327,10 +1251,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         (6, ([1039, 0, 0, 0], [1, 0, 0, 0]))
         (1, ([2093, 1999, 1037, 5216], [1, 1, 1, 1]))
         """
-        # dict where code/vocab_index is key and value is code
-        # check if this is too slow --> should we move it somewhere else so we do it once and not per batch?
-        # change values so any // or _ is replaced with a space, check if value is not None
-        # make sure this is actually what we want
         code_metadata = code_metadata.with_columns(
             pl.col("code").fill_null("").str.replace_all("//", " ").str.replace_all("_", " ")
         )
@@ -1339,13 +1259,13 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         tokens = tokenizer(
             code_metadata.select("code").collect().to_series().to_list() + special_token_values,
             padding=padding,
-            # return_tensors="pt",
             return_token_type_ids=False,
             add_special_tokens=False,
+            truncation=True,
         )
-        # TODO(@oufattole) generalize to other hf models
         token_key = list(tokens.keys())[0]
         mask_key = list(tokens.keys())[1]
+
         token_dict = dict(
             zip(
                 code_metadata.select("code/vocab_index").collect().to_series().to_list() + special_token_keys,
@@ -1353,56 +1273,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             )
         )
         return token_dict
-
-    @classmethod
-    def collate_text_observation(
-        cls, batch: list[dict], tokenized_codes, tokenized_sentence, tokenizer, whole_observation=False
-    ) -> dict:
-        """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
-
-        This function handles conversion of arrays to tensors and padding of elements within the batch across
-        static data elements, sequence observations, and dynamic data elements.
-
-        Args:     batch: A list of dictionaries with dynamic and static data from `__getitem__` method
-        outputs.
-
-        Returns:     A dictionary containing tensorized and padded data for each key. The keys include 'mask',
-        'static_mask', 'code_text', 'code_text_mask', 'numeric_value', 'numeric_value_mask',     and
-        'time_delta_days'.
-        """
-        processed_batch = [
-            cls.process_text_observation(
-                item, tokenized_codes, tokenized_sentence, tokenizer, whole_observation=whole_observation
-            )
-            for item in batch
-        ]
-
-        max_sizes = {}
-        for k in processed_batch[0].keys():
-            max_size = max([x[k].shape[1] for x in processed_batch if x[k].ndim > 1] + [0])
-            if max_size > 0:
-                max_sizes[k] = max_size
-        for k in max_sizes.keys():
-            # pad the tensors for everything with multiple dims to the max size
-            for x in processed_batch:
-                if x[k].ndim == 1:
-                    # add dimension
-                    x[k] = x[k].unsqueeze(0)
-                x[k] = torch.nn.functional.pad(x[k], (0, max_sizes[k] - x[k].shape[1]), value=0)
-
-        tensorized_batch = {
-            k: torch.nn.utils.rnn.pad_sequence(
-                [torch.as_tensor(x[k]) for x in processed_batch],
-                batch_first=True,
-                padding_value=0,
-            )
-            for k in processed_batch[0].keys()
-        }
-        for k in batch[0].keys():
-            if k not in ("dynamic", "static_values", "static_indices"):
-                tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
-
-        return tensorized_batch
 
     def collate(self, batch: list[dict]) -> dict:
         """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
@@ -1424,43 +1294,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         elif collate_type == CollateType.triplet:
             return self.collate_triplet(batch, self.config.do_prepend_static_data)
         elif collate_type == CollateType.text_code:
-            # check this
-            if not hasattr(self, "tokenized_codes"):
-                tokenizer = AutoTokenizer.from_pretrained(self.config.tokenizer)
-                self.tokenized_codes = self.tokenize_metadata(
-                    tokenizer, self.code_metadata, special_tokens={self.config.EOS_TOKEN_ID: "[CLS]"}
-                )
-                self.tokenized_codes[self.config.EOS_TOKEN_ID]
             return self.collate_text_code(self.tokenized_codes, batch, self.config.do_prepend_static_data)
-        elif collate_type == CollateType.text_observation:
-            if not hasattr(self, "tokenized_codes"):
-                self.tokenizer = AutoTokenizer.from_pretrained(self.config.tokenizer)
-                self.tokenized_codes = self.tokenize_metadata(
-                    self.tokenizer, self.code_metadata, padding=False
-                )
-                self.tokenized_sentence = self.tokenize_batch(
-                    self.tokenizer,
-                    ["Code", "has value", "measured", "after the previous observation", ".", "\n"],
-                )
-                # TODO(@oufattole) generalize to other hf models
-                self.tokenized_sentence = self.tokenized_sentence[list(self.tokenized_sentence.keys())[0]]
-            return self.collate_text_observation(
-                batch, self.tokenized_codes, self.tokenized_sentence, self.tokenizer
-            )
-        elif collate_type == CollateType.all_text:
-            if not hasattr(self, "tokenized_codes"):
-                self.tokenizer = AutoTokenizer.from_pretrained(self.config.tokenizer)
-                self.tokenized_codes = self.tokenize_metadata(
-                    self.tokenizer, self.code_metadata, padding=False
-                )
-                self.tokenized_sentence = self.tokenize_batch(
-                    self.tokenizer,
-                    ["Code", "has value", "measured", "after the previous observation", ".", "\n"],
-                )
-                # TODO(@oufattole) generalize to other hf models
-                self.tokenized_sentence = self.tokenized_sentence[list(self.tokenized_sentence.keys())[0]]
-            return self.collate_text_observation(
-                batch, self.tokenized_codes, self.tokenized_sentence, self.tokenizer, whole_observation=True
-            )
         else:
             raise NotImplementedError(f"Unsupported collate type {collate_type}!")

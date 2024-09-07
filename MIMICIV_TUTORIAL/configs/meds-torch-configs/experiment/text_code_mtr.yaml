@@ -4,7 +4,7 @@
 # order of defaults determines the order in which configs override each other
 defaults:
   - override /data: pytorch_dataset
-  - override /logger: wandb
+  # - override /logger: wandb
   - override /model/backbone: triplet_transformer_encoder
   - override /model/input_encoder: text_code_encoder
   - override /model: supervised
@@ -15,6 +15,7 @@ defaults:
 
 tags: ["mimiciv", "text_code", "transformer_encoder", "supervised"]
 
+tokenizer: "google-bert/bert-base-uncased"
 seed: 0
 
 trainer:
@@ -28,6 +29,8 @@ data:
     num_workers: 8
   max_seq_len: 512
   collate_type: "text_code"
+  text_max_seq_len: 16
+  tokenizer: ${tokenizer}
 
 model:
   token_dim: 512
@@ -37,6 +40,11 @@ model:
     n_layers: 6
     nheads: 8
     dropout: 0.1
+  input_encoder:
+    tokenizer: ${tokenizer}
+    text_token_dim: 128
+    text_n_layers: 4
+    text_nheads: 4
 
 
 logger:

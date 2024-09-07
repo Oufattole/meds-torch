@@ -12,8 +12,6 @@ from meds_torch.data.components.multiwindow_pytorch_dataset import (
 )
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
 from meds_torch.data.datamodule import MEDSDataModule
-
-# from meds_torch.data.components.pytorch_dataset
 from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 
 
@@ -25,12 +23,12 @@ from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
         "triplet_prompt",
         "eic",
         "text_code",
-    ],  # TODO: add "text_observation", "all_text"
+    ],
 )
 def test_pytorch_dataset(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir)
     cfg.data.collate_type = collate_type
-    cfg.data.tokenizer = "bert-base-uncased"
+    cfg.data.tokenizer = "emilyalsentzer/Bio_ClinicalBERT"
     pyd = PytorchDataset(cfg.data, split="train")
     assert not pyd.has_task
     item = pyd[0]
@@ -65,18 +63,6 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "numeric_value",
             "time_delta_days",
             "numeric_value_mask",
-        }
-    elif collate_type == "text_observation":
-        assert set(batch.keys()) == {
-            "mask",
-            "observation_tokens",
-            "observation_mask",
-        }
-    elif collate_type == "all_text":
-        assert set(batch.keys()) == {
-            "mask",
-            "observation_tokens",
-            "observation_mask",
         }
     elif collate_type == "triplet_prompt":
         assert batch.keys() == {
