@@ -88,7 +88,7 @@ pip install hydra-joblib-launcher
 Second, run the following command to extract the supervised task labels:
 
 ```console
-TASK_NAME="long_los" # set name of the task
+TASK_NAME="long_los" # set name of the task, options are currently "icu_mortality" or "long_los"
 TASKS_DIR="$MIMICIV_MEDS_DIR/tasks/" # set to the directory in which you want to store all tasks
 mkdir -p "$TASKS_DIR" # create a directory for the task
 cp MIMICIV_TUTORIAL/configs/${TASK_NAME}.yaml $TASKS_DIR/${TASK_NAME}.yaml

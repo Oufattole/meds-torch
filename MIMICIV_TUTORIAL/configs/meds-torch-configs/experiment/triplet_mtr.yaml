@@ -13,7 +13,12 @@ defaults:
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters
 
-tags: ["mimiciv", "triplet", "transformer_encoder", "supervised"]
+tags:
+  - "mimiciv"
+  - "triplet"
+  - "transformer_encoder"
+  - "supervised"
+  - ${data.task_name}
 
 seed: 0
 
@@ -25,7 +30,7 @@ trainer:
 data:
   dataloader:
     batch_size: 64
-    num_workers: 8
+    num_workers: 4
   max_seq_len: 512
   collate_type: "triplet"
 
