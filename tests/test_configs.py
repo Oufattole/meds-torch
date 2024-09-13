@@ -50,7 +50,7 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
 
     supervised = model == "supervised"
     if model == "token_forecasting":
-        raises_value_error = (token_type == "text") or (backbone.endswith("transformer_encoder"))
+        raises_value_error = (token_type == "text") or ("transformer_encoder" in backbone)
 
     if early_fusion is not None:
         overrides.append(f"model.early_fusion={early_fusion}")
@@ -124,6 +124,8 @@ def test_train_config(kwargs: dict) -> None:  # cfg: DictConfig,
     elif backbone == "transformer_decoder":
         assert isinstance(backbone_model, TransformerDecoderModel)
     elif backbone == "transformer_encoder":
+        assert isinstance(backbone_model, TransformerEncoderModel)
+    elif backbone == "transformer_encoder_attn_avg":
         assert isinstance(backbone_model, TransformerEncoderModel)
     else:
         raise NotImplementedError(f"Unsupported backbone {backbone}!")
