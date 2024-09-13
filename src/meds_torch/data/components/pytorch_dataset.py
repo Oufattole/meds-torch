@@ -195,7 +195,7 @@ def to_int_index(col: pl.Expr) -> pl.Expr:
     return pl.when(col.is_null()).then(pl.lit(None)).otherwise(indices).alias(col.meta.output_name())
 
 
-def merge_task_with_static(task_df, static_dfs):
+def merge_task_with_static(task_df: pl.DataFrame, static_dfs: dict[str, pl.DataFrame], tasks: list[str]):
     """Merges a DataFrame containing task information with multiple static DataFrames on the 'subject_id'
     column. The function performs a sequence of operations to merge these dataframes based on subject
     identifiers and respective timestamps.
@@ -204,51 +204,46 @@ def merge_task_with_static(task_df, static_dfs):
     - task_df (DataFrame): A DataFrame with columns 'subject_id', 'start_time', 'end_time', and 'label'.
     - static_dfs (dict of DataFrames): A dictionary of DataFrames indexed by their source names,
       each containing 'subject_id', 'start_time', 'static_indices', 'static_values', and "time".
+    - tasks (list[str]): A list of task names to be merged with the static DataFrames.
 
     Returns:
     - DataFrame: The merged DataFrame containing data from task_df and all static_dfs.
 
-    # Example:
-    # >>> from datetime import datetime
-    # >>> import polars as pl
-    # >>> task_df = pl.DataFrame({
-    # ...     "subject_id": [1, 2],
-    # ...     "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
-    # ...     "end_time": [datetime(2020, 1, 2), datetime(2020, 1, 3)],
-    # ...     "label": [0, 1]
-    # ... })
-    # >>> static_dfs = {
-    # ...     'train/0': pl.DataFrame({
-    # ...         "subject_id": [1, 2],
-    # ...         "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
-    # ...         "time": [[datetime(2020, 1, 1, 1), datetime(2020, 1, 1, 3)],
-    # ...                       [datetime(2020, 1, 2), datetime(2020, 1, 1, 2, 3)]]
-    # ...     })
-    # ... }
-    # >>> merge_task_with_static(task_df, static_dfs)
-    # shape: (2, 6)
-    # ┌────────────┬────────────┬─────────────┬────────────┬────────────┬────────────┐
-    # │ _row_index ┆ subject_id ┆ start_time  ┆ end_time   ┆ start_time ┆ timestamp  │
-    # │ ---        ┆ ---        ┆ ---         ┆ ---        ┆ _global    ┆ ---        │
-    # │ u32        ┆ i64        ┆ list[dateti ┆ list[datet ┆ ---        ┆ list[datet │
-    # │            ┆            ┆ me[μs]]     ┆ ime[μs]]   ┆ datetime[μ ┆ ime[μs]]   │
-    # │            ┆            ┆             ┆            ┆ s]         ┆            │
-    # ╞════════════╪════════════╪═════════════╪════════════╪════════════╪════════════╡
-    # │ 0          ┆ 1          ┆ [2020-01-01 ┆ [2020-01-0 ┆ 2020-01-01 ┆ [2020-01-0 │
-    # │            ┆            ┆ 00:00:00]   ┆ 2          ┆ 00:00:00   ┆ 1          │
-    # │            ┆            ┆             ┆ 00:00:00]  ┆            ┆ 01:00:00,  │
-    # │            ┆            ┆             ┆            ┆            ┆ 2020-01-…  │
-    # │ 1          ┆ 2          ┆ [2020-01-02 ┆ [2020-01-0 ┆ 2020-01-02 ┆ [2020-01-0 │
-    # │            ┆            ┆ 00:00:00]   ┆ 3          ┆ 00:00:00   ┆ 2          │
-    # │            ┆            ┆             ┆ 00:00:00]  ┆            ┆ 00:00:00,  │
-    # │            ┆            ┆             ┆            ┆            ┆ 2020-01-…  │
-    # └────────────┴────────────┴─────────────┴────────────┴────────────┴────────────┘
+    Example:
+    >>> from datetime import datetime
+    >>> import polars as pl
+    >>> task_df = pl.DataFrame({
+    ...     "subject_id": [1, 2],
+    ...     "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
+    ...     "end_time": [datetime(2020, 1, 2), datetime(2020, 1, 3)],
+    ...     "label": [0, 1]
+    ... })
+    >>> static_dfs = {
+    ...     'train/0': pl.DataFrame({
+    ...         "subject_id": [1, 2],
+    ...         "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
+    ...         "time": [[datetime(2020, 1, 1, 1), datetime(2020, 1, 1, 3)],
+    ...                       [datetime(2020, 1, 2), datetime(2020, 1, 1, 2, 3)]]
+    ...     })
+    ... }
+    >>> tasks = ["label"]
+    >>> result = merge_task_with_static(task_df, static_dfs, tasks)
+    >>> result.select(['subject_id', 'end_time', 'label', 'time'])
+    shape: (2, 4)
+    ┌────────────┬───────────────────────┬───────────┬─────────────────────────────────┐
+    │ subject_id ┆ end_time              ┆ label     ┆ time                            │
+    │ ---        ┆ ---                   ┆ ---       ┆ ---                             │
+    │ i64        ┆ list[datetime[μs]]    ┆ list[i64] ┆ list[datetime[μs]]              │
+    ╞════════════╪═══════════════════════╪═══════════╪═════════════════════════════════╡
+    │ 1          ┆ [2020-01-02 00:00:00] ┆ [0]       ┆ [2020-01-01 01:00:00, 2020-01-… │
+    │ 2          ┆ [2020-01-03 00:00:00] ┆ [1]       ┆ [2020-01-02 00:00:00, 2020-01-… │
+    └────────────┴───────────────────────┴───────────┴─────────────────────────────────┘
     """
     task_df_joint = (
-        task_df.select("subject_id", "start_time", "end_time")
+        task_df.select("subject_id", "start_time", "end_time", *tasks)
         .with_row_index(IDX_COL)
         .group_by(IDX_COL, "subject_id", maintain_order=True)
-        .agg("start_time", "end_time")
+        .agg("start_time", "end_time", *tasks)
         .join(
             pl.concat(static_dfs.values()).select(
                 "subject_id", pl.col("start_time").alias("start_time_global"), "time"
@@ -256,23 +251,26 @@ def merge_task_with_static(task_df, static_dfs):
             on="subject_id",
             how="left",
         )
-        .with_columns(pl.col("time"))
+        .with_columns(pl.col("time"), pl.col(tasks))
     )
     return task_df_joint
 
 
-def get_task_indexes(task_df_joint) -> list[tuple[int, int, int]]:
+def get_task_indices_and_labels(
+    task_df_joint: pl.DataFrame, tasks: list[str]
+) -> tuple[list[tuple[int, int, int]], dict[str, list]]:
     """Processes the joint DataFrame to determine the index range for each subject's tasks.
 
-    For each row in task_df_joint, it is assumed that `timestamp` is a sorted column
-    and the start index and end index of the span of timestamps in between `start_time` and `end_time`
-    are computed.
+    For each row in task_df_joint, it is assumed that `time` is a sorted column and the function
+    computes the start index and end index of the span of time values in between `start_time` and `end_time`.
 
     Parameters:
     - task_df_joint (DataFrame): A DataFrame resulting from the merge_task_with_static function.
+    - tasks (list[str]): A list of task names that are columns in task_df_joint.
 
     Returns:
-    - list: list of tuples (subject_id, start_idx, end_idx).
+    - list: list of index tuples of format (subject_id, start_idx, end_idx).
+    - dict: dictionary of task names to lists of labels in the same order as the indexes.
 
     Example:
     >>> from datetime import datetime
@@ -295,29 +293,43 @@ def get_task_indexes(task_df_joint) -> list[tuple[int, int, int]]:
     ...     ],
     ...     "time": [
     ...         pl.date_range(datetime(2021, 1, 1), datetime(2021, 1, 5), "1d", eager=True)
-    ...     ]*5
+    ...     ]*5,
+    ...     "label": [[0], [0], [0], [1], [1]],
     ... })
-    >>> get_task_indexes(df)
+    >>> tasks = ["label"]
+    >>> indexes, labels = get_task_indices_and_labels(df, tasks)
+    >>> indexes
     [(0, 0, 1), (1, 0, 1), (2, 0, 2), (3, 1, 3), (4, 2, 3)]
+    >>> labels
+    {'label': [0, 0, 0, 1, 1]}
     """
     start_idx_expr = (
         (pl.col("time").search_sorted(pl.col("start_time"), side="left")).first().alias("start_idx")
     )
     end_idx_expr = (pl.col("time").search_sorted(pl.col("end_time"), side="left")).last().alias("end_idx")
-    task_df_joint = (
-        task_df_joint.explode("start_time", "end_time")
+    task_index_df = (
+        task_df_joint.explode("start_time", "end_time", *tasks)
         .explode("time")
         .group_by(IDX_COL, "subject_id", "start_time", "end_time", maintain_order=True)
         .agg(start_idx_expr, end_idx_expr)
     )
 
-    subject_ids = task_df_joint["subject_id"]
-    start_indices = task_df_joint["start_idx"]
-    end_indices = task_df_joint["end_idx"]
+    label_df = task_index_df.join(task_df_joint[IDX_COL, *tasks], how="left", on=IDX_COL).sort(IDX_COL)
+    label_df = label_df.explode(*tasks)
+    if not label_df.shape[0] == task_index_df.shape[0]:
+        raise ValueError(
+            "There are multiple labels for a single task index!"
+            f"There are {label_df.shape[0]} labels for {task_index_df.shape[0]} task indexes."
+        )
+
+    subject_ids = label_df["subject_id"]
+    start_indices = label_df["start_idx"]
+    end_indices = label_df["end_idx"]
+    labels = {task: label_df[task].to_list() for task in tasks}
 
     indexes = list(zip(subject_ids, start_indices, end_indices))
 
-    return indexes
+    return indexes, labels
 
 
 class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
@@ -490,7 +502,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             while idx_col in task_df.columns:
                 idx_col = f"_{idx_col}"
 
-            task_df_joint = merge_task_with_static(task_df, self.static_dfs)
+            task_df_joint = merge_task_with_static(task_df, self.static_dfs, self.tasks)
             # Filter out subjects that are not in the split
             split_subjects = set(
                 pl.concat(self.static_dfs.values())
@@ -500,8 +512,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             )
             task_df_joint = task_df_joint.filter(pl.col("subject_id").is_in(split_subjects))
             # Convert dates to indexes in the nested ragged tensor, (for fast indexing of data)
-            self.index = get_task_indexes(task_df_joint)
-            self.labels = {t: task_df.get_column(t).to_list() for t in self.tasks}
+            self.index, self.labels = get_task_indices_and_labels(task_df_joint, self.tasks)
         else:
             self.index = [(subj, *bounds) for subj, bounds in self.subj_seq_bounds.items()]
             self.labels = {}
@@ -1246,10 +1257,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         ...     })
         >>> tokenized_metadata = PytorchDataset.tokenize_metadata(tokenizer, code_metadata)
         >>> for each in tokenized_metadata.items(): print(each)
-        (2, ([1037, 2518, 0, 0], [1, 1, 0, 0]))
-        (5, ([2138, 0, 0, 0], [1, 0, 0, 0]))
-        (6, ([1039, 0, 0, 0], [1, 0, 0, 0]))
-        (1, ([2093, 1999, 1037, 5216], [1, 1, 1, 1]))
+        (2, ([170, 1645, 0, 0], [1, 1, 0, 0]))
+        (5, ([1272, 0, 0, 0], [1, 0, 0, 0]))
+        (6, ([172, 0, 0, 0], [1, 0, 0, 0]))
+        (1, ([1210, 1107, 170, 5105], [1, 1, 1, 1]))
         """
         code_metadata = code_metadata.with_columns(
             pl.col("code").fill_null("").str.replace_all("//", " ").str.replace_all("_", " ")

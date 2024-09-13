@@ -3,7 +3,6 @@
 import shutil
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 import pytest
 import rootutils
@@ -24,16 +23,25 @@ def meds_dir(tmp_path_factory) -> Path:
     logger.info(meds_dir)
     # copy test data to temporary directory
     shutil.copytree(Path("./tests/test_data"), meds_dir, dirs_exist_ok=True)
-    label_df = pl.read_parquet(meds_dir / "MEDS_cohort" / "data/*/*.parquet")
-    label_df = label_df.sort(["subject_id", "time"]).filter(pl.col("time").is_not_null())
+    meds_df = pl.read_parquet(meds_dir / "MEDS_cohort" / "data/*/*.parquet")
+    meds_df = meds_df.sort(["subject_id", "time"]).filter(pl.col("time").is_not_null())
     start_time_expr = pl.col("time").get(0).alias("start_time")
     end_time_expr = pl.col("time").get(pl.len() // 2).alias("end_time")
-    label_df = label_df.group_by("subject_id", maintain_order=True).agg(start_time_expr, end_time_expr)
-    rng = np.random.default_rng(0)
-    label_df = label_df.with_columns(pl.lit(rng.integers(0, 2, label_df.height)).alias(SUPERVISED_TASK_NAME))
+    labels_df = meds_df.group_by("subject_id", maintain_order=True).agg(start_time_expr, end_time_expr)
+    filter_meds_df = meds_df.join(labels_df, on="subject_id", how="left").filter(
+        (pl.col("time") >= pl.col("start_time")) & (pl.col("time") <= pl.col("end_time"))
+    )
+    label_expr = (
+        (pl.col("code").eq("ADMISSION//ONCOLOGY") | pl.col("code").eq("ADMISSION//CARDIAC"))
+        .any()
+        .alias(SUPERVISED_TASK_NAME)
+    )
+    labels_df = (
+        filter_meds_df.group_by("subject_id").agg(label_expr).join(labels_df, on="subject_id", how="left")
+    )
     tasks_dir = meds_dir / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)
-    label_df.write_parquet(tasks_dir / f"{SUPERVISED_TASK_NAME}.parquet")
+    labels_df.write_parquet(tasks_dir / f"{SUPERVISED_TASK_NAME}.parquet")
     return meds_dir
 
 

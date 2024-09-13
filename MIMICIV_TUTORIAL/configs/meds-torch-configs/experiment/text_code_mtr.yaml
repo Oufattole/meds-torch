@@ -36,6 +36,7 @@ data:
   collate_type: "text_code"
   text_max_seq_len: 16
   tokenizer: ${tokenizer}
+  subsequence_sampling_strategy: "to_end"
 
 model:
   token_dim: 512
@@ -44,7 +45,7 @@ model:
   backbone:
     n_layers: 6
     nheads: 8
-    dropout: 0.1
+    dropout: 0
   input_encoder:
     tokenizer: ${tokenizer}
     text_token_dim: 128

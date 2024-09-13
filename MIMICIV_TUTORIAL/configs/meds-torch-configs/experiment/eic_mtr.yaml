@@ -34,6 +34,7 @@ data:
     num_workers: 4
   max_seq_len: 512
   collate_type: "eic"
+  subsequence_sampling_strategy: "to_end"
 
 model:
   token_dim: 512
@@ -42,7 +43,7 @@ model:
   backbone:
     n_layers: 6
     nheads: 8
-    dropout: 0.1
+    dropout: 0
 
 
 logger:
