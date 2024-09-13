@@ -41,7 +41,7 @@ model:
   backbone:
     n_layers: 6
     nheads: 8
-    dropout: 0.1
+    dropout: 0
 
 
 logger:

@@ -2,9 +2,14 @@ import rootutils
 
 root = rootutils.setup_root(__file__, dotenv=True, pythonpath=True, cwd=True)
 
+import functools
+import operator
 from pathlib import Path
 
+import polars as pl
 import pytest
+import torch
+from omegaconf import open_dict
 from torch.utils.data import DataLoader
 
 from meds_torch.data.components.multiwindow_pytorch_dataset import (
@@ -89,14 +94,54 @@ def test_pytorch_dataset(meds_dir, collate_type):
 @pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt", "text_code", "eic"])
 def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir, supervised=True)
-    cfg.data.collate_type = collate_type
+    with open_dict(cfg):
+        cfg.data.collate_type = collate_type
+        cfg.data.dataloader.batch_size = 70
     assert Path(cfg.data.task_label_path).exists(), f"Path does not exist: {cfg.data.task_label_path}"
 
     pyd = PytorchDataset(cfg.data, split="train")
+    assert len(pyd) == 70
     assert pyd.has_task
     item = pyd[0]
     assert item.keys() == {"static_indices", "static_values", "dynamic", "supervised_task"}
-    batch = pyd.collate([pyd[i] for i in range(2)])
+    task_df = pl.read_parquet(meds_dir / "tasks/supervised_task.parquet")
+    code_index_df = pl.read_parquet(meds_dir / "triplet_tensors/metadata/codes.parquet")[
+        "code", "code/vocab_index"
+    ]
+    target_indices = code_index_df.filter(
+        pl.col("code").eq("ADMISSION//ONCOLOGY") | pl.col("code").eq("ADMISSION//CARDIAC")
+    )["code/vocab_index"].to_list()
+    items = []
+    for index in range(len(pyd)):
+        subject_data = pyd[index]
+        if not collate_type == "event_stream":
+            subject_id, _, __loader__ = pyd.index[index]
+            pyd.subj_map[subject_id]
+            static_df_index = pyd.static_dfs[pyd.subj_map[subject_id]][pyd.subj_indices[subject_id]][
+                "subject_id"
+            ].item()
+            # Check the subject ids match
+            assert static_df_index == subject_id, f"Subject ids do not match for index {index}"
+
+            # Check the supervised task matches the label
+            assert (
+                task_df.filter(pl.col("subject_id").eq(subject_id))[SUPERVISED_TASK_NAME].item()
+                == subject_data[SUPERVISED_TASK_NAME]
+            )
+            assert subject_data[SUPERVISED_TASK_NAME] == pyd.labels[SUPERVISED_TASK_NAME][index]
+            # Check the supervised task matches the target indices
+            data_label = bool(
+                functools.reduce(
+                    operator.or_, [subject_data["dynamic"]["dim1/code"] == t for t in target_indices]
+                ).any()
+            )
+            assert (
+                data_label == subject_data[SUPERVISED_TASK_NAME]
+            ), f"Supervised task does not match target indices for index {index}"
+
+        items.append(subject_data)
+
+    batch = pyd.collate(items)
     if collate_type == "event_stream":
         assert batch.keys() == {
             "event_mask",
@@ -118,6 +163,16 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             "numeric_value_mask",
             SUPERVISED_TASK_NAME,
         }
+        code_tensor = batch["code"]
+        is_target_tensor = torch.zeros_like(code_tensor)
+        for target_index in target_indices:
+            is_target_tensor = is_target_tensor | code_tensor == target_index
+        labels = [each[SUPERVISED_TASK_NAME] for each in items]
+        # Check labels are in the same order after collating
+        assert batch[SUPERVISED_TASK_NAME].to(bool).tolist() == labels
+        # Data should have the right order after collating, using data derived labels
+        data_label = functools.reduce(operator.or_, [code_tensor == t for t in target_indices]).any(axis=1)
+        assert data_label.tolist() == labels, "Supervised task does not match target indices"
     elif collate_type == "eic":
         assert batch.keys() == {
             "mask",
