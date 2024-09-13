@@ -72,7 +72,7 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
             ("multiwindow_pytorch_dataset", "ocp", "false"),
         ]
         for input_encoder in ["triplet_encoder", "eic_encoder", "text_code_encoder"]
-        for backbone in ["transformer_decoder", "transformer_encoder", "lstm"]
+        for backbone in ["transformer_decoder", "transformer_encoder", "lstm", "transformer_encoder_attn_avg"]
     ]
 )
 def kwargs(request, meds_dir) -> dict:

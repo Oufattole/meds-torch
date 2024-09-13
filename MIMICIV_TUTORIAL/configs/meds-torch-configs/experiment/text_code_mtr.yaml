@@ -36,6 +36,7 @@ data:
   collate_type: "text_code"
   text_max_seq_len: 16
   tokenizer: ${tokenizer}
+  subsequence_sampling_strategy: "to_end"
 
 model:
   token_dim: 512

@@ -34,6 +34,7 @@ data:
     num_workers: 4
   max_seq_len: 512
   collate_type: "eic"
+  subsequence_sampling_strategy: "to_end"
 
 model:
   token_dim: 512
