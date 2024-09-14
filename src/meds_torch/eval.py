@@ -76,7 +76,7 @@ def main(cfg: DictConfig) -> None:
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
-    os.makedirs(cfg.paths.output_dir, exist_ok=True)
+    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
     extras(cfg)
 
     evaluate(cfg)

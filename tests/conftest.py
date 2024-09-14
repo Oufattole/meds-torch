@@ -5,7 +5,6 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-import rootutils
 from hydra import compose, initialize
 from loguru import logger
 from omegaconf import DictConfig, open_dict
@@ -53,7 +52,6 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml", supervised=F
         cfg = compose(config_name=config_name, return_hydra_config=True, overrides=overrides)
 
         with open_dict(cfg):
-            cfg.paths.root_dir = str(rootutils.find_root(indicator=".project-root"))
             if "data.collate_type=eic" in overrides:
                 cfg.paths.data_dir = str(meds_dir / "eic_tensors")
             else:

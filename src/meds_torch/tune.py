@@ -46,7 +46,7 @@ def ray_tune_runner(cfg: DictConfig, train_fn: Callable):
         scheduler=hydra.utils.instantiate(cfg.hparams_search.scheduler),
         resources_per_trial=OmegaConf.to_container(cfg.hparams_search.ray.resources_per_trial),
         name="ray_tune",
-        storage_path=cfg.paths.output_dir,
+        storage_path=cfg.paths.time_output_dir,
     )
 
     # Return the best trial results
@@ -62,7 +62,7 @@ def main(cfg: DictConfig) -> float | None:
     :return: Optional[float] with optimized metric value.
     """
     # apply extra utilities
-    os.makedirs(cfg.paths.output_dir, exist_ok=True)
+    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
     extras(cfg)
 
     # Choose the training function based on the configuration
@@ -77,12 +77,12 @@ def main(cfg: DictConfig) -> float | None:
     analysis, best_trial = ray_tune_runner(cfg, train_fn=train_fn)
 
     # return tune results
-    analysis.dataframe().to_csv(Path(cfg.paths.output_dir) / "tune_results.csv")
+    analysis.dataframe().to_csv(Path(cfg.paths.time_output_dir) / "tune_results.csv")
     result_value = best_trial.last_result[cfg.hparams_search.optimized_metric]
 
     ray.shutdown()
 
-    with open(Path(cfg.paths.output_dir) / "best_result.json", "w") as outfile:
+    with open(Path(cfg.paths.time_output_dir) / "best_result.json", "w") as outfile:
         json.dump(best_trial.last_result, outfile)
 
     return result_value
