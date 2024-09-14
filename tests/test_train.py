@@ -3,6 +3,7 @@
 TODO: finish the meds_torch.train function and setup tests for it
 """
 import os
+from decimal import Decimal
 from pathlib import Path
 
 import hydra
@@ -119,3 +120,39 @@ def test_train_resume(tmp_path: Path, kwargs: dict) -> None:  # noqa: F811
 
         assert "train/loss" in metric_dict_1 and "val/loss" in metric_dict_1
         assert "train/loss" in metric_dict_2 and "val/loss" in metric_dict_2
+
+
+@RunIf(min_gpus=1, wandb=True, do_log=True)
+def test_model_memorization_train(kwargs, tmp_path) -> None:  # noqa: F811
+    """Tests the training configuration provided by the `cfg_train` pytest fixture.
+
+    :param cfg_train: A DictConfig containing a valid training configuration.
+    """
+    cfg = kwargs["cfg"]
+    raises_value_error = kwargs["raises_value_error"]
+
+    with open_dict(cfg):
+        cfg.trainer.fast_dev_run = True
+        cfg.trainer.accelerator = "gpu"
+        cfg.paths.output_dir = str(tmp_path)
+        cfg.data.dataloader.batch_size = 70
+        cfg.trainer.limit_train_batches = None
+        cfg.trainer.limit_val_batches = None
+        cfg.trainer.limit_test_batches = None
+        cfg.trainer.max_epochs = 1000
+        cfg.trainer.max_steps = -1
+        cfg.trainer.fast_dev_run = False
+        cfg.model.backbone.dropout = 0
+        lr = 1e-16
+        lr_string = "%.2E" % Decimal(lr)
+        cfg.model.optimizer.lr = lr
+        del cfg.callbacks.early_stopping
+        model = kwargs["input_kwargs"]["backbone"]
+        cfg.logger.name = f"{model}--{lr_string}"
+
+    HydraConfig().set_config(cfg)
+    if raises_value_error:
+        with pytest.raises(hydra.errors.InstantiationException):
+            train(cfg)
+    else:
+        train(cfg)

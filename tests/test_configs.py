@@ -44,6 +44,7 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
         f"model/backbone={backbone}",
         f"model={model}",
         collate_type_override,
+        "logger=wandb",
     ]
 
     raises_value_error = False

@@ -15,6 +15,7 @@ from pytest import MarkDecorator
 from tests.helpers.package_available import (
     _COMET_AVAILABLE,
     _DEEPSPEED_AVAILABLE,
+    _DO_LOG,
     _FAIRSCALE_AVAILABLE,
     _IS_WINDOWS,
     _MLFLOW_AVAILABLE,
@@ -51,6 +52,7 @@ class RunIf:
         neptune: bool = False,
         comet: bool = False,
         mlflow: bool = False,
+        do_log: bool = False,
         **kwargs: dict[Any, Any],
     ) -> MarkDecorator:
         """Creates a new `@RunIf` `MarkDecorator` decorator.
@@ -127,6 +129,10 @@ class RunIf:
         if mlflow:
             conditions.append(not _MLFLOW_AVAILABLE)
             reasons.append("mlflow")
+
+        if do_log:
+            conditions.append(not _DO_LOG)
+            reasons.append("Logging is disabled")
 
         reasons = [rs for cond, rs in zip(conditions, reasons) if cond]
         return pytest.mark.skipif(

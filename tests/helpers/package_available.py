@@ -1,3 +1,4 @@
+import os
 import platform
 
 import pkg_resources
@@ -29,3 +30,4 @@ _WANDB_AVAILABLE = _package_available("wandb")
 _NEPTUNE_AVAILABLE = _package_available("neptune")
 _COMET_AVAILABLE = _package_available("comet_ml")
 _MLFLOW_AVAILABLE = _package_available("mlflow")
+_DO_LOG = os.getenv("DO_LOG", "False").lower() in ("true", "1", "t")

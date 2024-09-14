@@ -41,8 +41,8 @@ model:
   optimizer:
     lr: 0.001
   backbone:
-    n_layers: 6
-    nheads: 8
+    n_layers: 2
+    nheads: 4
     dropout: 0
 
 

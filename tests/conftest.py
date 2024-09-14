@@ -12,6 +12,8 @@ from omegaconf import DictConfig, open_dict
 
 from meds_torch.utils.resolvers import setup_resolvers
 
+from .helpers.package_available import _DO_LOG
+
 setup_resolvers()
 
 SUPERVISED_TASK_NAME = "supervised_task"
@@ -70,7 +72,8 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml", supervised=F
             cfg.data.pin_memory = False
             cfg.extras.print_config = False
             cfg.extras.enforce_tags = False
-            cfg.logger = None
+            if not _DO_LOG:
+                cfg.logger = None
             cfg.data.dataloader.batch_size = 2
 
             # Additional settings for specific fixtures
