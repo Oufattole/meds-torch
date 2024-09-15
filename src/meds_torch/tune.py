@@ -97,14 +97,17 @@ def main(cfg: DictConfig) -> float | None:
         train_fn = train
     elif cfg.hparams_search.train_fn == "finetune":
         train_fn = finetune
-        if Path(cfg.best_config_path).exists():
-            logger.warning(f"Loading best tuning result from {cfg.best_config_path}")
-            with open(Path(cfg.best_config_path)) as config_json:
-                best_config = json.load(config_json)
-            for key, value in best_config.items():
-                OmegaConf.update(cfg, key, value, merge=False)
     else:
         raise ValueError(f"Invalid train_fn: {cfg.hparams_search.train_fn}, should be 'train' or 'finetune'")
+
+    if cfg.best_config_path and Path(cfg.best_config_path).exists():
+        logger.info(f"Loading best tuning config from {cfg.best_config_path}")
+        with open(Path(cfg.best_config_path)) as config_json:
+            best_config = json.load(config_json)
+        for key, value in best_config.items():
+            OmegaConf.update(cfg, key, value, merge=False)
+    else:
+        logger.info("No best config provided")
 
     # Run Ray Tune optimization
     with open_dict(cfg):

@@ -464,6 +464,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             if self.config.task_root_dir is None:
                 raise ValueError("`task_root_dir` must be provided if task is specified!")
             task_df_fp = Path(self.config.task_label_path)
+            if not task_df_fp.is_file():
+                logger.info(f"If the task file is not found at {task_df_fp}")
+                task_df_fp = task_df_fp.with_suffix("") / "**/*.parquet"
+                logger.info(f"Searching for task parquets over the glob {task_df_fp}")
+
             task_info_fp = Path(self.config.task_info_path)
 
             logger.info(f"Reading task constraints for {self.config.task_name} from {task_df_fp}")

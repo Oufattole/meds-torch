@@ -2,7 +2,6 @@
 ray:
   num_samples: 8
   resources_per_trial:
-    cpu: 4
     gpu: 1
 
 # choose metric which will be optimized by Ray Tune

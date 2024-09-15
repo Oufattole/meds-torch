@@ -1,8 +1,7 @@
 # Ray Tune configuration
 ray:
-  num_samples: 8
+  num_samples: 5
   resources_per_trial:
-    cpu: 4
     gpu: 1
 
 # choose metric which will be optimized by Ray Tune
@@ -16,11 +15,7 @@ search_space:
     lower: 0
     upper: 10000
 
-scheduler:
-  _target_: ray.tune.schedulers.ASHAScheduler
-  max_t: ${trainer.max_epochs}
-  grace_period: 2
-  reduction_factor: 2
+scheduler: null
 
 # Choose between train and finetune
 train_fn: ${name}

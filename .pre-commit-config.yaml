@@ -84,12 +84,6 @@ repos:
             "__init__.py:F401",
           ]
 
-  # shell scripts linter
-  - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.9.0.5
-    hooks:
-      - id: shellcheck
-
   # md formatting
   - repo: https://github.com/executablebooks/mdformat
     rev: 0.7.17
