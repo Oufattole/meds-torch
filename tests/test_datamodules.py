@@ -266,14 +266,15 @@ def test_full_datamodule(meds_dir):
     ],
 )
 def test_random_window_pytorch_dataset(meds_dir, collate_type):
-    cfg = create_cfg(overrides=[], meds_dir=meds_dir)
+    cfg = create_cfg(overrides=["data=random_windows_pytorch_dataset"], meds_dir=meds_dir)
     with open_dict(cfg):
         cfg.data.collate_type = collate_type
         cfg.data.tokenizer = "emilyalsentzer/Bio_ClinicalBERT"
+        cfg.data.min_window_size = 10
+        cfg.data.max_window_size = 50
+        cfg.data.n_windows = 1
 
-    rwd = RandomWindowPytorchDataset(
-        cfg.data, split="train", min_window_size=10, max_window_size=50, n_windows=1
-    )
+    rwd = RandomWindowPytorchDataset(cfg.data, split="train")
     assert not rwd.has_task
     item = rwd[0]
     assert set(item.keys()) == {"window_0"}
@@ -317,12 +318,16 @@ def test_random_window_pytorch_dataset(meds_dir, collate_type):
 
 
 def test_random_window_generation(meds_dir):
-    cfg = create_cfg(overrides=[], meds_dir=meds_dir)
+    cfg = create_cfg(overrides=["data=random_windows_pytorch_dataset"], meds_dir=meds_dir)
     with open_dict(cfg):
         cfg.data.collate_type = "triplet"
+        cfg.data.min_window_size = 10
+        cfg.data.max_window_size = 50
+        cfg.data.n_windows = 1
 
     rwd = RandomWindowPytorchDataset(
-        cfg.data, split="train", min_window_size=10, max_window_size=50, n_windows=1
+        cfg.data,
+        split="train",
     )
 
     # Test generate_random_windows method
@@ -338,13 +343,14 @@ def test_random_window_generation(meds_dir):
 
 
 def test_random_window_batch_sizes(meds_dir):
-    cfg = create_cfg(overrides=[], meds_dir=meds_dir)
+    cfg = create_cfg(overrides=["data=random_windows_pytorch_dataset"], meds_dir=meds_dir)
     with open_dict(cfg):
         cfg.data.collate_type = "triplet"
+        cfg.data.min_window_size = 10
+        cfg.data.max_window_size = 50
+        cfg.data.n_windows = 1
 
-    rwd = RandomWindowPytorchDataset(
-        cfg.data, split="train", min_window_size=10, max_window_size=50, n_windows=1
-    )
+    rwd = RandomWindowPytorchDataset(cfg.data, split="train")
 
     batch = rwd.collate([rwd[i] for i in range(4)])
     assert len(batch["window_0"]["mask"]) == 4
@@ -352,3 +358,70 @@ def test_random_window_batch_sizes(meds_dir):
     # Check that window sizes are within the specified range
     window_sizes = batch["window_0"]["mask"].sum(dim=1)
     assert all(10 <= size <= 50 for size in window_sizes)
+
+
+def test_random_window_generation_modes(meds_dir):
+    cfg = create_cfg(overrides=["data=random_windows_pytorch_dataset"], meds_dir=meds_dir)
+    with open_dict(cfg):
+        cfg.data.collate_type = "triplet"
+        cfg.data.n_windows = 3
+        cfg.data.window_names = ["window_1", "window_2", "window_3"]
+        cfg.data.max_window_size = 50
+
+    # Test consecutive windows
+    with open_dict(cfg):
+        cfg.data.consecutive_windows = True
+
+    rwd_consecutive = RandomWindowPytorchDataset(cfg.data, split="train")
+
+    # Generate windows for a hypothetical sequence of length 200
+    consecutive_windows = rwd_consecutive.generate_random_windows(200)
+
+    # Check if windows are consecutive
+    window_starts = [w[0] for w in consecutive_windows.values()]
+    window_ends = [w[1] for w in consecutive_windows.values()]
+
+    assert all(
+        window_ends[i] == window_starts[i + 1] for i in range(len(window_starts) - 1)
+    ), "Consecutive windows are not truly consecutive"
+
+    assert window_starts == sorted(window_starts), "Consecutive windows are not in order"
+
+    # Test non-consecutive windows
+    with open_dict(cfg):
+        cfg.data.consecutive_windows = False
+
+    rwd_non_consecutive = RandomWindowPytorchDataset(cfg.data, split="train")
+
+    # Generate windows for a hypothetical sequence of length 200
+    non_consecutive_windows = rwd_non_consecutive.generate_random_windows(200)
+
+    # Check if windows are non-consecutive (at least one pair is non-consecutive)
+    window_starts = [w[0] for w in non_consecutive_windows.values()]
+    window_ends = [w[1] for w in non_consecutive_windows.values()]
+
+    assert any(
+        window_ends[i] != window_starts[i + 1] for i in range(len(window_starts) - 1)
+    ), "Non-consecutive windows are all consecutive"
+
+    # Additional checks
+    for mode, windows in [("Consecutive", consecutive_windows), ("Non-consecutive", non_consecutive_windows)]:
+        # Check if all windows are within the sequence length
+        assert all(
+            0 <= start < end <= 200 for start, end in windows.values()
+        ), f"{mode} windows exceed sequence length"
+
+        # Check if window sizes are correct
+        assert all(
+            0 < end - start <= cfg.data.max_window_size for start, end in windows.values()
+        ), f"{mode} window sizes are incorrect"
+
+        # Check if the correct number of windows is generated
+        assert len(windows) == cfg.data.n_windows, f"Incorrect number of {mode.lower()} windows generated"
+
+        # Check if window names are correct
+        assert set(windows.keys()) == set(
+            cfg.data.window_names
+        ), f"Incorrect window names for {mode.lower()} windows"
+
+    print("All window generation tests passed successfully!")

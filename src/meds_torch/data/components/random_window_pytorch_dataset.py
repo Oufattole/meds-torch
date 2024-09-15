@@ -20,14 +20,12 @@ class RandomWindowPytorchDataset(PytorchDataset):
     generate for each sample.
     """
 
-    def __init__(
-        self, cfg: DictConfig, split: str, min_window_size: int, max_window_size: int, n_windows: int = 2
-    ):
+    def __init__(self, cfg: DictConfig, split: str):
         super().__init__(cfg, split)
-        self.min_window_size = min_window_size
-        self.max_window_size = max_window_size
-        self.n_windows = n_windows
-        self.window_cols = [f"window_{i}" for i in range(n_windows)]
+        self.min_window_size = cfg.min_window_size
+        self.max_window_size = cfg.max_window_size
+        self.n_windows = cfg.n_windows
+        self.window_cols = [f"window_{i}" for i in range(cfg.n_windows)]
         self.cfg = cfg
 
     def generate_random_windows(self, seq_length: int) -> list[tuple[int, int]]:
