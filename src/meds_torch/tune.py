@@ -14,6 +14,7 @@ from loguru import logger
 from omegaconf import DictConfig, OmegaConf, open_dict
 from ray import tune
 
+from meds_torch.eval import evaluate
 from meds_torch.finetune import finetune
 from meds_torch.train import train
 from meds_torch.utils import RankedLogger, extras
@@ -147,6 +148,18 @@ def main(cfg: DictConfig) -> float | None:
         lambda x: get_checkpoint_path(x[log_dir_index], x[ckpt_dir_name_index], cfg.paths.time_output_dir)
     )
     summary_df = summary_df.with_columns(best_checkpoint_path=checkpoint_paths.to_series())
+
+    if cfg.get("test"):
+        logger.info("Computing Test Results")
+        test_results = []
+        for ckpt_path in summary_df["best_checkpoint_path"].to_list():
+            cfg.ckpt_path = ckpt_path
+            result, _ = evaluate(cfg)
+            test_results.append(result)
+        results = {key: [result[key] for result in test_results] for key in test_results[0].keys()}
+        for key, values in results.items():
+            summary_df = summary_df.with_columns(pl.Series(values).alias(key))
+
     summary_df.write_parquet(Path(cfg.paths.time_output_dir) / "sweep_results_summary.parquet")
 
     return best_trial, result_value
