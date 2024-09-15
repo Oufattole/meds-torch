@@ -69,26 +69,31 @@ Second, run the following command to extract the supervised task labels:
 
 ```console
 TASKS=(
-    "los/in_hospital/first_48h.yaml"
-    "los/in_icu/first_48h.yaml"
-    "mortality/in_hospital/first_24h.yaml"
-    "mortality/in_hospital/first_48h.yaml"
-    "mortality/in_icu/first_24h.yaml"
-    "mortality/in_icu/first_48h.yaml"
-    "mortality/post_hospital_discharge/30d.yaml"
-    "readmission/30d.yaml"
+    "los/in_hospital/first_48h"
+    "los/in_icu/first_48h"
+    "mortality/in_hospital/first_24h"
+    "mortality/in_hospital/first_48h"
+    "mortality/in_icu/first_24h"
+    "mortality/in_icu/first_48h"
+    "mortality/post_hospital_discharge/30d"
+    "readmission/30d"
 )
 for TASK_NAME in "${TASKS[@]}"; do
-    TASKS_DIR="$MIMICIV_MEDS_DIR/tasks/" # set to the directory in which you want to store all tasks
-    mkdir -p "$TASKS_DIR" # create a directory for the task
-    cp MIMICIV_TUTORIAL/configs/${TASK_NAME}.yaml $TASKS_DIR/${TASK_NAME}.yaml
-    aces-cli data.standard=meds data.path="$MIMICIV_MEDS_DIR/data" cohort_dir="$TASKS_DIR" cohort_name="$TASK_NAME"
+    SINGLE_TASK_DIR="${MIMICIV_MEDS_DIR}/tasks/${TASK_NAME}"
+    mkdir -p $SINGLE_TASK_DIR # create a directory for the task
+    cp MIMICIV_INDUCTIVE_EXPERIMENTS/configs/tasks/${TASK_NAME}.yaml "${SINGLE_TASK_DIR}.yaml"
+    aces-cli --multirun hydra/launcher=joblib data=sharded data.standard=meds data.root="$MIMICIV_MEDS_DIR/data" "data.shard=$(expand_shards $MIMICIV_MEDS_DIR/data)" cohort_dir="$TASKS_DIR" cohort_name="$TASK_NAME"
 done
 ```
 
-## Launching MEDS-Torch Experiments
+## Launching Tokenization Inductive Experiments
 
 Now choose your task, let's do `long_los`:
+
+```console
+latest_dir=$(ls -1 /tmp/pytest-of-nassim/pytest-539/test_transfer_learning_multiwi0/pretrain/ | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]+$' | sort -r | head -n1)
+echo "Most recent directory: /tmp/pytest-of-nassim/pytest-539/test_transfer_learning_multiwi0/pretrain/$latest_dir"
+```
 
 ```console
 export MIMICIV_MEDS_DIR=??? # set to the directory in which you want to store the raw MIMIC-IV data

@@ -23,11 +23,11 @@ from meds_torch.utils.resolvers import setup_resolvers
 
 setup_resolvers()
 log = RankedLogger(__name__, rank_zero_only=True)
-config_yaml = files("meds_torch").joinpath("configs/transfer_learning.yaml")
+config_yaml = files("meds_torch").joinpath("configs/finetune.yaml")
 
 
 @task_wrapper
-def transfer_learning(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
+def finetune(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     """Trains the model. Can additionally evaluate on a testset, using best weights obtained during training.
 
     This method is wrapped in optional @task_wrapper decorator, that controls the behavior during failure.
@@ -130,7 +130,7 @@ def main(cfg: DictConfig) -> float | None:
     extras(cfg)
 
     # train the model
-    metric_dict, _ = transfer_learning(cfg)
+    metric_dict, _ = finetune(cfg)
 
     # safely retrieve metric value for hydra-based hyperparameter optimization
     metric_value = get_metric_value(metric_dict=metric_dict, metric_name=cfg.get("optimized_metric"))

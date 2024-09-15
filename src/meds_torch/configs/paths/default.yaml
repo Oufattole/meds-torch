@@ -7,7 +7,7 @@ meds_cohort_dir: ???
 # use it to store all files generated during the run, like ckpts and metrics
 output_dir: ???
 
-time_output_dir: ${paths.output_dir}/${now:%Y-%m-%d_%H-%M-%S-%f}
+time_output_dir: ${paths.output_dir}/${now:%Y-%m-%d_%H-%M-%S_%f}
 
 # path to logging directory
 log_dir: ${paths.time_output_dir}/logs/

@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import torch
+from filelock import FileLock
 from loguru import logger
 from mixins import SeedableMixin
 from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
@@ -116,12 +117,13 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         self.split = split
         self.pytorch_dataset = PytorchDataset(cfg, split)
         cached_windows_fp = Path(cfg.cache_dir) / f"{split}.parquet"
-        if cached_windows_fp.exists():
-            window_df = pl.read_parquet(cached_windows_fp)
-        else:
-            logger.info("No cached windows found. Caching now.")
-            cache_window_indexes(cfg, split, self.pytorch_dataset.static_dfs)
-            window_df = pl.read_parquet(cached_windows_fp)
+        with FileLock(f"{cached_windows_fp}.lock"):
+            if cached_windows_fp.exists():
+                window_df = pl.read_parquet(cached_windows_fp)
+            else:
+                logger.info("No cached windows found. Caching now.")
+                cache_window_indexes(cfg, split, self.pytorch_dataset.static_dfs)
+                window_df = pl.read_parquet(cached_windows_fp)
         self.window_cols = sorted(
             list({col.split(".")[0] for col in window_df.columns if col.endswith("_idx")})
         )

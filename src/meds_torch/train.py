@@ -1,4 +1,5 @@
 import os
+import shutil
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -79,19 +80,19 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
 
     if cfg.get("test"):
         log.info("Starting testing!")
-        ckpt_path = trainer.checkpoint_callback.best_model_path
-        if ckpt_path == "":
+        best_model_path = trainer.checkpoint_callback.best_model_path
+        if best_model_path == "":
             log.warning("Best ckpt not found! Using current weights for testing...")
-            ckpt_path = None
-        trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
-        log.info(f"Best ckpt path: {ckpt_path}")
+            best_model_path = None
+        trainer.test(model=model, datamodule=datamodule, ckpt_path=best_model_path)
+        log.info(f"Best ckpt path: {best_model_path}")
 
     test_metrics = trainer.callback_metrics
 
     # merge train and test metrics
     metric_dict = {**train_metrics, **test_metrics}
 
-    return metric_dict, object_dict
+    return metric_dict, object_dict, best_model_path
 
 
 @hydra.main(version_base="1.3", config_path=str(config_yaml.parent.resolve()), config_name=config_yaml.stem)
@@ -107,10 +108,16 @@ def main(cfg: DictConfig) -> float | None:
     extras(cfg)
 
     # train the model
-    metric_dict, _ = train(cfg)
+    metric_dict, _, best_model_path = train(cfg)
 
     # safely retrieve metric value for hydra-based hyperparameter optimization
     metric_value = get_metric_value(metric_dict=metric_dict, metric_name=cfg.get("optimized_metric"))
+
+    checkpoint_dir = Path(cfg.paths.time_output_dir) / "checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    if not cfg.trainer.get("fast_dev_run"):
+        shutil.copy(best_model_path, checkpoint_dir / "best_model.ckpt")
 
     # return optimized metric
     return metric_value

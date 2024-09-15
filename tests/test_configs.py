@@ -76,26 +76,34 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
         for backbone in ["transformer_decoder", "transformer_encoder", "lstm", "transformer_encoder_attn_avg"]
     ]
 )
-def kwargs(request, meds_dir) -> dict:
-    data, model, early_fusion, input_encoder, backbone = request.param
-    overrides, raises_value_error, supervised = get_overrides_and_exceptions(
-        data, model, early_fusion, input_encoder, backbone
-    )
-    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir, supervised=supervised)
-    return dict(
-        cfg=cfg,
-        raises_value_error=raises_value_error,
-        input_kwargs=dict(
-            data=data, model=model, early_fusion=early_fusion, input_encoder=input_encoder, backbone=backbone
-        ),
-    )
+def get_kwargs(request, meds_dir) -> dict:
+    def helper(extra_overrides: list[str] = []):
+        data, model, early_fusion, input_encoder, backbone = request.param
+        overrides, raises_value_error, supervised = get_overrides_and_exceptions(
+            data, model, early_fusion, input_encoder, backbone
+        )
+        cfg = create_cfg(overrides=overrides + extra_overrides, meds_dir=meds_dir, supervised=supervised)
+        return dict(
+            cfg=cfg,
+            raises_value_error=raises_value_error,
+            input_kwargs=dict(
+                data=data,
+                model=model,
+                early_fusion=early_fusion,
+                input_encoder=input_encoder,
+                backbone=backbone,
+            ),
+        )
+
+    return helper
 
 
-def test_train_config(kwargs: dict) -> None:  # cfg: DictConfig,
+def test_train_config(get_kwargs) -> None:  # cfg: DictConfig,
     """Tests the training configuration provided by the `cfg_train` pytest fixture.
 
     :param cfg_train: A DictConfig containing a valid training configuration.
     """
+    kwargs = get_kwargs()
     cfg = kwargs["cfg"]
     raises_value_error = kwargs["raises_value_error"]
     # input_encoder=input_encoder

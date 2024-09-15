@@ -11,14 +11,6 @@ direction: "min"
 
 # Define the search space
 search_space:
-  model.optimizer.lr:
-    _target_: ray.tune.loguniform
-    lower: 1e-6
-    upper: 1e-2
-  model.backbone.dropout:
-    _target_: ray.tune.uniform
-    lower: 0.1
-    upper: 0.3
   seed:
     _target_: ray.tune.randint
     lower: 0
