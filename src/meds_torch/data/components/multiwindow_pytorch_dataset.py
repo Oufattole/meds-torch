@@ -1,3 +1,4 @@
+from enum import StrEnum
 from pathlib import Path
 
 import numpy as np
@@ -100,6 +101,17 @@ def cache_window_indexes(cfg: DictConfig, split: str, static_dfs) -> pl.DataFram
     cache_window_fp = Path(cfg.cache_dir) / f"{split}.parquet"
     cache_window_fp.parent.mkdir(parents=True, exist_ok=True)
     cached_window_df.write_parquet(cache_window_fp)
+
+
+class MultiWindowSamplingStrategy(StrEnum):
+    """Enumeration of sampling strategies for multi-window datasets.
+
+    Attributes:     RANDOM: Randomly sample and window from the dataset, partitioning it into separate
+    subwindows.     PREDEFINED: Use predefined windows around events to sample from the dataset.
+    """
+
+    RANDOM = "random"
+    PREDEFINED = "predefined"
 
 
 class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
