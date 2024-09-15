@@ -18,6 +18,7 @@ run_job() {
     echo "Running job for ${task_name}..."
 
     export METHOD=supervised
+    export CONFIGS_FOLDER="MIMICIV_INDUCTIVE_EXPERIMENTS"
     export ROOT_DIR=${root_dir}
     export MEDS_DIR="${ROOT_DIR}/meds/"
     export TASKS_DIR=${MEDS_DIR}/tasks/
@@ -30,19 +31,19 @@ run_job() {
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate ${conda_env}
 
-    MAX_POLARS_THREADS=4 meds-torch-tune callbacks=tune_default \
-        hparams_search=ray_tune experiment=$experiment paths.data_dir=${TENSOR_DIR} \
-        paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${FINETUNE_SWEEP_DIR} \
-        data.task_name=$task_name data.task_root_dir=$TASKS_DIR \
-        hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/MIMICIV_TUTORIAL/configs/meds-torch-configs]
+    # MAX_POLARS_THREADS=4 meds-torch-tune callbacks=tune_default \
+    #     hparams_search=ray_tune experiment=$experiment paths.data_dir=${TENSOR_DIR} \
+    #     paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${FINETUNE_SWEEP_DIR} \
+    #     data.task_name=$task_name data.task_root_dir=$TASKS_DIR \
+    #     hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/${CONFIGS_FOLDER}/configs/meds-torch-configs]
 
-    BEST_CONFIG_PATH=$(meds-torch-latest-dir path=${FINETUNE_SWEEP_DIR})/best_config.yaml
+    BEST_CONFIG_PATH=$(meds-torch-latest-dir path=${FINETUNE_SWEEP_DIR})/best_config.json
 
     MAX_POLARS_THREADS=4 meds-torch-tune callbacks=tune_default best_config_path=${BEST_CONFIG_PATH} \
         hparams_search=ray_multiseed experiment=$experiment paths.data_dir=${TENSOR_DIR} \
         paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${FINETUNE_MULTISEED_DIR} \
         data.task_name=$task_name data.task_root_dir=$TASKS_DIR \
-        hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/MIMICIV_TUTORIAL/configs/meds-torch-configs]
+        hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/${CONFIGS_FOLDER}/configs/meds-torch-configs]
 
     echo "Job for ${task_name} completed."
 }

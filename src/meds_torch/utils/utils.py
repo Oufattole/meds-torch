@@ -53,10 +53,10 @@ def task_wrapper(task_func: Callable) -> Callable:
     :return: The wrapped task function.
     """
 
-    def wrap(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
+    def wrap(cfg: DictConfig, **kwargs) -> tuple[dict[str, Any], dict[str, Any]]:
         # execute the task
         try:
-            outputs = task_func(cfg=cfg)
+            outputs = task_func(cfg=cfg, **kwargs)
 
         # things to do if exception occurs
         except Exception as ex:

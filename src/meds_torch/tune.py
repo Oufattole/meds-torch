@@ -100,7 +100,9 @@ def main(cfg: DictConfig) -> float | None:
     else:
         raise ValueError(f"Invalid train_fn: {cfg.hparams_search.train_fn}, should be 'train' or 'finetune'")
 
-    if cfg.best_config_path and Path(cfg.best_config_path).exists():
+    if cfg.best_config_path:
+        if not Path(cfg.best_config_path).exists():
+            raise FileNotFoundError(f"Best config file not found at {cfg.best_config_path}")
         logger.info(f"Loading best tuning config from {cfg.best_config_path}")
         with open(Path(cfg.best_config_path)) as config_json:
             best_config = json.load(config_json)
@@ -154,10 +156,11 @@ def main(cfg: DictConfig) -> float | None:
 
     if cfg.get("test"):
         logger.info("Computing Test Results")
+        datamodule = hydra.utils.instantiate(cfg.data)
         test_results = []
         for ckpt_path in summary_df["best_checkpoint_path"].to_list():
             cfg.ckpt_path = ckpt_path
-            result, _ = evaluate(cfg)
+            result, _ = evaluate(cfg, datamodule=datamodule)
             test_results.append(result)
         results = {key: [result[key] for result in test_results] for key in test_results[0].keys()}
         for key, values in results.items():

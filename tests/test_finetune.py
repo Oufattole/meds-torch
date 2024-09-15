@@ -217,7 +217,6 @@ def test_finetune_multiseed(tmp_path: Path, get_kwargs, meds_dir) -> None:  # no
             cfg_finetune.trainer.max_epochs = 2
             cfg_finetune.callbacks.model_checkpoint.save_top_k = -1
             cfg_finetune.hparams_search.ray.num_samples = 2
-            cfg_finetune.hparams_search.scheduler.grace_period = 1
             cfg_finetune.trainer.accelerator = "gpu"
 
         HydraConfig().set_config(cfg_finetune)

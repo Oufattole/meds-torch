@@ -31,15 +31,15 @@ trainer:
 data:
   dataloader:
     batch_size: 64
-    num_workers: 4
-  max_seq_len: 512
+    num_workers: 6
+  max_seq_len: 128
   collate_type: "text_code"
   text_max_seq_len: 16
   tokenizer: ${tokenizer}
   subsequence_sampling_strategy: "to_end"
 
 model:
-  token_dim: 512
+  token_dim: 128
   optimizer:
     lr: 0.001
   backbone:

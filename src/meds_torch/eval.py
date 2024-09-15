@@ -22,7 +22,7 @@ config_yaml = files("meds_torch").joinpath("configs/eval.yaml")
 
 
 @task_wrapper
-def evaluate(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
+def evaluate(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str, Any]]:
     """Evaluates given checkpoint on a datamodule testset.
 
     This method is wrapped in optional @task_wrapper decorator, that controls the behavior during failure.
@@ -34,7 +34,8 @@ def evaluate(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     assert cfg.ckpt_path
 
     log.info(f"Instantiating datamodule <{cfg.data._target_}>")
-    datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data)
+    if not datamodule:
+        datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data)
 
     log.info(f"Instantiating model <{cfg.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.model)

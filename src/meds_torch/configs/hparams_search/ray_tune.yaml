@@ -16,7 +16,7 @@ search_space:
     upper: 1e-2
   model.backbone.dropout:
     _target_: ray.tune.uniform
-    lower: 0.1
+    lower: 0.0
     upper: 0.3
   seed:
     _target_: ray.tune.randint
