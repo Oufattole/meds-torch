@@ -167,6 +167,21 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 [col for col in window_df.columns if col.endswith("_idx")]
             ).to_dicts()
 
+    @property
+    def subject_ids(self) -> list[int]:
+        return [x[0] for x in self.index]
+
+    def __len__(self):
+        return len(self.index)
+
+    @property
+    def has_task(self) -> bool:
+        return self.config.task_name is not None
+
+    @property
+    def max_seq_len(self) -> int:
+        return self.config.max_seq_len
+
     def collate(self, batch: dict[str : np.array]) -> dict[str : torch.Tensor]:
         """Collate a batch of data samples into a single batch.
 
