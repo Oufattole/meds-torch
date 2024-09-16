@@ -2,12 +2,6 @@ from collections.abc import Callable
 
 import torch
 import torch.nn.functional as F
-from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
-from meds_torch.input_encoder.triplet_encoder import TripletEncoder
-from meds_torch.input_encoder.triplet_prompt_encoder import TripletPromptEncoder
-from meds_torch.models import BACKBONE_TOKENS_KEY, MODEL_LOSS_KEY
-from meds_torch.models.base_model import BaseModule
-from meds_torch.models.components import AUTOREGRESSIVE_MODELS
 from omegaconf import DictConfig
 from torch import nn
 from x_transformers import AutoregressiveWrapper
@@ -19,6 +13,13 @@ from x_transformers.autoregressive_wrapper import (
     identity,
     top_k,
 )
+
+from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
+from meds_torch.input_encoder.triplet_encoder import TripletEncoder
+from meds_torch.input_encoder.triplet_prompt_encoder import TripletPromptEncoder
+from meds_torch.models import BACKBONE_TOKENS_KEY, MODEL_LOSS_KEY
+from meds_torch.models.base_model import BaseModule
+from meds_torch.models.components import AUTOREGRESSIVE_MODELS
 
 # from meds_torch.model.architectures.mamba import MambaModel
 
@@ -166,9 +167,7 @@ class TripletForecastingModule(BaseModule):
         if numeric_value_mask.any():
             numeric_value_preds = self.process_numeric_values(numeric_value_logits, code_target)
             numeric_value_loss = F.mse_loss(numeric_value_preds, numeric_value_target, reduction="none")
-            numeric_value_loss = (
-                numeric_value_loss * numeric_value_mask
-            ).sum() / numeric_value_mask.sum()
+            numeric_value_loss = (numeric_value_loss * numeric_value_mask).sum() / numeric_value_mask.sum()
         else:
             numeric_value_loss = torch.as_tensor([0]).to(device=numeric_value_logits.device)
         # Time Loss
@@ -363,9 +362,7 @@ class TripletForecastingModule(BaseModule):
                 probs = F.softmax(filtered_logits / temperature, dim=-1)
                 code_sample = torch.multinomial(probs, 1)
 
-            numeric_value_sample = self.process_numeric_values(
-                forecast[numeric_VALUE_LOGITS], code_sample
-            )
+            numeric_value_sample = self.process_numeric_values(forecast[numeric_VALUE_LOGITS], code_sample)
             if isinstance(self.input_encoder, TripletEncoder):
                 time_sample = forecast[TIME_LOGITS].squeeze(dim=-1)
             else:
