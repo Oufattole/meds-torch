@@ -18,7 +18,7 @@ windows:
       death: (None, 0) # They must be alive at the time of hospital discharge
   target:
     start: trigger
-    end: start + 30d
+    end: start + 365d
     start_inclusive: False
     end_inclusive: True
     label: death

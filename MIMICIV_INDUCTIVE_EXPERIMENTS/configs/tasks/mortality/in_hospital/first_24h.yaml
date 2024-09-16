@@ -3,8 +3,8 @@ description: >-
   first 24 hours of data after admission, with a 24 hour gap between the input window and the target window.
   Patients who die or are discharged in the gap window are excluded. Note that this task is in-**hospital**
   mortality, not in-**ICU** mortality or **30-day** mortality, which are different tasks.
-  Note that this task is predicting the outcome for a patient's entire hospital stay, not just the first 24
-  hours or the subsequent 24 hours after the trigger event. Imminent mortality (on various time-scales) are
+  Note that this task is predicting the outcome for a patient's entire hospital stay, not just the first 48
+  hours or the subsequent 48 hours after the trigger event. Imminent mortality (on various time-scales) are
   different tasks.
 
 predicates:
@@ -13,7 +13,7 @@ predicates:
   hospital_discharge:
     code: {regex: "HOSPITAL_DISCHARGE//.*"}
   death:
-    code: DEATH
+    code: MEDS_DEATH
   discharge_or_death:
     expr: or(hospital_discharge, death)
 
@@ -25,6 +25,7 @@ windows:
     end: trigger + 24h
     start_inclusive: True
     end_inclusive: True
+    index_timestamp: end
   gap:
     start: input.end
     end: start + 24h

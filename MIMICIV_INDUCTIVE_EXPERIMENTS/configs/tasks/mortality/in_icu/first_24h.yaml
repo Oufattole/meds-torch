@@ -1,3 +1,13 @@
+# metadata:
+#  name: 24h ICU Mortality
+#  version: ...
+#  author: ...
+#  tags:
+#    - mortality_prediction
+#    - critical_care
+#    - post_admission_prediction
+#  description: ...
+
 description: >-
   This file specifies the base configuration for the prediction of in ICU mortality, leveraging only the first
   24 hours of data after ICU admission, with a 24 hour gap between the input window and the target window.
@@ -10,32 +20,43 @@ description: >-
   different tasks.
 
 predicates:
+  hospital_admission:
+    code: { regex: "^HOSPITAL_ADMISSION//.*" }
+  hospital_discharge:
+    code: { regex: "^HOSPITAL_DISCHARGE//.*" }
+
+  ED_registration:
+    code: { regex: "^ED_REGISTRATION//.*" }
+  ED_discharge:
+    code: { regex: "^ED_OUT//.*" }
+
   icu_admission:
-    code: {regex: "ICU_ADMISSION//.*"}
+    code: { regex: "^ICU_ADMISSION//.*" }
   icu_discharge:
-    code: {regex: "ICU_DISCHARGE//.*"}
+    code: { regex: "^ICU_DISCHARGE//.*" }
+
   death:
-    code: DEATH
+    code: MEDS_DEATH
   discharge_or_death:
-    expr: or(icu_discharge, death)
+    expr: or(icu_discharge, death, hospital_discharge)
 
 trigger: icu_admission
 
 windows:
   input:
-    start: NULL
+    start: null
     end: trigger + 24h
     start_inclusive: True
     end_inclusive: True
+    index_timestamp: end
   gap:
-    start: input.end
-    end: start + 24h
+    start: trigger
+    end: start + 48h
     start_inclusive: False
     end_inclusive: True
     has:
       icu_admission: (None, 0)
-      icu_discharge: (None, 0)
-      death: (None, 0)
+      discharge_or_death: (None, 0)
   target:
     start: gap.end
     end: start -> discharge_or_death
