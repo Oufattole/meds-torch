@@ -88,13 +88,13 @@ class EBCLModule(BaseModule):
         output = self.forward(batch)
         # pretrain metrics
         # pre metrics
-        labels = torch.arange(self.cfg.batch_size, device=output[MODEL_LOGITS_KEY].device)
-        self.train_pre_acc.update(output[MODEL_LOGITS_KEY], labels)
+        labels = torch.arange(output[MODEL_LOGITS_KEY].shape[0], device=output[MODEL_LOGITS_KEY].device)
+        self.train_pre_acc.update(torch.diag(output[MODEL_LOGITS_KEY]), labels)
         self.train_pre_auc.update(output[MODEL_LOGITS_KEY], labels)
 
         # post metrics
-        self.train_post_acc.update(output[MODEL_LOGITS_KEY].T, labels)
-        self.train_post_auc.update(output[MODEL_LOGITS_KEY].T, labels)
+        self.train_post_acc.update(torch.diag(output[MODEL_LOGITS_KEY]), labels)
+        self.train_post_auc.update(output[MODEL_LOGITS_KEY], labels)
 
         self.log("train/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
@@ -103,13 +103,15 @@ class EBCLModule(BaseModule):
         output = self.forward(batch)
         # pretrain metrics
         # pre metrics
-        labels = torch.arange(self.cfg.batch_size, device=output[MODEL_LOGITS_KEY].device)
-        self.val_pre_acc.update(output[MODEL_LOGITS_KEY], labels)
-        self.val_pre_auc.update(output[MODEL_LOGITS_KEY], labels)
+        labels = torch.arange(output[MODEL_LOGITS_KEY].shape[0], device=output[MODEL_LOGITS_KEY].device)
+        self.val_pre_acc.update(torch.diag(output[MODEL_LOGITS_KEY]), labels)
+        if output[MODEL_LOGITS_KEY].shape[0] == self.cfg.batch_size:
+            self.val_pre_auc.update(output[MODEL_LOGITS_KEY], labels)
 
         # post metrics
-        self.val_post_acc.update(output[MODEL_LOGITS_KEY].T, labels)
-        self.val_post_auc.update(output[MODEL_LOGITS_KEY].T, labels)
+        self.val_post_acc.update(torch.diag(output[MODEL_LOGITS_KEY]), labels)
+        if output[MODEL_LOGITS_KEY].shape[0] == self.cfg.batch_size:
+            self.val_post_auc.update(output[MODEL_LOGITS_KEY], labels)
         self.log("val/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 
@@ -117,13 +119,15 @@ class EBCLModule(BaseModule):
         output = self.forward(batch)
         # pretrain metrics
         # pre metrics
-        labels = torch.arange(self.cfg.batch_size, device=output[MODEL_LOGITS_KEY].device)
-        self.test_pre_acc.update(output[MODEL_LOGITS_KEY], labels)
-        self.test_pre_auc.update(output[MODEL_LOGITS_KEY], labels)
+        labels = torch.arange(output[MODEL_LOGITS_KEY].shape[0], device=output[MODEL_LOGITS_KEY].device)
+        self.test_pre_acc.update(torch.diag(output[MODEL_LOGITS_KEY]), labels)
+        if output[MODEL_LOGITS_KEY].shape[0] == self.cfg.batch_size:
+            self.test_pre_auc.update(output[MODEL_LOGITS_KEY], labels)
 
         # post metrics
-        self.test_post_acc.update(output[MODEL_LOGITS_KEY].T, labels)
-        self.test_post_auc.update(output[MODEL_LOGITS_KEY].T, labels)
+        self.test_post_acc.update(torch.diag(output[MODEL_LOGITS_KEY]), labels)
+        if output[MODEL_LOGITS_KEY].shape[0] == self.cfg.batch_size:
+            self.test_post_auc.update(output[MODEL_LOGITS_KEY], labels)
         self.log("test/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_LOSS_KEY]
 

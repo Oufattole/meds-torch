@@ -174,3 +174,5 @@ logs/*
 **/.logs/*
 output/*
 outputs/*
+
+wandb/

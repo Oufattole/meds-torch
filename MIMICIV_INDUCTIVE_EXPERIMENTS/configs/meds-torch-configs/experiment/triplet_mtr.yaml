@@ -17,8 +17,6 @@ tags:
   - "mimiciv"
   - "triplet"
   - "transformer_encoder"
-  - "supervised"
-  - ${data.task_name}
 
 seed: 0
 

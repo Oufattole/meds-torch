@@ -17,8 +17,6 @@ tags:
   - "mimiciv"
   - "eic"
   - "transformer_encoder"
-  - "supervised"
-  - ${data.task_name}
 
 seed: 0
 

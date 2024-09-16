@@ -44,17 +44,7 @@ Next we need to get some labels for our tasks. We will use the `long_los` task a
 
 There are two options:
 
-### Option 1: Download pre-extracted labels from gcp:
-
-```console
-TASKS=
-TASK_NAME="long_los" # set name of the task, options are currently "icu_mortality" or "long_los"
-TASKS_DIR="$MIMICIV_MEDS_DIR/tasks/" # set to the directory in which you want to store all tasks
-mkdir -p "${TASKS_DIR}/" # create a directory for the task
-gcloud storage cp gs://ehr_standardization_schema/benchmark_v1/data/labels/${TASK_NAME}.parquet "${TASKS_DIR}/${TASK_NAME}.parquet"
-```
-
-### Option 2: Use ACES to extract labels using a task config definition:
+### Use ACES to extract labels using a task config definition:
 
 We can manually extract the supervised task labels from our meds dataset using [aces](https://github.com/justin13601/ACES/tree/main). First install aces:
 
@@ -84,57 +74,30 @@ done
 
 ## Launching Tokenization Inductive Experiments
 
-Now choose your task, let's do `long_los`:
+Run Supervised Learning Experiments:
 
 ```console
-latest_dir=$(ls -1 /tmp/pytest-of-nassim/pytest-539/test_transfer_learning_multiwi0/pretrain/ | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]+$' | sort -r | head -n1)
-echo "Most recent directory: /tmp/pytest-of-nassim/pytest-539/test_transfer_learning_multiwi0/pretrain/$latest_dir"
+export MIMICIV_ROOT_DIR=??? # set to the parent directory of the meds folder
+export CONDA_ENV_NAME=meds-torch # set to the name of the conda environment you want to use
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_supervised.sh $MIMICIV_ROOT_DIR meds-torch $CONDA_ENV_NAME
+```
+
+Or run Transfer Learning Experiments:
+
+```console
+TRANSFER_LEARNING_METHOD=??? # set to the transfer learning method you want to use, choose one from "ebcl" "ocp" "value_forecasting"
+
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_multi_window_pretrain.sh $MIMICIV_ROOT_DIR $CONDA_ENV_NAME $TRANSFER_LEARNING_METHOD
+
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_finetune.sh $MIMICIV_ROOT_DIR $CONDA_ENV_NAME $TRANSFER_LEARNING_METHOD
 ```
 
 ```console
-export MIMICIV_MEDS_DIR=??? # set to the directory in which you want to store the raw MIMIC-IV data
-export TASK_NAME="long_los" # set name of the task
-export TASKS_DIR="$MIMICIV_MEDS_DIR/tasks/" # set to the directory in which you want to store all tasks
+TRANSFER_LEARNING_METHOD=??? # set to the transfer learning method you want to use, choose one from "token_forecasting" "triplet_forecasting"
+
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_pretrain.sh $MIMICIV_ROOT_DIR $CONDA_ENV_NAME $TRANSFER_LEARNING_METHOD
+
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_finetune.sh $MIMICIV_ROOT_DIR $CONDA_ENV_NAME $TRANSFER_LEARNING_METHOD
 ```
 
-Now we can launch a meds-torch experiment. The `eic_mtr.yaml` experiment will require around `26GB` of GPU memory and takes ~30min per epoch.
-
-```console
-export MIMICIV_EIC_DIR=??? # set to the directory in which you want to output the tensorized MIMIC-IV data
-export OUTPUT_DIR=??? # set to the directory in which you want to output checkpoints and results
-export CUDA_VISIBLE_DEVICES=0 # set to the GPU you want to use
-conda activate meds-torch
-
-MAX_POLARS_THREADS=4 meds-torch-train experiment=eic_mtr paths.data_dir="${MIMICIV_EIC_DIR}" \
-    paths.meds_cohort_dir="${MIMICIV_MEDS_DIR}" paths.output_dir="${OUTPUT_DIR}" \
-    data.task_name="$TASK_NAME" data.task_root_dir="$TASKS_DIR" \
-    hydra.searchpath=[pkg://meds_torch.configs,"$(pwd)/MIMICIV_TUTORIAL/configs/meds-torch-configs"]
-```
-
-Now we can launch a meds-torch experiment. The `triplet_mtr.yaml` experiment will require around `26GB` of GPU memory and takes ~30min per epoch on a single V100 GPU.
-
-```console
-export MIMICIV_TRIPLET_DIR=??? # set to the directory in which you want to output the tensorized MIMIC-IV data
-export OUTPUT_DIR=??? # set to the directory in which you want to output checkpoints and results
-export CUDA_VISIBLE_DEVICES=1 # set to the GPU you want to use
-conda activate meds-torch
-
-MAX_POLARS_THREADS=4 meds-torch-train experiment=triplet_mtr paths.data_dir="${MIMICIV_TRIPLET_DIR}" \
-    paths.meds_cohort_dir="${MIMICIV_MEDS_DIR}" paths.output_dir="${OUTPUT_DIR}" \
-    data.task_name="$TASK_NAME" data.task_root_dir="$TASKS_DIR" \
-    hydra.searchpath=[pkg://meds_torch.configs,"$(pwd)/MIMICIV_TUTORIAL/configs/meds-torch-configs"]
-```
-
-Now we can launch a meds-torch experiment. The `text_code_mtr.yaml` experiment will require around `26GB` of GPU memory and takes ~47min per epoch.
-
-```console
-export MIMICIV_TRIPLET_DIR=??? # set to the directory in which you want to output the tensorized MIMIC-IV data
-export OUTPUT_DIR=??? # set to the directory in which you want to output checkpoints and results
-export CUDA_VISIBLE_DEVICES=2 # set to the GPU you want to use
-conda activate meds-torch
-
-MAX_POLARS_THREADS=4 meds-torch-train experiment=text_code_mtr paths.data_dir="${MIMICIV_TRIPLET_DIR}" \
-    paths.meds_cohort_dir="${MIMICIV_MEDS_DIR}" paths.output_dir="${OUTPUT_DIR}" \
-    data.task_name="$TASK_NAME" data.task_root_dir="$TASKS_DIR" \
-    hydra.searchpath=[pkg://meds_torch.configs,"$(pwd)/MIMICIV_TUTORIAL/configs/meds-torch-configs"]
-```
+Results will be stored in the `$MIMICIV_ROOT_DIR/results` directory. Specifically the \`

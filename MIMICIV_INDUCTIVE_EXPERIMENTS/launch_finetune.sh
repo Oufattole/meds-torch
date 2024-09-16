@@ -2,8 +2,9 @@
 
 ROOT_DIR="$1"
 CONDA_ENV="$2"
+METHOD="$3"
 
-shift 2
+shift 3
 
 set -e  # Exit immediately if a command exits with a non-zero status.
 
@@ -14,17 +15,18 @@ run_job() {
     local tensor_dir=$3
     local root_dir=$4
     local conda_env=$5
+    local method=$6
 
     echo "Running job for ${task_name}..."
 
-    export METHOD=supervised
+    export METHOD=${method}
     export CONFIGS_FOLDER="MIMICIV_INDUCTIVE_EXPERIMENTS"
     export ROOT_DIR=${root_dir}
     export MEDS_DIR="${ROOT_DIR}/meds/"
     export TASKS_DIR=${MEDS_DIR}/tasks/
     export TENSOR_DIR=${ROOT_DIR}/${tensor_dir}_tensors/
     export OUTPUT_DIR=${ROOT_DIR}/results/${METHOD}/${experiment}/${task_name}/
-    PRETRAIN_SWEEP_DIR=${OUTPUT_DIR}/pretrain/sweep/
+    PRETRAIN_SWEEP_DIR=${ROOT_DIR}/results/${METHOD}/${experiment}/pretrain/sweep/
     FINETUNE_SWEEP_DIR=${OUTPUT_DIR}/finetune/sweep/
     FINETUNE_MULTISEED_DIR=${OUTPUT_DIR}/finetune/multiseed/
 
@@ -32,14 +34,9 @@ run_job() {
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate ${conda_env}
 
-    MAX_POLARS_THREADS=4 meds-torch-tune callbacks=tune_default hparams_search.ray.resources_per_trial.gpu=1 data.dataloader.num_workers=16 \
-        hparams_search=ray_tune experiment=$experiment paths.data_dir=${TENSOR_DIR} \
-        paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${PRETRAIN_SWEEP_DIR} \
-        data.task_name=$task_name data.task_root_dir=$TASKS_DIR \
-        hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/${CONFIGS_FOLDER}/configs/meds-torch-configs]
-
-    MAX_POLARS_THREADS=4 meds-torch-tune --config-name=finetune callbacks=tune_default hparams_search.ray.resources_per_trial.gpu=1 data.dataloader.num_workers=16 \
-        hparams_search=ray_tune experiment=$experiment paths.data_dir=${TENSOR_DIR} \
+    MAX_POLARS_THREADS=4 meds-torch-tune --config-name=finetune callbacks=tune_default \
+        hparams_search.ray.resources_per_trial.gpu=1 data.dataloader.num_workers=16 \
+        hparams_search=ray_tune experiment=$experiment paths.data_dir=${TENSOR_DIR} pretrain_path=${PRETRAIN_SWEEP_DIR} \
         paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${FINETUNE_SWEEP_DIR} \
         data.task_name=$task_name data.task_root_dir=$TASKS_DIR \
         hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/${CONFIGS_FOLDER}/configs/meds-torch-configs]
@@ -47,7 +44,9 @@ run_job() {
     echo BEST_CONFIG_PATH=$(meds-torch-latest-dir path=${FINETUNE_SWEEP_DIR})/best_config.json
     BEST_CONFIG_PATH=$(meds-torch-latest-dir path=${FINETUNE_SWEEP_DIR})/best_config.json
 
-    MAX_POLARS_THREADS=4 meds-torch-tune --config-name=finetune callbacks=tune_default best_config_path=${BEST_CONFIG_PATH} hparams_search.ray.resources_per_trial.gpu=1 data.dataloader.num_workers=16 \
+    MAX_POLARS_THREADS=4 meds-torch-tune --config-name=finetune callbacks=tune_default \
+        best_config_path=${BEST_CONFIG_PATH} pretrain_path=${PRETRAIN_SWEEP_DIR} \
+        hparams_search.ray.resources_per_trial.gpu=1 data.dataloader.num_workers=16 \
         hparams_search=ray_multiseed experiment=$experiment paths.data_dir=${TENSOR_DIR} \
         paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${FINETUNE_MULTISEED_DIR} \
         data.task_name=$task_name data.task_root_dir=$TASKS_DIR \
@@ -58,18 +57,16 @@ run_job() {
 
 TASKS=(
     "mortality/in_hospital/first_24h"
-    "mortality/in_hospital/first_48h"
-    # "mortality/in_icu/first_24h"
-    # "mortality/in_icu/first_48h"
-    # "mortality/post_hospital_discharge/30d"
-    # "readmission/30d"
+    "mortality/in_icu/first_24h"
+    "mortality/post_hospital_discharge/1y"
+    "readmission/30d"
 )
 
 # Run jobs sequentially
 for TASK_NAME in "${TASKS[@]}"; do
-    # run_job ${TASK_NAME} "eic_mtr" "eic" "$ROOT_DIR" "$CONDA_ENV"
-    run_job ${TASK_NAME} "triplet_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"
-    run_job ${TASK_NAME} "text_code_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"
+    run_job ${TASK_NAME} "eic_mtr" "eic" "$ROOT_DIR" "$CONDA_ENV" "$METHOD"
+    run_job ${TASK_NAME} "triplet_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV" "$METHOD"
+    run_job ${TASK_NAME} "text_code_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV" "$METHOD"
 done
 
 echo "All jobs completed sequentially."
