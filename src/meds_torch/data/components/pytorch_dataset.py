@@ -9,7 +9,7 @@ import numpy as np
 import polars as pl
 import torch
 from loguru import logger
-from mixins import SeedableMixin
+from mixins import SeedableMixin, TimeableMixin
 from nested_ragged_tensors.ragged_numpy import (
     NP_FLOAT_TYPES,
     NP_INT_TYPES,
@@ -346,7 +346,7 @@ def get_task_indices_and_labels(
     return indexes, labels
 
 
-class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
+class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
     """A PyTorch Dataset class for handling complex, multi-modal medical data.
 
     This dataset is designed to work with data from the MEDS (Medical Event Data Set) format, supporting
@@ -791,6 +791,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return self._seeded_getitem(idx)
 
     @SeedableMixin.WithSeed
+    @TimeableMixin.TimeAs
     def load_subject(
         self, subject_dynamic_data, subject_id: int, st: int, end: int
     ) -> dict[str, list[float]]:
@@ -934,6 +935,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return out
 
     @SeedableMixin.WithSeed
+    @TimeableMixin.TimeAs
     def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
         """Returns a Returns a dictionary corresponding to a single subject's data.
 
@@ -959,6 +961,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         assert "dynamic" in out, f"Failed to load dynamic data for subject {subject_id} in {shard}!"
         return out
 
+    @TimeableMixin.TimeAs
     def __dynamic_only_collate(self, batch: list[dict[str, list[float]]]) -> dict:
         """An internal collate function for only dynamic data."""
         keys = batch[0].keys()
@@ -1061,6 +1064,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return out_batch
 
     @classmethod
+    @TimeableMixin.TimeAs
     def process_triplet(cls, item: dict, do_prepend_static_data=True) -> dict:
         """Process a single triplet of dynamic and static data.
 
@@ -1237,6 +1241,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return tensorized_batch
 
     @classmethod
+    @TimeableMixin.TimeAs
     def process_text_code(cls, item: dict, tokenized_codes: dict, do_prepend_static_data=True) -> dict:
         """Process a single data point for text-code format.
 
@@ -1459,6 +1464,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         )
         return token_dict
 
+    @TimeableMixin.TimeAs
     def collate(self, batch: list[dict]) -> dict:
         """Combine a batch of data points into a single, tensorized batch.
 
