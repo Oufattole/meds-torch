@@ -69,13 +69,9 @@ Second, run the following command to extract the supervised task labels:
 
 ```console
 TASKS=(
-    "los/in_hospital/first_48h"
-    "los/in_icu/first_48h"
     "mortality/in_hospital/first_24h"
-    "mortality/in_hospital/first_48h"
     "mortality/in_icu/first_24h"
-    "mortality/in_icu/first_48h"
-    "mortality/post_hospital_discharge/30d"
+    "mortality/post_hospital_discharge/1y"
     "readmission/30d"
 )
 for TASK_NAME in "${TASKS[@]}"; do

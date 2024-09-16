@@ -92,6 +92,9 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     # merge train and test metrics
     metric_dict = {**train_metrics, **test_metrics}
 
+    # log time profiles: https://github.com/Oufattole/meds-torch/issues/44
+    logger.debug("Train Time: ", datamodule.data_train._profile_durations())
+
     return metric_dict, object_dict, best_model_path
 
 
