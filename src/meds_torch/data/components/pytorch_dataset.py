@@ -1064,7 +1064,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         return out_batch
 
     @classmethod
-    @TimeableMixin.TimeAs
     def process_triplet(cls, item: dict, do_prepend_static_data=True) -> dict:
         """Process a single triplet of dynamic and static data.
 
@@ -1241,7 +1240,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         return tensorized_batch
 
     @classmethod
-    @TimeableMixin.TimeAs
     def process_text_code(cls, item: dict, tokenized_codes: dict, do_prepend_static_data=True) -> dict:
         """Process a single data point for text-code format.
 

@@ -16,7 +16,7 @@ from meds_torch.data.components.multiwindow_pytorch_dataset import (
     MultiWindowPytorchDataset,
 )
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
-from meds_torch.data.components.random_window_pytorch_dataset import (
+from meds_torch.data.components.random_windows_pytorch_dataset import (
     RandomWindowPytorchDataset,
 )
 from meds_torch.data.datamodule import MEDSDataModule
@@ -265,7 +265,7 @@ def test_full_datamodule(meds_dir):
         "text_code",
     ],
 )
-def test_random_window_pytorch_dataset(meds_dir, collate_type):
+def test_random_windows_pytorch_dataset(meds_dir, collate_type):
     cfg = create_cfg(overrides=["data=random_windows_pytorch_dataset"], meds_dir=meds_dir)
     with open_dict(cfg):
         cfg.data.collate_type = collate_type
