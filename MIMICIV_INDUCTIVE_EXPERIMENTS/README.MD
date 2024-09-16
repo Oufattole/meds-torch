@@ -93,7 +93,7 @@ bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_finetune.sh $MIMICIV_ROOT_DIR $CONDA_E
 ```
 
 ```console
-TRANSFER_LEARNING_METHOD=??? # set to the transfer learning method you want to use, choose one from "token_forecasting" "triplet_forecasting"
+TRANSFER_LEARNING_METHOD=??? # set to the transfer learning method you want to use, choose one from "eic_forecasting" "triplet_forecasting"
 
 bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_pretrain.sh $MIMICIV_ROOT_DIR $CONDA_ENV_NAME $TRANSFER_LEARNING_METHOD
 

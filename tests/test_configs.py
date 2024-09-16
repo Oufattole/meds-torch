@@ -50,8 +50,12 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
     raises_value_error = False
 
     supervised = model == "supervised"
-    if model == "token_forecasting":
+    if model in ["triplet_forecasting", "eic_forecasting"]:
         raises_value_error = (token_type == "text") or ("transformer_encoder" in backbone)
+        if model == "triplet_forecasting" and token_type == "eic":
+            raises_value_error = True
+        if model == "eic_forecasting" and token_type != "eic":
+            raises_value_error = True
 
     if early_fusion is not None:
         overrides.append(f"model.early_fusion={early_fusion}")
@@ -66,7 +70,7 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
         )
         for data, model, early_fusion in [
             ("pytorch_dataset", "supervised", None),
-            ("pytorch_dataset", "token_forecasting", None),
+            ("pytorch_dataset", "triplet_forecasting", None),
             ("multiwindow_pytorch_dataset", "ebcl", None),
             ("multiwindow_pytorch_dataset", "value_forecasting", None),
             ("multiwindow_pytorch_dataset", "ocp", "true"),

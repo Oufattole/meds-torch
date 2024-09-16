@@ -25,7 +25,8 @@ from tests.test_configs import create_cfg, get_overrides_and_exceptions  # noqa:
         )
         for data, model, early_fusion, input_encoder, backbone in [
             ("pytorch_dataset", "supervised", None, "triplet_encoder", "transformer_encoder"),
-            ("pytorch_dataset", "token_forecasting", None, "triplet_encoder", "transformer_decoder"),
+            ("pytorch_dataset", "triplet_forecasting", None, "triplet_encoder", "transformer_decoder"),
+            ("pytorch_dataset", "eic_forecasting", None, "eic_encoder", "transformer_decoder"),
             ("multiwindow_pytorch_dataset", "ebcl", None, "triplet_encoder", "transformer_encoder"),
             (
                 "multiwindow_pytorch_dataset",
