@@ -35,8 +35,9 @@ run_job() {
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate ${conda_env}
 
-    SWEEP_CHECK_FILE=$(meds-torch-latest-dir path=${FINETUNE_SWEEP_DIR})/sweep_results_summary.parquet
-    if [ ! -f "$SWEEP_CHECK_FILE" ]; then
+    SWEEP_CHECK_FILE=$(meds-torch-latest-dir path=${FINETUNE_SWEEP_DIR})/sweep_results_summary.parquet 2>/dev/null || SWEEP_CHECK_FILE=""
+
+    if [ -z "$SWEEP_CHECK_FILE" ] || [ ! -f "$SWEEP_CHECK_FILE" ]; then
     MAX_POLARS_THREADS=4 meds-torch-tune --config-name=finetune callbacks=tune_default \
         hparams_search.ray.resources_per_trial.gpu=1 data.dataloader.num_workers=16 \
         hparams_search=ray_tune experiment=$experiment paths.data_dir=${TENSOR_DIR} pretrain_path=${LATEST_PRETRAIN_SWEEP_DIR} \
@@ -50,8 +51,9 @@ run_job() {
     echo BEST_CONFIG_PATH=$(meds-torch-latest-dir path=${FINETUNE_SWEEP_DIR})/best_config.json
     BEST_CONFIG_PATH=$(meds-torch-latest-dir path=${FINETUNE_SWEEP_DIR})/best_config.json
 
-    MULTISEED_CHECK_FILE=$(meds-torch-latest-dir path=${FINETUNE_MULTISEED_DIR})/sweep_results_summary.parquet
-    if [ ! -f "$MULTISEED_CHECK_FILE" ]; then
+    MULTISEED_CHECK_FILE=$(meds-torch-latest-dir path=${FINETUNE_MULTISEED_DIR})/sweep_results_summary.parquet 2>/dev/null || MULTISEED_CHECK_FILE=""
+
+    if [ -z "$MULTISEED_CHECK_FILE" ] || [ ! -f "$MULTISEED_CHECK_FILE" ]; then
     MAX_POLARS_THREADS=4 meds-torch-tune --config-name=finetune callbacks=tune_default \
         best_config_path=${BEST_CONFIG_PATH} pretrain_path=${LATEST_PRETRAIN_SWEEP_DIR} \
         hparams_search.ray.resources_per_trial.gpu=1 data.dataloader.num_workers=16 \
