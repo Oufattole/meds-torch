@@ -16,7 +16,7 @@ defaults:
 tags:
   - "mimiciv"
   - "triplet"
-  - "transformer_encoder"
+  - "transformer_decoder"
 
 seed: 0
 

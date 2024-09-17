@@ -27,6 +27,7 @@ run_job() {
     export TENSOR_DIR=${ROOT_DIR}/${tensor_dir}_tensors/
     export OUTPUT_DIR=${ROOT_DIR}/results/${METHOD}/${experiment}/${task_name}/
     PRETRAIN_SWEEP_DIR=${ROOT_DIR}/results/${METHOD}/${experiment}/pretrain/sweep/
+    LATEST_PRETRAIN_SWEEP_DIR=$(meds-torch-latest-dir path=${PRETRAIN_SWEEP_DIR})
     FINETUNE_SWEEP_DIR=${OUTPUT_DIR}/finetune/sweep/
     FINETUNE_MULTISEED_DIR=${OUTPUT_DIR}/finetune/multiseed/
 
@@ -34,23 +35,33 @@ run_job() {
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate ${conda_env}
 
+    SWEEP_CHECK_FILE=$(meds-torch-latest-dir path=${FINETUNE_SWEEP_DIR})/sweep_results_summary.parquet
+    if [ ! -f "$SWEEP_CHECK_FILE" ]; then
     MAX_POLARS_THREADS=4 meds-torch-tune --config-name=finetune callbacks=tune_default \
         hparams_search.ray.resources_per_trial.gpu=1 data.dataloader.num_workers=16 \
-        hparams_search=ray_tune experiment=$experiment paths.data_dir=${TENSOR_DIR} pretrain_path=${PRETRAIN_SWEEP_DIR} \
+        hparams_search=ray_tune experiment=$experiment paths.data_dir=${TENSOR_DIR} pretrain_path=${LATEST_PRETRAIN_SWEEP_DIR} \
         paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${FINETUNE_SWEEP_DIR} \
         data.task_name=$task_name data.task_root_dir=$TASKS_DIR \
         hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/${CONFIGS_FOLDER}/configs/meds-torch-configs]
+    else
+        echo "SWEEP_CHECK_FILE already exists. Skipping the fine-tuning sweep for ${task_name}."
+    fi
 
     echo BEST_CONFIG_PATH=$(meds-torch-latest-dir path=${FINETUNE_SWEEP_DIR})/best_config.json
     BEST_CONFIG_PATH=$(meds-torch-latest-dir path=${FINETUNE_SWEEP_DIR})/best_config.json
 
+    MULTISEED_CHECK_FILE=$(meds-torch-latest-dir path=${FINETUNE_MULTISEED_DIR})/sweep_results_summary.parquet
+    if [ ! -f "$MULTISEED_CHECK_FILE" ]; then
     MAX_POLARS_THREADS=4 meds-torch-tune --config-name=finetune callbacks=tune_default \
-        best_config_path=${BEST_CONFIG_PATH} pretrain_path=${PRETRAIN_SWEEP_DIR} \
+        best_config_path=${BEST_CONFIG_PATH} pretrain_path=${LATEST_PRETRAIN_SWEEP_DIR} \
         hparams_search.ray.resources_per_trial.gpu=1 data.dataloader.num_workers=16 \
         hparams_search=ray_multiseed experiment=$experiment paths.data_dir=${TENSOR_DIR} \
         paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${FINETUNE_MULTISEED_DIR} \
         data.task_name=$task_name data.task_root_dir=$TASKS_DIR \
         hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/${CONFIGS_FOLDER}/configs/meds-torch-configs]
+    else
+        echo "MULTISEED_CHECK_FILE already exists. Skipping the multiseed run for ${task_name}."
+    fi
 
     echo "Job for ${task_name} completed."
 }

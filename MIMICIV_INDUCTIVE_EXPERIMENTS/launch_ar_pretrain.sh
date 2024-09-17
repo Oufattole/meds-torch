@@ -30,11 +30,17 @@ run_job() {
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate ${conda_env}
 
-    MAX_POLARS_THREADS=4 meds-torch-tune model=$METHOD callbacks=tune_default \
-        hparams_search.ray.resources_per_trial.gpu=1 data.dataloader.num_workers=16 \
-        hparams_search=ray_tune experiment=$experiment paths.data_dir=${TENSOR_DIR} \
-        paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${PRETRAIN_SWEEP_DIR} \
-        hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/${CONFIGS_FOLDER}/configs/meds-torch-configs]
+    CHECK_FILE=$(meds-torch-latest-dir path=${PRETRAIN_SWEEP_DIR})/sweep_results_summary.parquet
+
+    if [ ! -f "$CHECK_FILE" ]; then
+        MAX_POLARS_THREADS=4 meds-torch-tune model=$METHOD callbacks=tune_default \
+            hparams_search.ray.resources_per_trial.gpu=1 data.dataloader.num_workers=16 \
+            hparams_search=ray_tune experiment=$experiment paths.data_dir=${TENSOR_DIR} \
+            paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${PRETRAIN_SWEEP_DIR} \
+            hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/${CONFIGS_FOLDER}/configs/meds-torch-configs]
+    else
+        echo "${CHECK_FILE} already exists. Skipping the job execution."
+    fi
 
     echo "Job for ${method} completed."
 }
@@ -42,6 +48,6 @@ run_job() {
 # Run jobs sequentially
 run_job eic_forecasting "eic_forecast_mtr" "eic" "$ROOT_DIR" "$CONDA_ENV"
 run_job triplet_forecasting "triplet_forecast_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"
-# run_job triplet_forecasting "text_code_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV" "triplet_transformer_decoder
+run_job triplet_forecasting "text_code_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"
 
 echo "All jobs completed sequentially."
