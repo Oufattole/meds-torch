@@ -3,7 +3,7 @@
 ROOT_DIR="$1"
 CONDA_ENV="$2"
 
-shift 3
+shift 2
 
 set -e  # Exit immediately if a command exits with a non-zero status.
 

@@ -180,7 +180,7 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
     @property
     def max_seq_len(self) -> int:
-        return self.config.max_seq_len
+        return self.config._resolved_max_seq_len
 
     def collate(self, batch: dict[str : np.array]) -> dict[str : torch.Tensor]:
         """Collate a batch of data samples into a single batch.

@@ -8,7 +8,7 @@ model:
   _target_: x_transformers.TransformerWrapper
   logits_dim: ${model.token_dim}
   num_tokens: ${get_text_vocab_size:${data.tokenizer}}
-  max_seq_len: ${model.max_seq_len}
+  max_seq_len: ${model._resolved_max_seq_len}
   emb_dropout: ${model.backbone.dropout}
   use_abs_pos_emb: false
   attn_layers:

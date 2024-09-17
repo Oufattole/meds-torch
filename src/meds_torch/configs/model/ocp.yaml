@@ -18,7 +18,7 @@ scheduler:
   patience: 10
 
 early_fusion: true
-max_seq_len: ${data.max_seq_len} # doubled if early fusion
+_resolved_max_seq_len: ${data._resolved_max_seq_len} # doubled if early fusion
 token_dim: 4
 vocab_size: ${data.vocab_size}
 get_representations: false

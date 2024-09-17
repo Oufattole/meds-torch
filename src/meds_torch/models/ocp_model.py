@@ -20,7 +20,7 @@ class OCPModule(BaseModule):
         if cfg.early_fusion:
             # double the sequence length for early fusion as we concatenate the pre and post tokens
             cfg = cfg.copy()
-            cfg.max_seq_len = cfg.max_seq_len * 2
+            cfg._resolved_max_seq_len = cfg._resolved_max_seq_len * 2
         super().__init__(cfg)
 
         # pretrain metrics
