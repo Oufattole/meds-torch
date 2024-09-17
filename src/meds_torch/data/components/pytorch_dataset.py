@@ -767,7 +767,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
     @property
     def max_seq_len(self) -> int:
-        return self.config._resolved_max_seq_len
+        return self.config.max_seq_len
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         """Retrieve a single data point from the dataset.
@@ -847,12 +847,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             st = 0
             end = st + seq_len
 
-        if seq_len > self.config._resolved_max_seq_len:
+        if seq_len > self.config.max_seq_len:
             match self.config.subsequence_sampling_strategy:
                 case SubsequenceSamplingStrategy.RANDOM:
-                    start_offset = np.random.choice(seq_len - self.config._resolved_max_seq_len)
+                    start_offset = np.random.choice(seq_len - self.config.max_seq_len)
                 case SubsequenceSamplingStrategy.TO_END:
-                    start_offset = seq_len - self.config._resolved_max_seq_len
+                    start_offset = seq_len - self.config.max_seq_len
                 case SubsequenceSamplingStrategy.FROM_START:
                     start_offset = 0
                 case _:
@@ -861,7 +861,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                     )
 
             st += start_offset
-            end = min(end, st + self.config._resolved_max_seq_len)
+            end = min(end, st + self.config.max_seq_len)
 
         if self.config.do_include_subsequence_indices:
             out["start_idx"] = st
@@ -878,10 +878,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         if self.config.do_include_start_time_min:
             out["start_time"] = static_row["time"].item().to_list()[st]
 
-        if end - st > self.config._resolved_max_seq_len:
-            raise ValueError(
-                f"Sequence length {end - st} exceeds max_seq_len {self.config._resolved_max_seq_len}!"
-            )
+        if end - st > self.config.max_seq_len:
+            raise ValueError(f"Sequence length {end - st} exceeds max_seq_len {self.config.max_seq_len}!")
         if self.config.min_seq_len and (end - st < self.config.min_seq_len):
             raise ValueError(
                 f"Sequence length {end - st} is less than min_seq_len {self.config.min_seq_len}!"
