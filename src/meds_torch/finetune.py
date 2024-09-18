@@ -8,7 +8,7 @@ import lightning as L
 import torch
 from lightning import Callback, LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 from meds_torch.utils import (
     RankedLogger,
@@ -38,6 +38,10 @@ def finetune(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     # load pretrained backbone and input encoder:
     pretrain_cfg = OmegaConf.load(cfg.pretrain_yaml_path)
+    # TODO remove this prior to next release, this just adds backwards compatibility
+    with open_dict(pretrain_cfg):
+        pretrain_cfg.model._resolved_max_seq_len = cfg.data._resolved_max_seq_len
+        pretrain_cfg.model.input_encoder._resolved_max_seq_len = cfg.data._resolved_max_seq_len
     pretrain_model: LightningModule = hydra.utils.instantiate(pretrain_cfg.model)
     ckpt = torch.load(cfg.pretrain_ckpt_path)
     pretrain_model.load_state_dict(ckpt["state_dict"])
