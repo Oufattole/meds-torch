@@ -19,7 +19,7 @@ scheduler:
 
 _resolved_max_seq_len: ${data._resolved_max_seq_len}
 token_dim: 4
-vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.VOCAB_SPECIAL_TOKEN_ID_OFFSET}}
+vocab_size: ${data.vocab_size}
 get_representations: false
 task_name: ${data.task_name}
 batch_size: ${data.dataloader.batch_size}

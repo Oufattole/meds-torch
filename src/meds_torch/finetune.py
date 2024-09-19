@@ -38,10 +38,14 @@ def finetune(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     # load pretrained backbone and input encoder:
     pretrain_cfg = OmegaConf.load(cfg.pretrain_yaml_path)
-    # TODO remove this prior to next release, this just adds backwards compatibility
+    # TODO this just adds backwards compatibility find a better way for loading pretrain_cfg
+    # see: https://github.com/Oufattole/meds-torch/issues/47
     with open_dict(pretrain_cfg):
         pretrain_cfg.model._resolved_max_seq_len = cfg.data._resolved_max_seq_len
         pretrain_cfg.model.input_encoder._resolved_max_seq_len = cfg.data._resolved_max_seq_len
+        pretrain_cfg.data.vocab_size = cfg.data.vocab_size
+        pretrain_cfg.model.vocab_size = cfg.data.vocab_size
+
     pretrain_model: LightningModule = hydra.utils.instantiate(pretrain_cfg.model)
     ckpt = torch.load(cfg.pretrain_ckpt_path)
     pretrain_model.load_state_dict(ckpt["state_dict"])
