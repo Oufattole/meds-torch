@@ -2,7 +2,7 @@
 
 Let's explore different tokenization strategies using a unified example: a subject with two lab observations - a potassium lab and a creatinine lab - taken one day apart.
 
-### Everything Is a CODE (EIC)
+### Everything In CODE (EIC)
 
 In this approach, we convert all information into discrete tokens, including lab values and time gaps.
 

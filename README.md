@@ -64,10 +64,10 @@ Train model with default configuration
 
 ```bash
 # train on CPU
-python -m meds_torch.train trainer=cpu
+meds-torch-train trainer=cpu
 
 # train on GPU
-python -m meds_torch.train trainer=gpu
+meds-torch-train trainer=gpu
 ```
 
 Train model with chosen experiment configuration from [configs/experiment/](configs/experiment/)
@@ -89,8 +89,8 @@ python -m meds_torch.train trainer.max_epochs=20 data.batch_size=64
 ✅ Support different tokenization methods for EHR data <br>
 
 - Triplet
-- Everything Is text
-- Everything Is a code
+- Text Code
+- Everything In code
 
 ✅ MEDS data Supervised Learning and Transfer Learning Support <br>
 
@@ -99,6 +99,7 @@ python -m meds_torch.train trainer.max_epochs=20 data.batch_size=64
 - Random [EBCL](https://arxiv.org/abs/2312.10308) Example
 - [OCP](https://arxiv.org/abs/2111.02599) Example
 - [STraTS](https://arxiv.org/abs/2107.14293) Value Forecasting
+- Autoregressive Observation Forecasting
 
 ✅ Ease of Use and Reusability <br>
 Collection of useful EHR sequence modeling tools, configs, and code snippets. You can use this repo as a reference for developing your own models. Additionally you can easily add new models, datasets, tasks, experiments, and train on different accelerators, like multi-GPU.

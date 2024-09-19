@@ -7,7 +7,23 @@ up from this one).
 ## Extract MIMIC-IV MEDS Data
 
 Take the raw MIMIC-IV data and perform the following extraction yourself. Follow the MEDS-Transforms tutorial
-[here](https://github.com/mmcdermott/MEDS_transforms/blob/main/MIMIC-IV_Example/README.md):
+[here](https://github.com/mmcdermott/MEDS_transforms/blob/main/MIMIC-IV_Example/README.md).
+
+## Install MEDS-Torch
+
+Either install the package from PyPI:
+
+```console
+pip install meds-torch
+```
+
+or clone the repository and install the package from source:
+
+```console
+git clone git@github.com:Oufattole/meds-torch.git
+cd meds-torch
+pip install -e .
+```
 
 ## Pre-Processing for Sequence Modeling
 
@@ -72,6 +88,60 @@ for TASK_NAME in "${TASKS[@]}"; do
 done
 ```
 
+## Running a Single Task with MEDS-Torch
+
+Training a model is simple with MEDS-Torch. Here's an example of how to train a supervised model for the `mortality/in_hospital/first_24h` task using the triplet tokenization method. All a user must do is input the paths to the tensorized data (cached patient time series data), the cohort directory (directory of the raw MEDS data), and the output directory (where results are stored). The evaluation is automatically performed at the end of the training process.
+
+First, let's set up our environment variables:
+
+```console
+ROOT_DIR="/path/to/your/root/directory"  # Replace with your actual root directory
+TENSOR_DIR="${ROOT_DIR}/triplet_tensors/"
+MEDS_DIR="${ROOT_DIR}/meds/"
+TASKS_DIR="${MEDS_DIR}/tasks/"
+OUTPUT_DIR="${ROOT_DIR}/results/triplet_mtr/mortality/in_hospital/first_24h/"
+TRAIN_DIR="${OUTPUT_DIR}/supervised/train/"
+```
+
+These variables define the key directories for our MEDS-Torch workflow:
+
+- `ROOT_DIR`: The base directory for your MEDS-Torch project
+- `TENSOR_DIR`: Where the tensorized (preprocessed) patient data is stored
+- `MEDS_DIR`: Location of the raw MEDS data
+- `TASKS_DIR`: Directory containing task parquet files following the [MEDS label_schema](https://github.com/Medical-Event-Data-Standard/meds).
+- `OUTPUT_DIR`: Where the results will be stored
+- `TRAIN_DIR`: Specific directory for training output
+
+Next, activate your conda environment:
+
+```console
+conda activate meds-torch
+```
+
+Now you're ready to train your model. The `meds-torch-train` command takes care of the entire training process, including evaluation:
+
+```console
+meds-torch-train \
+    experiment=triplet_mtr \
+    paths.data_dir=${TENSOR_DIR} \
+    paths.meds_cohort_dir=${MEDS_DIR} \
+    paths.output_dir=${TRAIN_DIR} \
+    data.task_name=mortality/in_hospital/first_24h \
+    data.task_root_dir=${TASKS_DIR} \
+    hydra.searchpath=[pkg://meds_torch.configs,./MIMICIV_INDUCTIVE_EXPERIMENTS/configs/meds-torch-configs]
+```
+
+This command specifies:
+
+- The experiment type (`triplet_mtr`): This loads the `triplet_mtr.yaml` configuration file, which overrides default arguments (in the `train.yaml`) with settings specific to the triplet model training recipe.
+- Paths to the tensorized data, MEDS cohort, and output directory
+- The specific task name and its root directory
+- The search path for configuration files
+
+The `meds-torch-train` command will train the model and automatically evaluate it at the end of the training process. The results, including evaluation metrics, will be saved in the specified output directory.
+
+With these steps, you can easily train a MEDS-Torch model for a single task, with evaluation included as part of the process.
+
 ## Launching Tokenization Inductive Experiments
 
 Run Supervised Learning Experiments:
@@ -100,4 +170,132 @@ bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_pretrain.sh $MIMICIV_ROOT_DIR $CONDA_E
 bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_finetune.sh $MIMICIV_ROOT_DIR $CONDA_ENV_NAME $TRANSFER_LEARNING_METHOD
 ```
 
-Results will be stored in the `$MIMICIV_ROOT_DIR/results` directory. Specifically the \`
+To run all experiments in one go:
+
+The following script will train a supervised model for all three tokenization methods (Triplet, EIC, and Text Code) on all four tasks.
+
+- `mortality/in_hospital/first_24h`
+- `mortality/in_icu/first_24h`
+- `mortality/post_hospital_discharge/1y`
+- `readmission/30d`
+
+Note this will be 12 experiments in total.
+
+```console
+# Launch Supervised experiments
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_supervised.sh $MIMICIV_ROOT_DIR meds-torch
+```
+
+We then pretrain all transfer learning models (EBCL, OCP, Value Forecasting, and Autoregressive Forecasting) for all three tokenization methods (Triplet, EIC, and Text Code) on the full dataset.
+Note that this will be 12 experiments in total.
+
+```console
+# Launch pretraining
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_multi_window_pretrain.sh $MIMICIV_ROOT_DIR meds-torch ocp
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_multi_window_pretrain.sh $MIMICIV_ROOT_DIR meds-torch ebcl
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_multi_window_pretrain.sh $MIMICIV_ROOT_DIR meds-torch value_forecasting
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_ar_pretrain.sh $MIMICIV_ROOT_DIR meds-torch
+```
+
+Finally we finetune all transfer learning models (EBCL, OCP, Value Forecasting, and Autoregressive Forecasting) on the four tasks.
+Note that this will be 16 experiments in total.
+
+```console
+#Launch Finetuning
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_finetune.sh $MIMICIV_ROOT_DIR meds-torch ocp
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_finetune.sh $MIMICIV_ROOT_DIR meds-torch ebcl
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_finetune.sh $MIMICIV_ROOT_DIR meds-torch value_forecasting
+
+bash MIMICIV_INDUCTIVE_EXPERIMENTS/launch_ar_finetune.sh $MIMICIV_ROOT_DIR meds-torch meds-torch
+```
+
+Results will be stored in the `${MIMICIV_ROOT_DIR}/results` directory. You can view the latest results using the following python code snippet:
+
+```python
+import os
+import pandas as pd
+import polars as pl
+from datetime import datetime
+
+# Specify the directory to search
+search_dir = ??? # set to the ${MIMICIV_ROOT_DIR}/results directory
+
+def find_files(directory, filename):
+    found_files = []
+    for root, dirs, files in os.walk(directory):
+        if filename in files:
+            found_files.append(os.path.join(root, filename))
+    return found_files
+
+def extract_info_from_path(file_path):
+    parts = file_path.split('/')
+    task_name = "/".join(parts[8:-4])
+    method = parts[6]
+
+    # Extract the full timestamp
+    timestamp_str = parts[-2]
+    date = datetime.strptime(timestamp_str, '%Y-%m-%d_%H-%M-%S_%f')
+    print(file_path)
+    match file_path:
+        case _ if "eic_mtr" in file_path:
+            tokenization_strategy = "eic"
+        case _ if "text_code_mtr" in file_path:
+            tokenization_strategy = "text_code"
+        case _ if "triplet_mtr" in file_path:
+            tokenization_strategy = "triplet"
+        case _ if "triplet_forecast_mtr" in file_path:
+            tokenization_strategy = "triplet"
+        case _ if "eic_forecast_mtr" in file_path:
+            tokenization_strategy = "eic"
+        case _ if "text_code_forecast_mtr" in file_path:
+            tokenization_strategy = "text_code"
+        case _:
+            tokenization_strategy = "unknown"
+
+    return task_name, method, date, tokenization_strategy
+
+def process_files(search_dir, target_file):
+    results = find_files(search_dir, target_file)
+    data = []
+
+    for file_path in results:
+        df = pl.read_parquet(file_path)
+        if 'test/auc' in df.columns and "multiseed" in file_path:
+            task_name, method, date, tokenization_strategy = extract_info_from_path(file_path)
+            auc_mean, auc_std = df['test/auc'].mean()*100, df['test/auc'].std()*100
+            result = f"{auc_mean:.1f} ± {auc_std:.1f}"
+            data.append({
+                'task_name': task_name,
+                'method': method,
+                'date': date,
+                'tokenization_strategy': tokenization_strategy,
+                'result': result
+            })
+
+    return pd.DataFrame(data)
+
+# Specify the filename to search for
+target_file = 'sweep_results_summary.parquet'
+
+# Process the files and create the DataFrame
+results_df = process_files(search_dir, target_file)
+
+# filter to tasks of interest
+tasks_of_interest = [
+    "mortality/in_hospital/first_24h",
+    "mortality/in_icu/first_24h",
+    "mortality/post_hospital_discharge/1y",
+    "readmission/30d",
+]
+results_df = results_df[results_df['task_name'].isin(tasks_of_interest)]
+
+# Rename the methods
+method_mapping = {
+    'eic_forecasting': 'AR forecasting',
+    'triplet_forecasting': 'AR forecasting'
+}
+results_df['method'] = results_df['method'].replace(method_mapping)
+
+# Display the results
+results_df.sort_values(["task_name", "date"]).groupby(['task_name', "method", "tokenization_strategy"]).last()
+```
