@@ -66,6 +66,8 @@ def get_kwargs(request, meds_dir) -> dict:
     return helper
 
 
+@pytest.mark.slow
+@RunIf(min_gpus=1)
 def test_finetune(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: F811
     """Run 1 epoch, finish, and resume for another epoch.
 
@@ -82,7 +84,7 @@ def test_finetune(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: F811
         cfg_pretrain.trainer.max_epochs = 1
         cfg_pretrain.paths.output_dir = str(pretrain_path)
         cfg_pretrain.callbacks.model_checkpoint.save_top_k = -1
-        # cfg_pretrain.trainer.accelerator = "gpu"
+        cfg_pretrain.trainer.accelerator = "gpu"
 
     if raises_value_error:
         with pytest.raises(hydra.errors.InstantiationException):
@@ -115,7 +117,7 @@ def test_finetune(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: F811
             cfg_finetune.paths.output_dir = str(finetune_path)
             cfg_finetune.trainer.max_epochs = 2
             cfg_finetune.callbacks.model_checkpoint.save_top_k = -1
-            # cfg_finetune.trainer.accelerator = "gpu"
+            cfg_finetune.trainer.accelerator = "gpu"
 
         HydraConfig().set_config(cfg_finetune)
         finetune_main(cfg_finetune)
