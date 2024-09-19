@@ -1,22 +1,15 @@
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
-from torch import nn
 
 from meds_torch.input_encoder.eic_encoder import EicEncoder
-from meds_torch.input_encoder.triplet_encoder import TripletEncoder
-from meds_torch.input_encoder.triplet_prompt_encoder import TripletPromptEncoder
 from meds_torch.models import BACKBONE_TOKENS_KEY, MODEL_LOSS_KEY
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
 
-NUMERIC_VALUE_LOGITS = "MODEL//NUMERIC_VALUE_LOGITS"
 CODE_LOGITS = "MODEL//CODE_LOGITS"
-TIME_LOGITS = "MODEL//TIME_LOGITS"
-
-NUMERIC_VALUE_LOSS = "MODEL//NUMERIC_VALUE_LOSS"
 CODE_LOSS = "MODEL//CODE_LOSS"
-TIME_LOSS = "MODEL//TIME_LOSS"
+VAL_PREFIX = "VAL_METRIC//"
 
 
 def top_k_logits(logits, k):
@@ -70,8 +63,8 @@ def select_values_from_logits(logits, target_indices):
     return selected_values
 
 
-class TokenForecastingModule(BaseModule):
-    """Triplet based GPT Forecasting Model."""
+class EicForecastingModule(BaseModule):
+    """EIC token based GPT Forecasting Model."""
 
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
@@ -82,82 +75,31 @@ class TokenForecastingModule(BaseModule):
         self.setup_heads()
 
     def setup_heads(self):
-        if isinstance(self.input_encoder, TripletEncoder):
-            self.numeric_value_head = nn.Linear(
-                self.cfg.token_dim,
-                self.cfg.vocab_size,
-                bias=False,
-            )
-            self.code_head = nn.Linear(
-                self.cfg.token_dim,
-                self.cfg.vocab_size,
-                bias=False,
-            )
-            self.time_head = nn.Linear(self.cfg.token_dim, 1, bias=False)
-        elif isinstance(self.input_encoder, EicEncoder):
-            self.code_head = nn.Linear(
-                self.cfg.token_dim,
-                self.cfg.vocab_size,
-                bias=False,
-            )
-        else:
+        if not isinstance(self.input_encoder, EicEncoder):
             raise NotImplementedError(f"Unsupported input encoder type: {type(self.input_encoder)}")
-
-    def process_numeric_values(self, numeric_value_logits, code_target):
-        if isinstance(self.input_encoder, TripletEncoder):
-            return select_values_from_logits(numeric_value_logits, code_target)
-        elif isinstance(self.input_encoder, TripletPromptEncoder):
-            return numeric_value_logits.squeeze(dim=-1)
-        else:
-            raise NotImplementedError(f"Unsupported input encoder type: {type(self.input_encoder)}")
-
-    def get_time_loss(self, time_logits, time_delta_days_target, dynamic_mask):
-        if isinstance(self.input_encoder, TripletEncoder):
-            # Time Loss
-            time_loss = F.mse_loss(time_logits, time_delta_days_target.unsqueeze(-1), reduction="none")
-            time_loss = (time_loss.squeeze(dim=-1) * dynamic_mask).sum() / dynamic_mask.sum()
-            # Summing all losses
-            return time_loss
-        return 0
+        self.code_head = self.cfg.code_head
 
     def get_loss(
         self,
         batch,
     ):
         code_logits = batch[CODE_LOGITS]
-        numeric_value_logits = batch[NUMERIC_VALUE_LOGITS]
-        time_logits = batch[TIME_LOGITS]
+        assert not torch.isnan(code_logits).any(), "code_logits is NaN"
         # Code Mask
-        dynamic_mask = ~batch["static_mask"]
         code_target = batch["code"]
-        # Load data
-        numeric_value_target = batch["numeric_value"]
-        time_delta_days_target = batch["time_delta_days"]
-        numeric_value_mask = batch["numeric_value_mask"]
         # Code Loss
         code_loss = F.cross_entropy(
             code_logits.view(-1, code_logits.size(-1)),
             code_target.view(-1).to(dtype=torch.long),
             reduction="mean",
         )
-        if isinstance(self.input_encoder, (TripletEncoder, TripletPromptEncoder)):
-            # Numerical Value Loss
-            numeric_value_preds = self.process_numeric_values(numeric_value_logits, code_target)
-            numeric_value_loss = F.mse_loss(numeric_value_preds, numeric_value_target, reduction="none")
-            numeric_value_loss = (numeric_value_loss * numeric_value_mask).sum() / numeric_value_mask.sum()
-            # Time Loss
-            time_loss = self.get_time_loss(time_logits, time_delta_days_target, dynamic_mask)
 
-            total_loss = code_loss + numeric_value_loss + time_loss
-        else:
-            total_loss = code_loss
-            numeric_value_loss = 0
-            time_loss = 0
+        assert not torch.isnan(code_loss).any(), "code_loss is NaN"
+
+        total_loss = code_loss
 
         batch[MODEL_LOSS_KEY] = total_loss
-        batch[NUMERIC_VALUE_LOSS] = numeric_value_loss
-        batch[CODE_LOSS] = code_loss
-        batch[TIME_LOSS] = time_loss
+        batch[VAL_PREFIX + CODE_LOSS] = code_loss
         return batch
 
     def get_forecast_logits(self, model_output):
@@ -165,23 +107,9 @@ class TokenForecastingModule(BaseModule):
             all_token_embeddings = model_output
         else:
             all_token_embeddings = model_output[BACKBONE_TOKENS_KEY]
-        if isinstance(self.input_encoder, (TripletEncoder, TripletPromptEncoder)):
-            numeric_value_logits = self.numeric_value_head(all_token_embeddings)
-            code_logits = self.code_head(all_token_embeddings)
-        else:
-            code_logits = all_token_embeddings
-            if not code_logits.shape[-1] == self.cfg.vocab_size:
-                code_logits = self.code_head(all_token_embeddings)
-            numeric_value_logits = None
-
-        if isinstance(self.input_encoder, TripletEncoder):
-            time_logits = self.time_head(all_token_embeddings)
-        else:
-            time_logits = None
+        code_logits = self.code_head(all_token_embeddings)
         return {
-            NUMERIC_VALUE_LOGITS: numeric_value_logits,
             CODE_LOGITS: code_logits,
-            TIME_LOGITS: time_logits,
         }
 
     def forward(self, batch):
@@ -189,17 +117,15 @@ class TokenForecastingModule(BaseModule):
         model_output = self.model(batch)
 
         forecast = self.get_forecast_logits(model_output)
-        batch[NUMERIC_VALUE_LOGITS] = forecast[NUMERIC_VALUE_LOGITS]
         batch[CODE_LOGITS] = forecast[CODE_LOGITS]
-        batch[TIME_LOGITS] = forecast[TIME_LOGITS]
 
         batch = self.get_loss(batch)
         return batch
 
     def _log(self, batch, split):
-        self.log(split + "/code_loss", batch[CODE_LOSS])
-        self.log(split + "/numeric_value_loss", batch[NUMERIC_VALUE_LOSS])
-        self.log(split + "/time_loss", batch[TIME_LOSS])
+        for key in batch:
+            if key.startswith(VAL_PREFIX):
+                self.log(split + "/" + key, batch[key], on_step=False, on_epoch=True)
         self.log(split + "/loss", batch[MODEL_LOSS_KEY])
 
     def training_step(self, batch):

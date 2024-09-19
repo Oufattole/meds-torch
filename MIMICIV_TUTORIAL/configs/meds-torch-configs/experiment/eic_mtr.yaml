@@ -1,7 +1,6 @@
 # @package _global_
 
 # to execute this experiment run:
-# meds-torch-train experiment=eic_mtr paths.data_dir=/path/to/mimiciv/meds/data/MEDS_cohort paths.meds_cohort_dir=/path/to/mimiciv/meds/data/ paths.output_dir=/path/to/output_dir
 
 defaults:
   - override /data: pytorch_dataset
@@ -41,8 +40,8 @@ model:
   optimizer:
     lr: 0.001
   backbone:
-    n_layers: 6
-    nheads: 8
+    n_layers: 2
+    nheads: 4
     dropout: 0
 
 

@@ -1,6 +1,6 @@
 _target_: meds_torch.input_encoder.text_encoder.TextCodeEncoder.initialize
 collate_style: text_code
-max_seq_len: ${data.max_seq_len}
+_resolved_max_seq_len: ${data._resolved_max_seq_len}
 token_dim: ${model.token_dim}
 vocab_size: ${data.vocab_size}
 

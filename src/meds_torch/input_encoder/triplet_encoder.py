@@ -81,10 +81,10 @@ class TripletEncoder(nn.Module, Module):
         embedding = time_emb + code_emb + val_emb
 
         assert embedding.isfinite().all(), "Embedding is not finite"
-        if embedding.shape[-1] > self.cfg.max_seq_len:
+        if embedding.shape[-1] > self.cfg._resolved_max_seq_len:
             raise ValueError(
                 f"Triplet embedding length {embedding.shape[-1]} "
-                "is greater than max_seq_len {self.cfg.max_seq_len}"
+                "is greater than max_seq_len {self.cfg._resolved_max_seq_len}"
             )
         return embedding.transpose(1, 2)
 

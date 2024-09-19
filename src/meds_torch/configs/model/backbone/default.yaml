@@ -2,12 +2,9 @@ nheads: 2
 n_layers: 2
 dropout: 0
 token_dim: ${model.token_dim}
-max_seq_len: ${model.max_seq_len}
+_resolved_max_seq_len: ${model._resolved_max_seq_len}
 vocab_size: ${data.vocab_size}
 get_last_token: true
-# TODO: set default to rotary_embed, and use token_emb instead of use_xtransformers_token_emb
-pos_encoding: "absolute_sinusoidal"
-use_xtransformers_token_emb: false # If true, applies x_transformers token encoder, and user should not use the input_encoder
 use_cls_token: false
 postpend_eos_token: false
 model_type: null

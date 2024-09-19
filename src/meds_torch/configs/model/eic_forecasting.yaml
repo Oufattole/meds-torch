@@ -1,8 +1,8 @@
 defaults:
-  - input_encoder: triplet_encoder
-  - backbone: triplet_transformer_encoder
+  - input_encoder: eic_encoder
+  - backbone: eic_transformer_decoder
   - _self_
-_target_: meds_torch.models.token_forecasting.TokenForecastingModule.initialize
+_target_: meds_torch.models.eic_forecasting.EicForecastingModule.initialize
 
 optimizer:
   _target_: torch.optim.Adam
@@ -17,12 +17,14 @@ scheduler:
   factor: 0.1
   patience: 10
 
-max_seq_len: ${data.max_seq_len}
+_resolved_max_seq_len: ${data._resolved_max_seq_len}
 token_dim: 4
 vocab_size: ${data.vocab_size}
 get_representations: false
 task_name: ${data.task_name}
 batch_size: ${data.dataloader.batch_size}
+code_head:
+  _target_: torch.nn.Identity
 
 # compile model for faster training with pytorch 2.0
 compile: false

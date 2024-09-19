@@ -29,7 +29,8 @@ num_value_code_quantiles: null
 
 # Sequence Params
 max_seq_len: 512
-min_seq_len: null
+_resolved_max_seq_len: ${resolve_max_seq_len:${data.max_seq_len}, ${data.postpend_eos_token}}
+min_seq_len: 1
 subsequence_sampling_strategy: random
 seq_padding_side: right
 text_max_seq_len: 8

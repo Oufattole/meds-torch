@@ -1,0 +1,49 @@
+# @package _global_
+
+# specify here default configuration
+# order of defaults determines the order in which configs override each other
+defaults:
+  - override /data: pytorch_dataset
+  - override /logger: wandb
+  - override /model/backbone: triplet_transformer_decoder
+  - override /model/input_encoder: triplet_encoder
+  - override /model: supervised
+  - override /trainer: gpu
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+tags:
+  - "mimiciv"
+  - "triplet"
+  - "transformer_decoder"
+
+seed: 0
+
+trainer:
+  min_epochs: 1
+  max_epochs: 10
+  gradient_clip_val: 1.0
+
+data:
+  dataloader:
+    batch_size: 64
+    num_workers: 6
+  max_seq_len: 128
+  collate_type: "triplet"
+  subsequence_sampling_strategy: "to_end"
+
+model:
+  token_dim: 128
+  optimizer:
+    lr: 0.001
+  backbone:
+    n_layers: 2
+    nheads: 4
+    dropout: 0
+
+
+logger:
+  wandb:
+    tags: ${tags}
+    group: "mimiciv_tokenization"

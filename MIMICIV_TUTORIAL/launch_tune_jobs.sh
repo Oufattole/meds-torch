@@ -31,7 +31,7 @@ launch_job() {
     export MIMICIV_MEDS_DIR='${ROOT_DIR}/meds/'
     export TASKS_DIR=\${MIMICIV_MEDS_DIR}/tasks/
     export MIMICIV_${tensor_dir}_DIR=${ROOT_DIR}/${tensor_dir}_tensors/
-    export OUTPUT_DIR=${ROOT_DIR}/results/${experiment}_exp/${task_name}/
+    export OUTPUT_DIR=${ROOT_DIR}/results/test/${experiment}_exp/${task_name}/
     conda activate ${conda_env}
 
     MAX_POLARS_THREADS=4 meds-torch-tune callbacks=tune_default model.backbone.n_layers=2 model.backbone.nheads=4 model.token_dim=32 \
@@ -48,9 +48,9 @@ launch_job() {
 tmux kill-server 2>/dev/null || true
 
 # Launch jobs
-launch_job 0 "icu_mortality" "eic_mtr" "eic" "$ROOT_DIR" "$CONDA_ENV"
+# launch_job 0 "icu_mortality" "eic_mtr" "eic" "$ROOT_DIR" "$CONDA_ENV"
 # launch_job 1 "long_los" "eic_mtr" "eic" "$ROOT_DIR" "$CONDA_ENV"
-# launch_job 2 "icu_mortality" "triplet_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"
+launch_job 2 "icu_mortality" "triplet_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"
 # launch_job 3 "long_los" "triplet_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"
 # launch_job 4 "icu_mortality" "text_code_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"
 # launch_job 5 "long_los" "text_code_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"

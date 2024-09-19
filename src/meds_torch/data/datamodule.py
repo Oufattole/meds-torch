@@ -8,6 +8,9 @@ from meds_torch.data.components.multiwindow_pytorch_dataset import (
     MultiWindowPytorchDataset,
 )
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
+from meds_torch.data.components.random_windows_pytorch_dataset import (
+    RandomWindowPytorchDataset,
+)
 from meds_torch.utils.module_class import Module
 
 
@@ -16,6 +19,8 @@ def get_dataset(cfg: DictConfig, split) -> PytorchDataset:
         return MultiWindowPytorchDataset(cfg, split)
     elif cfg.name == "pytorch_dataset":
         return PytorchDataset(cfg, split)
+    elif cfg.name == "random_windows_pytorch_dataset":
+        return RandomWindowPytorchDataset(cfg, split)
     else:
         raise NotImplementedError(f"{cfg.name} not implemented!")
 
