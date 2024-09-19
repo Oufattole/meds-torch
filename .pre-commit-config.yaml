@@ -98,7 +98,7 @@ repos:
           - mdformat-black
           - mdformat-config
           - mdformat-shfmt
-        exclude: "docs/index.md|docs/tutorial.md"
+        exclude: "docs/index.md|docs/tutorial.md|docs/inductive_experiments.md"
 
   # word spelling linter
   - repo: https://github.com/codespell-project/codespell
