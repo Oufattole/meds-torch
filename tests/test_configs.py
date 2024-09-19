@@ -51,7 +51,7 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
 
     supervised = model == "supervised"
     if model in ["triplet_forecasting", "eic_forecasting"]:
-        raises_value_error = (token_type == "text") or ("transformer_encoder" in backbone)
+        raises_value_error = "transformer_encoder" in backbone
         if model == "triplet_forecasting" and token_type == "eic":
             raises_value_error = True
         if model == "eic_forecasting" and token_type != "eic":
