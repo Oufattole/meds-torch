@@ -299,3 +299,40 @@ results_df['method'] = results_df['method'].replace(method_mapping)
 # Display the results
 results_df.sort_values(["task_name", "date"]).groupby(['task_name', "method", "tokenization_strategy"]).last()
 ```
+
+This table presents the results of various tokenization methods across different tasks for the MIMIC-IV dataset. The results are reported as Mean ± Standard Deviation of the Area Under the Curve (AUC) over five trials. The table compares different methods (Contrastive, Forecasting, and Supervised) with various types and tokenization strategies (EIC, Text Code, and Triplet) across four key tasks in medical risk prediction.
+
+- **hosp-Mortality** (`mortality/in_hospital/first_24h`): Prediction of in-hospital mortality given data up to the end of the first 24 hours of hospital observations.
+- **ICU-Mortality** (`mortality/in_icu/first_24h`): Prediction of in-ICU mortality given data up to the end of the first 24 hours of ICU observations.
+- **Discharge-Mortality** (`mortality/post_hospital_discharge/1y`): Prediction of whether a subject will survive 1 year after hospital discharge.
+- **Readmission** (`readmission/30d`): Prediction of whether a subject is readmitted within 30 days after hospital discharge.
+
+| Method      | Type           | Tokenization | hosp-Mortality | ICU-Mortality | Discharge-Mortality | Readmission |
+| ----------- | -------------- | ------------ | -------------- | ------------- | ------------------- | ----------- |
+| Contrastive | OCP            | EIC          | 86.1 ± 0.3     | 77.2 ± 0.4    | 84.1 ± 0.1          | 70.3 ± 0.3  |
+|             |                | Text Code    | 80.0 ± 0.5     | 69.3 ± 1.6    | 81.6 ± 0.1          | 68.3 ± 0.3  |
+|             |                | Triplet      | 87.3 ± 0.4     | 75.8 ± 0.4    | 85.6 ± 0.1          | 71.5 ± 0.2  |
+|             | LCL            | EIC          | 86.1 ± 0.7     | 76.6 ± 0.6    | 84.0 ± 0.0          | 70.6 ± 0.2  |
+|             |                | Text Code    | 85.2 ± 0.3     | 74.9 ± 0.9    | 83.9 ± 0.3          | 70.1 ± 0.3  |
+|             |                | Triplet      | 86.5 ± 0.2     | 77.4 ± 0.7    | 85.6 ± 0.1          | 71.8 ± 0.1  |
+| Forecasting | Autoregressive | EIC          | 84.8 ± 0.1     | 76.9 ± 0.5    | 83.6 ± 0.3          | 69.9 ± 0.2  |
+|             |                | Text Code    | 81.9 ± 0.4     | 71.6 ± 1.3    | 81.9 ± 0.4          | 69.1 ± 0.3  |
+|             |                | Triplet      | 74.0 ± 0.6     | 65.1 ± 2.2    | 76.0 ± 1.8          | 64.4 ± 0.5  |
+|             | Value          | EIC          | 86.1 ± 0.6     | 77.8 ± 1.0    | 84.0 ± 0.2          | 70.2 ± 0.6  |
+|             |                | Text Code    | 85.2 ± 0.2     | 75.8 ± 0.6    | 85.8 ± 0.1          | 72.1 ± 0.1  |
+|             |                | Triplet      | 88.2 ± 0.1     | 77.3 ± 0.8    | 86.2 ± 0.1          | 72.1 ± 0.1  |
+| Supervised  | -              | EIC          | 86.4 ± 0.2     | 77.9 ± 0.4    | 84.0 ± 0.1          | 70.0 ± 0.1  |
+|             |                | Text Code    | 85.3 ± 0.3     | 75.5 ± 0.7    | 85.0 ± 0.3          | 70.8 ± 0.3  |
+|             |                | Triplet      | 87.1 ± 0.9     | 77.4 ± 1.1    | 85.4 ± 0.2          | 71.5 ± 0.2  |
+
+We analyze the performance of different tokenization strategies across all four tasks and all methods:
+
+<img src="https://github.com/Oufattole/meds-torch/blob/182e282e87aa75b1523f0526f62635a36ce92593/docs/assets/overall_win_rate.png?raw=true" alt="Tokenization Strategy Bar Plot" style="height: 300px;">
+
+This bar plot illustrates the overall win rates for each tokenization strategy, aggregated across all tasks and methods. The Triplet tokenization demonstrates superior performance, consistently outperforming both EIC and Text Code. This suggests that Triplet tokenization may be more effective in capturing and representing the underlying structure of the data across a wide range of scenarios.
+
+To gain deeper insights, we also examine the performance of each tokenization strategy across different methods:
+
+![Method Bar Plot](https://github.com/Oufattole/meds-torch/blob/182e282e87aa75b1523f0526f62635a36ce92593/docs/assets/grouped_win_rate.png?raw=true)
+
+This grouped bar plot breaks down the win rates by method, aggregated across tasks and normalized for each method. We observe that triplet is more effective for contrastive and supervised learning methods, but EIC performs better for forecasting methods. This suggests that the choice of tokenization strategy should be tailored to the specific learning method and task at hand.
