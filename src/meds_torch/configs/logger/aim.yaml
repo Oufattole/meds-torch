@@ -8,7 +8,7 @@
 
 aim:
   _target_: aim.pytorch_lightning.AimLogger
-  repo: ${paths.root_dir} # .aim folder will be created here
+  repo: ${paths.log_dir} # .aim folder will be created here
   # repo: "aim://ip_address:port" # can instead provide IP address pointing to Aim remote tracking server which manages the repo, see https://aimstack.readthedocs.io/en/latest/using/remote_tracking.html#
 
   # aim allows to group runs under experiment name

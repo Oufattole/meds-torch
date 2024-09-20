@@ -31,3 +31,6 @@ train: ## Train the model
 
 install:
 	pip install -e .
+
+docs: ## Generate documentation
+	mkdocs serve

@@ -1,0 +1,8 @@
+defaults:
+  - pytorch_dataset
+  - _self_
+name: random_windows_pytorch_dataset
+
+max_window_size: ${data._resolved_max_seq_len}
+min_window_size: ${data.min_seq_len}
+n_windows: 2

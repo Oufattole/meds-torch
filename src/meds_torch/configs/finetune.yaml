@@ -27,7 +27,7 @@ defaults:
   # debugging config (enable through command line, e.g. `python train.py debug=default)
   - debug: null
 
-name: "transfer_learning"
+name: "finetune"
 # task name, determines output directory path
 task_name: null
 
@@ -43,9 +43,11 @@ train: True
 # lightning chooses best weights based on the metric specified in checkpoint callback
 test: True
 
-# simply provide checkpoint path to resume training
-pretrain_ckpt_path: ???
-pretrain_yaml_path: ???
+# simply provide path to previous train run to finetune from
+pretrain_path: ???
+pretrain_ckpt_path: ${pretrain_path}/checkpoints/best_model.ckpt
+pretrain_yaml_path: ${pretrain_path}/hydra_config.yaml
+best_config_path: ${pretrain_path}/best_config.json
 
 ckpt_path: null
 

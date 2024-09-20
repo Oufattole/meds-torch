@@ -1,19 +1,16 @@
-# path to root directory
-# this requires PROJECT_ROOT environment variable to exist
-# you can replace it with "." if you want the root to be the current working directory
-root_dir: "."
-
 # path to data directory
 data_dir: ???
 meds_cohort_dir: ???
 
-# path to logging directory
-log_dir: ${paths.root_dir}/logs/
-
 # path to output directory, created dynamically by hydra
 # path generation pattern is specified in `configs/hydra/default.yaml`
 # use it to store all files generated during the run, like ckpts and metrics
-output_dir: ${hydra:runtime.output_dir}
+output_dir: ???
+
+time_output_dir: ${paths.output_dir}/${now:%Y-%m-%d_%H-%M-%S_%f}
+
+# path to logging directory
+log_dir: ${paths.time_output_dir}/logs/
 
 # path to working directory
 work_dir: ${hydra:runtime.cwd}

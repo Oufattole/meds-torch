@@ -8,7 +8,7 @@ import lightning as L
 import torch
 from lightning import Callback, LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 from meds_torch.utils import (
     RankedLogger,
@@ -23,11 +23,11 @@ from meds_torch.utils.resolvers import setup_resolvers
 
 setup_resolvers()
 log = RankedLogger(__name__, rank_zero_only=True)
-config_yaml = files("meds_torch").joinpath("configs/transfer_learning.yaml")
+config_yaml = files("meds_torch").joinpath("configs/finetune.yaml")
 
 
 @task_wrapper
-def transfer_learning(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
+def finetune(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     """Trains the model. Can additionally evaluate on a testset, using best weights obtained during training.
 
     This method is wrapped in optional @task_wrapper decorator, that controls the behavior during failure.
@@ -38,13 +38,21 @@ def transfer_learning(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     # load pretrained backbone and input encoder:
     pretrain_cfg = OmegaConf.load(cfg.pretrain_yaml_path)
+    # TODO this just adds backwards compatibility find a better way for loading pretrain_cfg
+    # see: https://github.com/Oufattole/meds-torch/issues/47
+    with open_dict(pretrain_cfg):
+        pretrain_cfg.model._resolved_max_seq_len = cfg.data._resolved_max_seq_len
+        pretrain_cfg.model.input_encoder._resolved_max_seq_len = cfg.data._resolved_max_seq_len
+        pretrain_cfg.data.vocab_size = cfg.data.vocab_size
+        pretrain_cfg.model.vocab_size = cfg.data.vocab_size
+
     pretrain_model: LightningModule = hydra.utils.instantiate(pretrain_cfg.model)
     ckpt = torch.load(cfg.pretrain_ckpt_path)
     pretrain_model.load_state_dict(ckpt["state_dict"])
 
     # cache hydra config
-    os.makedirs(cfg.paths.output_dir, exist_ok=True)
-    OmegaConf.save(config=cfg, f=Path(cfg.paths.output_dir) / "hydra_config.yaml")
+    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
+    OmegaConf.save(config=cfg, f=Path(cfg.paths.time_output_dir) / "hydra_config.yaml")
 
     # set seed for random number generators in pytorch, numpy and python.random
     if cfg.get("seed"):
@@ -126,11 +134,11 @@ def main(cfg: DictConfig) -> float | None:
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
-    os.makedirs(cfg.paths.output_dir, exist_ok=True)
+    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
     extras(cfg)
 
     # train the model
-    metric_dict, _ = transfer_learning(cfg)
+    metric_dict, _ = finetune(cfg)
 
     # safely retrieve metric value for hydra-based hyperparameter optimization
     metric_value = get_metric_value(metric_dict=metric_dict, metric_name=cfg.get("optimized_metric"))

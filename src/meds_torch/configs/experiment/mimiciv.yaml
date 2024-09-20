@@ -10,7 +10,7 @@ defaults:
   - override /logger: wandb
   - override /model/backbone: triplet_transformer_encoder
   - override /model/input_encoder: triplet_encoder
-  - override /model: token_forecasting
+  - override /model: triplet_forecasting
   - override /callbacks: default
   - override /trainer: default
 

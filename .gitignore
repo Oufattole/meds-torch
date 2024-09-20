@@ -172,3 +172,7 @@ tests.ipynb
 data/*
 logs/*
 **/.logs/*
+output/*
+outputs/*
+
+wandb/

@@ -1,0 +1,21 @@
+# Ray Tune configuration
+ray:
+  num_samples: 5
+  resources_per_trial:
+    gpu: 1
+
+# choose metric which will be optimized by Ray Tune
+optimized_metric: "val/loss"
+direction: "min"
+
+# Define the search space
+search_space:
+  seed:
+    _target_: ray.tune.randint
+    lower: 0
+    upper: 10000
+
+scheduler: null
+
+# Choose between train and finetune
+train_fn: ${name}

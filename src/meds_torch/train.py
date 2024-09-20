@@ -1,10 +1,12 @@
 import os
+import shutil
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 import hydra
 import lightning as L
+import loguru
 from lightning import Callback, LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig, OmegaConf
@@ -36,8 +38,8 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     :return: A tuple with metrics and dict with all instantiated objects.
     """
     # cache hydra config
-    os.makedirs(cfg.paths.output_dir, exist_ok=True)
-    OmegaConf.save(config=cfg, f=Path(cfg.paths.output_dir) / "hydra_config.yaml")
+    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
+    OmegaConf.save(config=cfg, f=Path(cfg.paths.time_output_dir) / "hydra_config.yaml")
 
     # set seed for random number generators in pytorch, numpy and python.random
     if cfg.get("seed"):
@@ -79,19 +81,23 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
 
     if cfg.get("test"):
         log.info("Starting testing!")
-        ckpt_path = trainer.checkpoint_callback.best_model_path
-        if ckpt_path == "":
+        best_model_path = trainer.checkpoint_callback.best_model_path
+        if best_model_path == "":
             log.warning("Best ckpt not found! Using current weights for testing...")
-            ckpt_path = None
-        trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
-        log.info(f"Best ckpt path: {ckpt_path}")
+            best_model_path = None
+        trainer.test(model=model, datamodule=datamodule, ckpt_path=best_model_path)
+        log.info(f"Best ckpt path: {best_model_path}")
 
     test_metrics = trainer.callback_metrics
 
     # merge train and test metrics
     metric_dict = {**train_metrics, **test_metrics}
 
-    return metric_dict, object_dict
+    # log time profiles: https://github.com/Oufattole/meds-torch/issues/44
+    if hasattr(datamodule.data_train, "_timings"):
+        loguru.logger.debug("Train Time: ", datamodule.data_train._profile_durations())
+
+    return metric_dict, object_dict, best_model_path
 
 
 @hydra.main(version_base="1.3", config_path=str(config_yaml.parent.resolve()), config_name=config_yaml.stem)
@@ -103,14 +109,20 @@ def main(cfg: DictConfig) -> float | None:
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
-    os.makedirs(cfg.paths.output_dir, exist_ok=True)
+    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
     extras(cfg)
 
     # train the model
-    metric_dict, _ = train(cfg)
+    metric_dict, _, best_model_path = train(cfg)
 
     # safely retrieve metric value for hydra-based hyperparameter optimization
     metric_value = get_metric_value(metric_dict=metric_dict, metric_name=cfg.get("optimized_metric"))
+
+    checkpoint_dir = Path(cfg.paths.time_output_dir) / "checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    if not cfg.trainer.get("fast_dev_run"):
+        shutil.copy(best_model_path, checkpoint_dir / "best_model.ckpt")
 
     # return optimized metric
     return metric_value

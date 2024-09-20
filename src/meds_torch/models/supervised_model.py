@@ -66,7 +66,8 @@ class SupervisedModule(BaseModule):
         self.train_acc.update(output.logits.squeeze(), batch[self.task_name].float())
         self.train_auc.update(output.logits.squeeze(), batch[self.task_name].float())
         self.train_apr.update(output.logits.squeeze(), batch[self.task_name].int())
-        self.log("train/loss", output.loss, batch_size=self.cfg.batch_size)
+        self.log("train/step_loss", output.loss, on_step=True, batch_size=self.cfg.batch_size)
+        self.log("train/loss", output.loss, on_epoch=True, batch_size=self.cfg.batch_size)
 
         assert not torch.isnan(output.loss), "Loss is NaN"
         return output.loss

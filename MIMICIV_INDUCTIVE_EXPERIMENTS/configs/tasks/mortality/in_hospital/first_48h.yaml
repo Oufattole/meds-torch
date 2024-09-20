@@ -13,7 +13,7 @@ predicates:
   hospital_discharge:
     code: {regex: "HOSPITAL_DISCHARGE//.*"}
   death:
-    code: DEATH
+    code: MEDS_DEATH
   discharge_or_death:
     expr: or(hospital_discharge, death)
 

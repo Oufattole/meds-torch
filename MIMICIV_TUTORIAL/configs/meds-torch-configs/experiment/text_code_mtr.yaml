@@ -13,7 +13,12 @@ defaults:
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters
 
-tags: ["mimiciv", "text_code", "transformer_encoder", "supervised"]
+tags:
+  - "mimiciv"
+  - "text_code"
+  - "transformer_encoder"
+  - "supervised"
+  - ${data.task_name}
 
 tokenizer: "google-bert/bert-base-uncased"
 seed: 0
@@ -26,20 +31,21 @@ trainer:
 data:
   dataloader:
     batch_size: 64
-    num_workers: 8
+    num_workers: 4
   max_seq_len: 512
   collate_type: "text_code"
   text_max_seq_len: 16
   tokenizer: ${tokenizer}
+  subsequence_sampling_strategy: "to_end"
 
 model:
   token_dim: 512
   optimizer:
     lr: 0.001
   backbone:
-    n_layers: 6
-    nheads: 8
-    dropout: 0.1
+    n_layers: 2
+    nheads: 4
+    dropout: 0
   input_encoder:
     tokenizer: ${tokenizer}
     text_token_dim: 128

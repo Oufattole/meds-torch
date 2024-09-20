@@ -9,7 +9,7 @@ import numpy as np
 import polars as pl
 import torch
 from loguru import logger
-from mixins import SeedableMixin
+from mixins import SeedableMixin, TimeableMixin
 from nested_ragged_tensors.ragged_numpy import (
     NP_FLOAT_TYPES,
     NP_INT_TYPES,
@@ -31,6 +31,21 @@ class CollateType(StrEnum):
 
 
 def generate_subject_split_dict(meds_dir):
+    """Generate a dictionary mapping split names to lists of subject IDs.
+
+    This function scans through the directory structure of a MEDS dataset, reading Parquet files to extract
+    unique subject IDs for each split.
+
+    Args:     meds_dir (str): Path to the root directory of the MEDS dataset.
+
+    Returns:     dict: A dictionary where keys are split names (e.g., 'train/shard0')           and values are
+    lists of subject IDs belonging to that split.
+
+    Raises:     FileNotFoundError: If the specified directory does not exist.
+
+    Notes:     - The function expects a directory structure where split directories       contain Parquet
+    files with subject data.     - It logs a warning if a specified path is not a directory.
+    """
     subject_split_dict = {}
 
     for split_dir in os.listdir(meds_dir):
@@ -47,25 +62,19 @@ def generate_subject_split_dict(meds_dir):
     return subject_split_dict
 
 
-def debug_fn(data_dict, max_seq_len=None):
-    for key, value in data_dict.items():
-        if isinstance(value, torch.Tensor):
-            if torch.isnan(value).any() or torch.isinf(value).any():
-                raise ValueError(f"Found NaN or infinite values in key: {key}")
-            if max_seq_len and value.shape[-1] > max_seq_len:
-                raise ValueError(f"Found sequence length {value.shape[-1]} in key: {key}")
-        elif isinstance(value, np.ndarray):
-            if max_seq_len and np.isnan(value).any() or np.isinf(value).any():
-                raise ValueError(f"Found NaN or infinite values in key: {key}")
-            if value.shape[-1] > max_seq_len:
-                raise ValueError(f"Found sequence length {value.shape[-1]} in key: {key}")
-        else:
-            raise TypeError(f"Unsupported data type for key: {key}")
+def subpad_vectors(a: np.ndarray, b: np.ndarray):
+    """Create a new array by placing elements of 'a' at indices specified by 'b'.
 
+    This function creates an array of zeros with length equal to the maximum value in 'b',
+    then places the values from 'a' at the indices specified by 'b'.
 
-def subpad_vectors(a, b):
-    """Calculate the total length of the output array Create an array of zeros with the total length Place the
-    values from 'a' at the indices specified by 'b'.
+    Args:
+        a (numpy.ndarray): The source array containing values to be placed.
+        b (numpy.ndarray): The array specifying the indices where values from 'a' should be placed.
+
+    Returns:
+        numpy.ndarray: A new array with values from 'a' placed at indices specified by 'b',
+                       and zeros elsewhere.
 
     Example:
     >>> a = np.array([2, 4, 5])
@@ -145,7 +154,12 @@ def count_or_proportion(N: int | pl.Expr | None, cnt_or_prop: int | float) -> in
 
 
 class SubsequenceSamplingStrategy(StrEnum):
-    """An enumeration of the possible subsequence sampling strategies for the dataset."""
+    """An enumeration of the possible subsequence sampling strategies for the dataset.
+
+    Attributes:     RANDOM: Randomly sample a subsequence from the full sequence.     TO_END: Sample a
+    subsequence from the end of the full sequence.         Note this starts at the last element and moves
+    back.     FROM_START: Sample a subsequence from the start of the full sequence.
+    """
 
     RANDOM = "random"
     TO_END = "to_end"
@@ -195,7 +209,7 @@ def to_int_index(col: pl.Expr) -> pl.Expr:
     return pl.when(col.is_null()).then(pl.lit(None)).otherwise(indices).alias(col.meta.output_name())
 
 
-def merge_task_with_static(task_df, static_dfs):
+def merge_task_with_static(task_df: pl.DataFrame, static_dfs: dict[str, pl.DataFrame], tasks: list[str]):
     """Merges a DataFrame containing task information with multiple static DataFrames on the 'subject_id'
     column. The function performs a sequence of operations to merge these dataframes based on subject
     identifiers and respective timestamps.
@@ -204,51 +218,46 @@ def merge_task_with_static(task_df, static_dfs):
     - task_df (DataFrame): A DataFrame with columns 'subject_id', 'start_time', 'end_time', and 'label'.
     - static_dfs (dict of DataFrames): A dictionary of DataFrames indexed by their source names,
       each containing 'subject_id', 'start_time', 'static_indices', 'static_values', and "time".
+    - tasks (list[str]): A list of task names to be merged with the static DataFrames.
 
     Returns:
     - DataFrame: The merged DataFrame containing data from task_df and all static_dfs.
 
-    # Example:
-    # >>> from datetime import datetime
-    # >>> import polars as pl
-    # >>> task_df = pl.DataFrame({
-    # ...     "subject_id": [1, 2],
-    # ...     "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
-    # ...     "end_time": [datetime(2020, 1, 2), datetime(2020, 1, 3)],
-    # ...     "label": [0, 1]
-    # ... })
-    # >>> static_dfs = {
-    # ...     'train/0': pl.DataFrame({
-    # ...         "subject_id": [1, 2],
-    # ...         "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
-    # ...         "time": [[datetime(2020, 1, 1, 1), datetime(2020, 1, 1, 3)],
-    # ...                       [datetime(2020, 1, 2), datetime(2020, 1, 1, 2, 3)]]
-    # ...     })
-    # ... }
-    # >>> merge_task_with_static(task_df, static_dfs)
-    # shape: (2, 6)
-    # ┌────────────┬────────────┬─────────────┬────────────┬────────────┬────────────┐
-    # │ _row_index ┆ subject_id ┆ start_time  ┆ end_time   ┆ start_time ┆ timestamp  │
-    # │ ---        ┆ ---        ┆ ---         ┆ ---        ┆ _global    ┆ ---        │
-    # │ u32        ┆ i64        ┆ list[dateti ┆ list[datet ┆ ---        ┆ list[datet │
-    # │            ┆            ┆ me[μs]]     ┆ ime[μs]]   ┆ datetime[μ ┆ ime[μs]]   │
-    # │            ┆            ┆             ┆            ┆ s]         ┆            │
-    # ╞════════════╪════════════╪═════════════╪════════════╪════════════╪════════════╡
-    # │ 0          ┆ 1          ┆ [2020-01-01 ┆ [2020-01-0 ┆ 2020-01-01 ┆ [2020-01-0 │
-    # │            ┆            ┆ 00:00:00]   ┆ 2          ┆ 00:00:00   ┆ 1          │
-    # │            ┆            ┆             ┆ 00:00:00]  ┆            ┆ 01:00:00,  │
-    # │            ┆            ┆             ┆            ┆            ┆ 2020-01-…  │
-    # │ 1          ┆ 2          ┆ [2020-01-02 ┆ [2020-01-0 ┆ 2020-01-02 ┆ [2020-01-0 │
-    # │            ┆            ┆ 00:00:00]   ┆ 3          ┆ 00:00:00   ┆ 2          │
-    # │            ┆            ┆             ┆ 00:00:00]  ┆            ┆ 00:00:00,  │
-    # │            ┆            ┆             ┆            ┆            ┆ 2020-01-…  │
-    # └────────────┴────────────┴─────────────┴────────────┴────────────┴────────────┘
+    Example:
+    >>> from datetime import datetime
+    >>> import polars as pl
+    >>> task_df = pl.DataFrame({
+    ...     "subject_id": [1, 2],
+    ...     "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
+    ...     "end_time": [datetime(2020, 1, 2), datetime(2020, 1, 3)],
+    ...     "label": [0, 1]
+    ... })
+    >>> static_dfs = {
+    ...     'train/0': pl.DataFrame({
+    ...         "subject_id": [1, 2],
+    ...         "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
+    ...         "time": [[datetime(2020, 1, 1, 1), datetime(2020, 1, 1, 3)],
+    ...                       [datetime(2020, 1, 2), datetime(2020, 1, 1, 2, 3)]]
+    ...     })
+    ... }
+    >>> tasks = ["label"]
+    >>> result = merge_task_with_static(task_df, static_dfs, tasks)
+    >>> result.select(['subject_id', 'end_time', 'label', 'time'])
+    shape: (2, 4)
+    ┌────────────┬───────────────────────┬───────────┬─────────────────────────────────┐
+    │ subject_id ┆ end_time              ┆ label     ┆ time                            │
+    │ ---        ┆ ---                   ┆ ---       ┆ ---                             │
+    │ i64        ┆ list[datetime[μs]]    ┆ list[i64] ┆ list[datetime[μs]]              │
+    ╞════════════╪═══════════════════════╪═══════════╪═════════════════════════════════╡
+    │ 1          ┆ [2020-01-02 00:00:00] ┆ [0]       ┆ [2020-01-01 01:00:00, 2020-01-… │
+    │ 2          ┆ [2020-01-03 00:00:00] ┆ [1]       ┆ [2020-01-02 00:00:00, 2020-01-… │
+    └────────────┴───────────────────────┴───────────┴─────────────────────────────────┘
     """
     task_df_joint = (
-        task_df.select("subject_id", "start_time", "end_time")
+        task_df.select("subject_id", "start_time", "end_time", *tasks)
         .with_row_index(IDX_COL)
         .group_by(IDX_COL, "subject_id", maintain_order=True)
-        .agg("start_time", "end_time")
+        .agg("start_time", "end_time", *tasks)
         .join(
             pl.concat(static_dfs.values()).select(
                 "subject_id", pl.col("start_time").alias("start_time_global"), "time"
@@ -256,23 +265,26 @@ def merge_task_with_static(task_df, static_dfs):
             on="subject_id",
             how="left",
         )
-        .with_columns(pl.col("time"))
+        .with_columns(pl.col("time"), pl.col(tasks))
     )
     return task_df_joint
 
 
-def get_task_indexes(task_df_joint) -> list[tuple[int, int, int]]:
+def get_task_indices_and_labels(
+    task_df_joint: pl.DataFrame, tasks: list[str]
+) -> tuple[list[tuple[int, int, int]], dict[str, list]]:
     """Processes the joint DataFrame to determine the index range for each subject's tasks.
 
-    For each row in task_df_joint, it is assumed that `timestamp` is a sorted column
-    and the start index and end index of the span of timestamps in between `start_time` and `end_time`
-    are computed.
+    For each row in task_df_joint, it is assumed that `time` is a sorted column and the function
+    computes the start index and end index of the span of time values in between `start_time` and `end_time`.
 
     Parameters:
     - task_df_joint (DataFrame): A DataFrame resulting from the merge_task_with_static function.
+    - tasks (list[str]): A list of task names that are columns in task_df_joint.
 
     Returns:
-    - list: list of tuples (subject_id, start_idx, end_idx).
+    - list: list of index tuples of format (subject_id, start_idx, end_idx).
+    - dict: dictionary of task names to lists of labels in the same order as the indexes.
 
     Example:
     >>> from datetime import datetime
@@ -295,37 +307,71 @@ def get_task_indexes(task_df_joint) -> list[tuple[int, int, int]]:
     ...     ],
     ...     "time": [
     ...         pl.date_range(datetime(2021, 1, 1), datetime(2021, 1, 5), "1d", eager=True)
-    ...     ]*5
+    ...     ]*5,
+    ...     "label": [[0], [0], [0], [1], [1]],
     ... })
-    >>> get_task_indexes(df)
+    >>> tasks = ["label"]
+    >>> indexes, labels = get_task_indices_and_labels(df, tasks)
+    >>> indexes
     [(0, 0, 1), (1, 0, 1), (2, 0, 2), (3, 1, 3), (4, 2, 3)]
+    >>> labels
+    {'label': [0, 0, 0, 1, 1]}
     """
     start_idx_expr = (
         (pl.col("time").search_sorted(pl.col("start_time"), side="left")).first().alias("start_idx")
     )
     end_idx_expr = (pl.col("time").search_sorted(pl.col("end_time"), side="left")).last().alias("end_idx")
-    task_df_joint = (
-        task_df_joint.explode("start_time", "end_time")
+    task_index_df = (
+        task_df_joint.explode("start_time", "end_time", *tasks)
         .explode("time")
         .group_by(IDX_COL, "subject_id", "start_time", "end_time", maintain_order=True)
         .agg(start_idx_expr, end_idx_expr)
     )
 
-    subject_ids = task_df_joint["subject_id"]
-    start_indices = task_df_joint["start_idx"]
-    end_indices = task_df_joint["end_idx"]
+    label_df = task_index_df.join(task_df_joint[IDX_COL, *tasks], how="left", on=IDX_COL).sort(IDX_COL)
+    label_df = label_df.explode(*tasks)
+    if not label_df.shape[0] == task_index_df.shape[0]:
+        raise ValueError(
+            "There are multiple labels for a single task index!"
+            f"There are {label_df.shape[0]} labels for {task_index_df.shape[0]} task indexes."
+        )
+
+    subject_ids = label_df["subject_id"]
+    start_indices = label_df["start_idx"]
+    end_indices = label_df["end_idx"]
+    labels = {task: label_df[task].to_list() for task in tasks}
 
     indexes = list(zip(subject_ids, start_indices, end_indices))
 
-    return indexes
+    return indexes, labels
 
 
-class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
-    """A PyTorch Dataset class.
+class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
+    """A PyTorch Dataset class for handling complex, multi-modal medical data.
 
-    Args:     config: Configuration options for the dataset, in an `omegaconf.DictConfig` object.     split:
-    The split of data which should be used in this dataset (e.g., ``'train'``, ``'tuning'``, ``'held_out'``).
-    This will dictate where the system looks for files.
+    This dataset is designed to work with data from the MEDS (Medical Event Data Set) format, supporting
+    various types of medical events, static patient information, and task-specific labels. It provides
+    functionality for loading, processing, and collating data for use in PyTorch models.
+
+    Key Features: - Handles different collation strategies (event stream, triplet, text-code, etc.) - Supports
+    task-specific data handling for binary classification - Implements custom sampling strategies and sequence
+    length constraints
+
+    Args:     cfg (DictConfig): Configuration options for the dataset.     split (str): The data split to use
+    (e.g., 'train', 'validation', 'test').
+
+    Attributes:     config (DictConfig): The dataset configuration.     split (str): The current data split.
+    code_metadata (pl.LazyFrame): Metadata for event codes.     static_dfs (dict): Dictionary of static
+    DataFrames for each data shard.     subj_indices (dict): Mapping of subject IDs to their indices in the
+    dataset.     subj_seq_bounds (dict): Sequence bounds (start, end) for each subject.     index (list): List
+    of (subject_id, start, end) tuples for data access.     labels (dict): Task-specific labels for each data
+    point.     tasks (list): List of task names.     task_types (dict): Mapping of task names to their types
+    (classification, regression, etc.).     task_vocabs (dict): Vocabularies for classification tasks.
+    tokenized_codes (dict): Tokenized representations of event codes (for text-code collation).
+
+    Methods:     __len__(): Returns the number of items in the dataset.     __getitem__(idx): Retrieves a
+    single data point.     collate(batch): Collates a batch of data points based on the specified collation
+    strategy.
     """
 
     TYPE_CHECKERS = {
@@ -344,13 +390,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
     @classmethod
     def normalize_task(cls, col: pl.Expr, dtype: pl.DataType) -> tuple[str, pl.Expr]:
-        """Normalizes the task labels in `col` of dtype `dtype` to a common format.
+        """Normalize task labels to a common format based on their data type.
 
-        Args:     col: The column containing the task labels, in polars expression format.     dtype: The
-        polars data type of the task labels.
+        This method determines the appropriate task type (e.g., multi-class classification, binary
+        classification, regression) based on the data type of the label column and applies any necessary
+        transformations to normalize the data.
 
-        Returns:     The task type (a string key into the `TYPE_CHECKERS` dictionary) and the normalized
-        column     expression.
+        Args:     col (pl.Expr): The polars Expression containing the task labels.     dtype (pl.DataType):
+        The polars data type of the task labels.
+
+        Returns:     tuple: A tuple containing two elements:         - str: The determined task type (e.g.,
+        'multi_class_classification', 'binary_classification', 'regression').         - pl.Expr: The
+        normalized column expression.
 
         Raises:     TypeError: If the task labels are not of a supported type.
         """
@@ -402,7 +453,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 )
 
     def read_shards(self):
-        """Reads the split-specific subject shards from the ESGPT or MEDS dataset."""
+        """Reads the split-specific subject shards from the MEDS dataset.
+
+        This method scans the specified MEDS cohort directory for Parquet files, organizes them by split, and
+        creates mappings between subjects and their respective shards.
+        """
         all_shards = generate_subject_split_dict(Path(self.config.meds_cohort_dir) / "data")
         self.shards = {sp: subjs for sp, subjs in all_shards.items() if sp.startswith(f"{self.split}")}
         self.subj_map = {subj: sp for sp, subjs in self.shards.items() for subj in subjs}
@@ -412,7 +467,24 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             )
 
     def read_subject_descriptors(self):
-        """Reads the subject schemas and static data."""
+        """Read subject schemas and static data from the dataset.
+
+        This method processes the Parquet files for each shard in the dataset, extracting static data and
+        creating various mappings and indices for efficient data access.
+
+        The method populates the following instance attributes: - self.static_dfs: Dictionary of static
+        DataFrames for each shard. - self.subj_indices: Mapping of subject IDs to their indices. -
+        self.subj_seq_bounds: Dictionary of sequence bounds for each subject. - self.index: List of
+        (subject_id, start, end) tuples for data access. - self.labels: Dictionary of task labels (if tasks
+        are specified). - self.tasks: List of task names. - self.task_types: Dictionary of task types. -
+        self.task_vocabs: Dictionary of task vocabularies.
+
+        If tasks are specified in the configuration, this method also processes the task labels and integrates
+        them with the static data.
+
+        Raises:     ValueError: If duplicate subjects are found across shards or if                 required
+        task information is missing.     FileNotFoundError: If specified task files are not found.
+        """
         self.static_dfs = {}
         self.subj_indices = {}
         self.subj_seq_bounds = {}
@@ -452,6 +524,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             if self.config.task_root_dir is None:
                 raise ValueError("`task_root_dir` must be provided if task is specified!")
             task_df_fp = Path(self.config.task_label_path)
+            if not task_df_fp.is_file():
+                logger.info(f"If the task file is not found at {task_df_fp}")
+                task_df_fp = task_df_fp.with_suffix("") / "**/*.parquet"
+                logger.info(f"Searching for task parquets over the glob {task_df_fp}")
+
             task_info_fp = Path(self.config.task_info_path)
 
             logger.info(f"Reading task constraints for {self.config.task_name} from {task_df_fp}")
@@ -490,7 +567,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             while idx_col in task_df.columns:
                 idx_col = f"_{idx_col}"
 
-            task_df_joint = merge_task_with_static(task_df, self.static_dfs)
+            task_df_joint = merge_task_with_static(task_df, self.static_dfs, self.tasks)
             # Filter out subjects that are not in the split
             split_subjects = set(
                 pl.concat(self.static_dfs.values())
@@ -500,8 +577,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             )
             task_df_joint = task_df_joint.filter(pl.col("subject_id").is_in(split_subjects))
             # Convert dates to indexes in the nested ragged tensor, (for fast indexing of data)
-            self.index = get_task_indexes(task_df_joint)
-            self.labels = {t: task_df.get_column(t).to_list() for t in self.tasks}
+            self.index, self.labels = get_task_indices_and_labels(task_df_joint, self.tasks)
         else:
             self.index = [(subj, *bounds) for subj, bounds in self.subj_seq_bounds.items()]
             self.labels = {}
@@ -510,7 +586,20 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             self.task_vocabs = None
 
     def get_task_info(self, task_df: pl.DataFrame):
-        """Gets the task information from the task dataframe."""
+        """Extract and process task information from the task DataFrame.
+
+        This method analyzes the task DataFrame to determine the type of each task (e.g., binary
+        classification, multi-class classification) and creates appropriate vocabularies for classification
+        tasks.
+
+        Args:     task_df (pl.DataFrame): DataFrame containing task labels and related information.
+
+        Returns:     dict: A dictionary containing processed task information:         - 'tasks': List of task
+        names.         - 'vocabs': Dictionary mapping task names to their vocabularies.         - 'types':
+        Dictionary mapping task names to their types.
+
+        Raises:     NotImplementedError: If an unsupported task type is encountered.
+        """
         self.task_types = {}
         self.task_vocabs = {}
 
@@ -534,7 +623,20 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return {"tasks": sorted(self.tasks), "vocabs": self.task_vocabs, "types": self.task_types}
 
     def filter_to_min_seq_len(self):
-        """Filters the dataset to only include subjects with at least `self.config.min_seq_len` events."""
+        """Filter the dataset to include only subjects with at least the minimum sequence length.
+
+        This method removes data points where the sequence length is less than the specified minimum sequence
+        length (self.config.min_seq_len). It updates the dataset's index and labels accordingly.
+
+        Notes:     - This method modifies the self.index and self.labels attributes in-place.     - It logs
+        information about the number of data points and subjects before       and after filtering.     - If
+        tasks are specified, it warns that filtering may affect model comparability.
+
+        Raises:     AttributeError: If self.config.min_seq_len is not set.
+
+        Side effects:     - Reduces the size of self.index and self.labels.     - Logs information about the
+        filtering process.
+        """
         if self.has_task:
             logger.warning(
                 f"Filtering task {self.config.task_name} to min_seq_len {self.config.min_seq_len}. "
@@ -556,7 +658,25 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         )
 
     def filter_to_subset(self):
-        """Filters the dataset to only include a subset of subjects."""
+        """Filter the dataset to include only a subset of subjects for the training split.
+
+        This method randomly selects a subset of subjects based on the self.config.train_subset_size
+        parameter. It's typically used to create smaller training sets for experimentation or debugging
+        purposes.
+
+        The method only applies to the training split ('train') and uses a random number generator seeded with
+        self.config.train_subset_seed for reproducibility.
+
+        Notes:     - This method modifies the self.index and self.labels attributes in-place.     - It logs
+        information about the number of data points and subjects before       and after filtering.     - The
+        subset size can be specified as an integer (exact number of subjects)       or a float (proportion of
+        total subjects).
+
+        Raises:     ValueError: If self.config.train_subset_size is not properly set.
+
+        Side effects:     - Reduces the size of self.index and self.labels for the training split.     - Logs
+        information about the subset selection process.
+        """
 
         orig_len = len(self)
         orig_n_subjects = len(set(self.subject_ids))
@@ -576,28 +696,24 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             f"{orig_len} to {new_len} rows and {orig_n_subjects} to {new_n_subjects} subjects."
         )
 
-    @classmethod
-    def tokenize_batch(cls, tokenizer, batch: list[str], padding=False) -> dict:
-        """Tokenizes the batch using the provided tokenizer.
-
-        Args:     tokenizer: The tokenizer to use.     batch: The batch to tokenize.
-
-        Returns:     A dictionary containing the tokenized batch.
-        """
-        output = tokenizer(
-            batch,
-            padding=padding,
-            return_attention_mask=padding,
-            # return_tensors="pt",
-            return_token_type_ids=False,
-            add_special_tokens=False,
-        )
-        # if len(output.keys()) == 1:
-        #     return output[list(output.keys())[0]]
-        return output
-
     def set_inter_event_time_stats(self):
-        """Sets the inter-event time statistics for the dataset."""
+        """Calculate and set inter-event time statistics for the dataset.
+
+        This method computes statistics related to the time differences between consecutive events in the
+        dataset. It calculates the minimum, mean (log), and standard deviation (log) of inter-event times.
+
+        The computed statistics are stored as instance attributes: - self.mean_log_inter_event_time_min: Mean
+        of log inter-event times - self.std_log_inter_event_time_min: Standard deviation of log inter-event
+        times
+
+        Raises:     ValueError: If the dataset is empty (no static DataFrames).
+
+        Side effects:     - Sets the above-mentioned instance attributes.     - Logs warnings if any non-
+        positive inter-event times are found.     - Removes subjects with invalid (non-positive) inter-event
+        times from the dataset.
+
+        TODO: allow use of inter-event time statistics for normalizing time-deltas
+        """
         if len(self.static_dfs) == 0:
             raise ValueError(
                 f"The {self.split} dataset is empty, there should be at least one static dataframe."
@@ -654,30 +770,52 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return self.config.max_seq_len
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        """Returns a Returns a dictionary corresponding to a single subject's data.
+        """Retrieve a single data point from the dataset.
 
-        The output of this will not be tensorized as that work will need to be re-done in the collate function
-        regardless. The output will have structure: `` {     'time_delta_days': [seq_len], 'dynamic_indices':
-        [seq_len, n_data_per_event] (ragged),     'dynamic_values': [seq_len, n_data_per_event] (ragged),
-        'static_indices': [seq_len, n_data_per_event] (ragged), } ``
+        This method returns a dictionary corresponding to a single subject's data at the specified index. The
+        data is not tensorized in this method, as that work is typically done in the collate function.
 
-        1. ``time_delta_days`` captures the time between each event and the subsequent event in days. 2.
-        ``dynamic_indices`` captures the categorical metadata elements listed in `self.data_cols` in a unified
-        vocabulary space spanning all metadata vocabularies. 3. ``dynamic_values`` captures the numerical
-        metadata elements listed in `self.data_cols`. If no    numerical elements are listed in
-        `self.data_cols` for a given categorical column, the according    index in this output will be
-        `np.NaN`. 5. ``static_indices`` captures the categorical metadata elements listed in
-        `self.static_cols` in a    unified vocabulary.
+        Args:     idx (int): The index of the data point to retrieve.
+
+        Returns:     dict: A dictionary containing the data for the specified index. The structure typically
+        includes:         - 'time_delta_days': List of time deltas between events.         -
+        'dynamic_indices': List of categorical metadata elements.         - 'dynamic_values': List of
+        numerical metadata elements.         - 'static_indices': List of static categorical metadata elements.
+        Additional keys may be present based on the dataset configuration.
+
+        Notes:     - The exact structure of the output dictionary depends on the dataset configuration and the
+        collate type specified.     - This method uses the SeedableMixin to ensure reproducibility in data
+        loading.     - The returned data is typically in a 'raw' format and may require further processing or
+        tensorization in the collate function.
         """
         return self._seeded_getitem(idx)
 
     @SeedableMixin.WithSeed
+    @TimeableMixin.TimeAs
     def load_subject(
         self, subject_dynamic_data, subject_id: int, st: int, end: int
     ) -> dict[str, list[float]]:
-        """Returns a Returns a dictionary corresponding to a single subject's data.
+        """Load and process data for a single subject.
 
-        This function is a seedable version of `__getitem__`.
+        This method retrieves and processes the data for a specific subject, applying various transformations
+        and filters based on the dataset configuration.
+
+        Args:     subject_dynamic_data: The dynamic data for the subject.     subject_id (int): The ID of the
+        subject to load.     st (int): The start index of the sequence to load.     end (int): The end index
+        of the sequence to load.
+
+        Returns:     dict: A dictionary containing the processed data for the subject. The exact contents
+        depend on the dataset configuration but typically include:           - Static data (indices and
+        values)           - Dynamic data (time series data, event codes, etc.)           - Sequence
+        information (start and end indices, if configured)
+
+        Raises:     ValueError: If the sequence length is invalid or if there are inconsistencies in the data
+        shapes.
+
+        Notes:     - This method applies sequence length constraints and sampling strategies       as
+        specified in the dataset configuration.     - It handles different collate types (event_stream,
+        triplet, etc.) differently.     - The method is decorated with @SeedableMixin.WithSeed to ensure
+        reproducibility.
         """
         shard = self.subj_map[subject_id]
         subject_idx = self.subj_indices[subject_id]
@@ -709,12 +847,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             st = 0
             end = st + seq_len
 
-        if seq_len > self.max_seq_len:
+        if seq_len > self.config.max_seq_len:
             match self.config.subsequence_sampling_strategy:
                 case SubsequenceSamplingStrategy.RANDOM:
-                    start_offset = np.random.choice(seq_len - self.max_seq_len)
+                    start_offset = np.random.choice(seq_len - self.config.max_seq_len)
                 case SubsequenceSamplingStrategy.TO_END:
-                    start_offset = seq_len - self.max_seq_len
+                    start_offset = seq_len - self.config.max_seq_len
                 case SubsequenceSamplingStrategy.FROM_START:
                     start_offset = 0
                 case _:
@@ -723,7 +861,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                     )
 
             st += start_offset
-            end = min(end, st + self.max_seq_len)
+            end = min(end, st + self.config.max_seq_len)
 
         if self.config.do_include_subsequence_indices:
             out["start_idx"] = st
@@ -797,6 +935,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         return out
 
     @SeedableMixin.WithSeed
+    @TimeableMixin.TimeAs
     def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
         """Returns a Returns a dictionary corresponding to a single subject's data.
 
@@ -822,6 +961,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         assert "dynamic" in out, f"Failed to load dynamic data for subject {subject_id} in {shard}!"
         return out
 
+    @TimeableMixin.TimeAs
     def __dynamic_only_collate(self, batch: list[dict[str, list[float]]]) -> dict:
         """An internal collate function for only dynamic data."""
         keys = batch[0].keys()
@@ -925,22 +1065,29 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
     @classmethod
     def process_triplet(cls, item: dict, do_prepend_static_data=True) -> dict:
-        """Processes a single triplet of dynamic and static data.
+        """Process a single triplet of dynamic and static data.
 
-        This function takes a dictionary containing dynamic and static data,
-        processes the tensors, and concatenates them appropriately to create
-        a unified representation of the data.
+        This method takes a dictionary containing dynamic and static data for a single
+        data point and processes it into a unified representation suitable for model input.
 
         Args:
-            item: A dictionary containing 'dynamic' and 'static' data.
+            item (dict): A dictionary containing 'dynamic' and 'static' data.
+            do_prepend_static_data (bool, optional): Whether to prepend static data
+                                                     to the dynamic data. Defaults to True.
 
         Returns:
-            A dictionary with the processed data including:
-                - mask: A mask indicating valid data points.
-                - static_mask: A mask indicating static data points.
+            dict: A processed dictionary containing:
+                - mask: Boolean mask indicating valid data points.
+                - static_mask: Boolean mask indicating static data points.
                 - code: Concatenated static and dynamic codes.
                 - numeric_value: Concatenated static and dynamic numerical values.
-                - time_delta_days: Concatenated static and dynamic time deltas.
+                - time_delta_days: Time deltas between events.
+                - numeric_value_mask: Boolean mask for valid numeric values.
+
+        Notes:
+            - This method handles the integration of static and dynamic data.
+            - It applies appropriate type conversions and handles missing values.
+            - The resulting dictionary is suitable for further tensorization or batching.
 
         Examples:
             >>> import numpy as np
@@ -1008,23 +1155,33 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             time_delta_days=time_delta_days,
             numeric_value_mask=numeric_value_mask,
         )
-        # debug_fn(output)
         return output
 
     @classmethod
     def collate_triplet(cls, batch: list[dict], do_prepend_static_data=True) -> dict:
-        """Combines the ragged dictionaries  into a triplet format (times, codes, values) batch.
+        """Collate a batch of triplet format data into a unified batch dictionary.
 
-        This function handles conversion of arrays to tensors and padding of elements within the
-        batch across static data elements, sequence events, and dynamic data elements. It ensures
-        that each batch has uniform shape by padding shorter sequences with zeros.
+        This method combines multiple data points in triplet format (times, codes, values)
+        into a single batch, applying necessary padding and tensorization.
 
         Args:
-            batch: A list of dictionaries with dynamic and static data from `__getitem__` method outputs.
+            batch (list[dict]): A list of dictionaries, each representing a single data point.
+            do_prepend_static_data (bool, optional): Whether to prepend static data to the
+                                                     dynamic data. Defaults to True.
 
         Returns:
-            A dictionary containing tensorized and padded data for each key. The keys include 'mask',
-            'static_mask', 'code', 'numeric_value', 'numeric_value_mask', and 'time_delta_days'.
+            dict: A dictionary containing the collated batch data, including:
+                - mask: Tensor indicating valid data points across the batch.
+                - static_mask: Tensor indicating static data points.
+                - code: Tensor of concatenated static and dynamic codes.
+                - numeric_value: Tensor of concatenated static and dynamic numerical values.
+                - time_delta_days: Tensor of time deltas between events.
+                - Additional task-specific labels if present in the input data.
+
+        Notes:
+            - This method handles padding to ensure uniform sequence lengths within the batch.
+            - It converts all data to PyTorch tensors.
+            - The method is flexible to handle additional task-specific data present in the input.
 
         Examples:
             >>> import torch
@@ -1080,28 +1237,36 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         for k in batch[0].keys():
             if k not in ("dynamic", "static_values", "static_indices"):
                 tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
-        # debug_fn(tensorized_batch)
         return tensorized_batch
 
     @classmethod
     def process_text_code(cls, item: dict, tokenized_codes: dict, do_prepend_static_data=True) -> dict:
-        """Processes a single triplet of dynamic and static data.
+        """Process a single data point for text-code format.
 
-        This function takes a dictionary containing dynamic and static data,
-        processes the tensors, and concatenates them appropriately to create
-        a unified representation of the data.
+        This method takes a dictionary containing dynamic and static data and processes
+        it into a format suitable for text-code based models, including tokenization of codes.
 
         Args:
-            item: A dictionary containing 'dynamic' and 'static' data.
-            tokenized_codes: A dictionary containing the tokenized codes.
+            item (dict): A dictionary containing 'dynamic' and 'static' data.
+            tokenized_codes (dict): A dictionary mapping codes to their tokenized representations.
+            do_prepend_static_data (bool, optional): Whether to prepend static data
+                                                     to the dynamic data. Defaults to True.
 
         Returns:
-            A dictionary with the processed data including:
-                - mask: A mask indicating valid data points.
-                - static_mask: A mask indicating static data points.
-                - code: Concatenated static and dynamic codes.
+            dict: A processed dictionary containing:
+                - mask: Boolean mask indicating valid data points.
+                - static_mask: Boolean mask indicating static data points.
+                - code: Original codes (not tokenized).
+                - code_tokens: Tokenized representations of codes.
+                - code_mask: Mask for tokenized code sequences.
                 - numeric_value: Concatenated static and dynamic numerical values.
-                - time_delta_days: Concatenated static and dynamic time deltas.
+                - time_delta_days: Time deltas between events.
+                - numeric_value_mask: Boolean mask for valid numeric values.
+
+        Notes:
+            - This method is specifically designed for models that use text representations of codes.
+            - It integrates tokenization information with the original data structure.
+            - The resulting dictionary is suitable for further tensorization or batching in text-code models.
 
         Examples:
             >>> import numpy as np
@@ -1196,17 +1361,26 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
     @classmethod
     def collate_text_code(cls, tokenized_codes: dict, batch: list[dict], prepend_static_data) -> dict:
-        """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
+        """Collate a batch of text-code format data into a unified batch dictionary.
 
-        This function handles conversion of arrays to tensors and padding of elements within the batch across
-        static data elements, sequence observations, and dynamic data elements.
+        This method combines multiple data points in text-code format into a single batch, applying necessary
+        padding, tensorization, and handling of tokenized code representations.
 
-        Args:     code_metadata: A DataFrame containing the code metadata.     batch: A list of dictionaries
-        with dynamic and static data from `__getitem__` method outputs.
+        Args:     tokenized_codes (dict): A dictionary mapping codes to their tokenized representations. batch
+        (list[dict]): A list of dictionaries, each representing a single data point. prepend_static_data
+        (bool): Whether to prepend static data to the dynamic data.
 
-        Returns:     A dictionary containing tensorized and padded data for each key. The keys include 'mask',
-        'static_mask', 'code_text', 'code_text_mask', 'numeric_value', 'numeric_value_mask',     and
-        'time_delta_days'.
+        Returns:     dict: A dictionary containing the collated batch data, including:         - mask: Tensor
+        indicating valid data points across the batch.         - static_mask: Tensor indicating static data
+        points.         - code: Tensor of original codes.         - code_tokens: Tensor of tokenized code
+        representations.         - code_mask: Tensor mask for tokenized code sequences.         -
+        numeric_value: Tensor of numerical values.         - time_delta_days: Tensor of time deltas between
+        events.         - Additional task-specific labels if present in the input data.
+
+        Notes:     - This method is specifically designed for models that use text representations of codes. -
+        It handles padding to ensure uniform sequence lengths within the batch.     - All data is converted to
+        PyTorch tensors.     - The method is flexible to handle additional task-specific data present in the
+        input.
         """
         processed_batch = [
             cls.process_text_code(item, tokenized_codes, prepend_static_data) for item in batch
@@ -1227,14 +1401,28 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
     @classmethod
     def tokenize_metadata(cls, tokenizer, code_metadata, padding=True, special_tokens={}) -> dict:
-        """Tokenizes the metadata using the provided tokenizer.
+        """Tokenize metadata using the provided tokenizer.
+
+        This class method applies tokenization to the metadata, typically used for
+        processing code descriptions or other textual metadata in the dataset.
 
         Args:
-            tokenizer: The tokenizer to use.
-            metadata: The metadata to tokenize.
+            tokenizer: The tokenizer object to use for tokenization.
+            code_metadata (pl.LazyFrame): A LazyFrame containing the metadata to tokenize.
+            padding (bool, optional): Whether to apply padding to the tokenized outputs.
+                                      Defaults to True.
+            special_tokens (dict, optional): A dictionary of special tokens to include
+                                             in the tokenization process. Defaults to an empty dict.
 
         Returns:
-            A list of tokenized metadata.
+            dict: A dictionary mapping vocabulary indices to tuples of (tokenized_output, attention_mask).
+
+        Notes:
+            - The method preprocesses the metadata by replacing '//' and '_' with spaces.
+            - Special tokens, if provided, are tokenized along with the metadata.
+            - The output dictionary uses the 'code/vocab_index' as keys.
+            - This method is crucial for preparing textual data for use in models that require
+                tokenized input.
 
         Examples:
         >>> from transformers import AutoTokenizer
@@ -1246,10 +1434,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         ...     })
         >>> tokenized_metadata = PytorchDataset.tokenize_metadata(tokenizer, code_metadata)
         >>> for each in tokenized_metadata.items(): print(each)
-        (2, ([1037, 2518, 0, 0], [1, 1, 0, 0]))
-        (5, ([2138, 0, 0, 0], [1, 0, 0, 0]))
-        (6, ([1039, 0, 0, 0], [1, 0, 0, 0]))
-        (1, ([2093, 1999, 1037, 5216], [1, 1, 1, 1]))
+        (2, ([170, 1645, 0, 0], [1, 1, 0, 0]))
+        (5, ([1272, 0, 0, 0], [1, 0, 0, 0]))
+        (6, ([172, 0, 0, 0], [1, 0, 0, 0]))
+        (1, ([1210, 1107, 170, 5105], [1, 1, 1, 1]))
         """
         code_metadata = code_metadata.with_columns(
             pl.col("code").fill_null("").str.replace_all("//", " ").str.replace_all("_", " ")
@@ -1274,15 +1462,26 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         )
         return token_dict
 
+    @TimeableMixin.TimeAs
     def collate(self, batch: list[dict]) -> dict:
-        """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
+        """Combine a batch of data points into a single, tensorized batch.
 
-        This function handles conversion of arrays to tensors and padding of elements within the batch across
-        static data elements, sequence observations, and dynamic data elements.
+        This method serves as the main collation function, handling different collation strategies based on
+        the dataset configuration. It delegates to specific collation methods depending on the collate_type
+        specified in the configuration.
 
-        Args:     batch: A list of `__getitem__` format output dictionaries.
+        Args:     batch (list[dict]): A list of dictionaries, each representing a single data point as
+        returned by the __getitem__ method.
 
-        Returns:     A fully collated, tensorized, and padded batch.
+        Returns:     dict: A dictionary containing the collated batch data. The exact structure depends on the
+        collation strategy used.
+
+        Raises:     NotImplementedError: If an unsupported collate type is specified in the configuration.
+
+        Notes:     - The method supports various collation strategies including event_stream,       triplet,
+        triplet_prompt, eic, and text_code.     - Each collation strategy is optimized for different model
+        architectures and data representations.     - The collated output is fully tensorized and padded,
+        ready for input into a PyTorch model.
         """
         collate_type = self.config.collate_type
         if collate_type == CollateType.event_stream:

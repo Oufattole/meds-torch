@@ -1,0 +1,28 @@
+defaults:
+  - input_encoder: triplet_encoder
+  - backbone: triplet_transformer_decoder
+  - _self_
+_target_: meds_torch.models.triplet_forecasting.TripletForecastingModule.initialize
+
+optimizer:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: 0.001
+  weight_decay: 0.0
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+  _partial_: true
+  mode: min
+  factor: 0.1
+  patience: 10
+
+_resolved_max_seq_len: ${data._resolved_max_seq_len}
+token_dim: 4
+vocab_size: ${data.vocab_size}
+get_representations: false
+task_name: ${data.task_name}
+batch_size: ${data.dataloader.batch_size}
+
+# compile model for faster training with pytorch 2.0
+compile: false
