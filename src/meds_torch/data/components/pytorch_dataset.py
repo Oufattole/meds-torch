@@ -416,6 +416,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         self.config = cfg
         self.split = split
+        logger.info(f"Initializing {self.__class__.__name__} for split {self.split}")
 
         logger.info("Scanning code metadata")
         self.code_metadata = pl.scan_parquet(self.config.code_metadata_fp)
@@ -942,23 +943,28 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         This function is a seedable version of `__getitem__`.
         """
 
-        subject_id, st, end = self.index[idx]
+        with self._time_as("getitem_subject_info"):
+            subject_id, st, end = self.index[idx]
 
-        shard = self.subj_map[subject_id]
-        subject_idx = self.subj_indices[subject_id]
+            shard = self.subj_map[subject_id]
+            subject_idx = self.subj_indices[subject_id]
 
-        subject_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-            Path(self.config.data_dir) / "data" / f"{shard}.nrt", subject_idx
-        )
-        out = self.load_subject(subject_dynamic_data, subject_id, st, end)
+        with self._time_as("getitem_read_jnrt"):
+            subject_dynamic_data = JointNestedRaggedTensorDict.load_slice(
+                Path(self.config.data_dir) / "data" / f"{shard}.nrt", subject_idx
+            )
 
-        if self.config.do_include_subject_id:
-            out["subject_id"] = subject_id
+        with self._time_as("getitem_subject"):
+            out = self.load_subject(subject_dynamic_data, subject_id, st, end)
 
-        for t, t_labels in self.labels.items():
-            out[t] = t_labels[idx]
+        with self._time_as("getitem_additional_processing"):
+            if self.config.do_include_subject_id:
+                out["subject_id"] = subject_id
 
-        assert "dynamic" in out, f"Failed to load dynamic data for subject {subject_id} in {shard}!"
+            for t, t_labels in self.labels.items():
+                out[t] = t_labels[idx]
+
+            assert "dynamic" in out, f"Failed to load dynamic data for subject {subject_id} in {shard}!"
         return out
 
     @TimeableMixin.TimeAs
@@ -1030,6 +1036,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         return out_batch
 
+    @TimeableMixin.TimeAs
     def collate_event_stream(self, batch: list[dict]) -> dict:
         """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
 
@@ -1063,8 +1070,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         return out_batch
 
-    @classmethod
-    def process_triplet(cls, item: dict, do_prepend_static_data=True) -> dict:
+    @TimeableMixin.TimeAs
+    def process_triplet(self, item: dict, do_prepend_static_data=True) -> dict:
         """Process a single triplet of dynamic and static data.
 
         This method takes a dictionary containing dynamic and static data for a single
@@ -1157,8 +1164,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         )
         return output
 
-    @classmethod
-    def collate_triplet(cls, batch: list[dict], do_prepend_static_data=True) -> dict:
+    @TimeableMixin.TimeAs
+    def collate_triplet(self, batch: list[dict], do_prepend_static_data=True) -> dict:
         """Collate a batch of triplet format data into a unified batch dictionary.
 
         This method combines multiple data points in triplet format (times, codes, values)
@@ -1223,7 +1230,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
              'time_delta_days': tensor([[ 0,  0,  0,  0,  0],
                     [ 0,  0,  0, 12,  0]])}
         """
-        processed_batch = [cls.process_triplet(item, do_prepend_static_data) for item in batch]
+        processed_batch = [self.process_triplet(item, do_prepend_static_data) for item in batch]
         tensorized_batch = {
             k: torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x[k]) for x in processed_batch],
@@ -1239,8 +1246,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                 tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
         return tensorized_batch
 
-    @classmethod
-    def process_text_code(cls, item: dict, tokenized_codes: dict, do_prepend_static_data=True) -> dict:
+    @TimeableMixin.TimeAs
+    def process_text_code(self, item: dict, tokenized_codes: dict, do_prepend_static_data=True) -> dict:
         """Process a single data point for text-code format.
 
         This method takes a dictionary containing dynamic and static data and processes
@@ -1359,8 +1366,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         )
         return output
 
-    @classmethod
-    def collate_text_code(cls, tokenized_codes: dict, batch: list[dict], prepend_static_data) -> dict:
+    @TimeableMixin.TimeAs
+    def collate_text_code(self, tokenized_codes: dict, batch: list[dict], prepend_static_data) -> dict:
         """Collate a batch of text-code format data into a unified batch dictionary.
 
         This method combines multiple data points in text-code format into a single batch, applying necessary
@@ -1383,7 +1390,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         input.
         """
         processed_batch = [
-            cls.process_text_code(item, tokenized_codes, prepend_static_data) for item in batch
+            self.process_text_code(item, tokenized_codes, prepend_static_data) for item in batch
         ]
         tensorized_batch = {
             k: torch.nn.utils.rnn.pad_sequence(
@@ -1399,8 +1406,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         return tensorized_batch
 
-    @classmethod
-    def tokenize_metadata(cls, tokenizer, code_metadata, padding=True, special_tokens={}) -> dict:
+    @TimeableMixin.TimeAs
+    def tokenize_metadata(self, tokenizer, code_metadata, padding=True, special_tokens={}) -> dict:
         """Tokenize metadata using the provided tokenizer.
 
         This class method applies tokenization to the metadata, typically used for

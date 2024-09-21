@@ -87,6 +87,7 @@ Issues = "https://github.com/oufattole/meds-torch/issues"
 
 [project.scripts]
 meds-torch-train = "meds_torch.train:main"
+meds-torch-benchmark = "meds_torch.benchmark:main"
 meds-torch-eval = "meds_torch.eval:main"
 meds-torch-finetune = "meds_torch.finetune:main"
 meds-torch-tune = "meds_torch.tune:main"
