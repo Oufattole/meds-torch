@@ -96,11 +96,12 @@ def benchmark(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
 
     datamodule.data_val = get_dataset(datamodule.cfg, split="tuning")
 
-    i = 0
-    for batch in enumerate(tqdm(datamodule.val_dataloader())):
-        i += 1
-        if i > 10:
-            break
+    loguru.logger.info(f"Benchmarking Over: {len(datamodule.data_val)} patients")
+
+    from itertools import islice
+
+    for batch in islice(tqdm(datamodule.val_dataloader()), None):
+        continue
 
     # log time profiles: https://github.com/Oufattole/meds-torch/issues/44
     if hasattr(datamodule.data_val, "_timings"):

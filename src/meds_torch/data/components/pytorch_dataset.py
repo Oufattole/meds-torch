@@ -793,9 +793,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
     @SeedableMixin.WithSeed
     @TimeableMixin.TimeAs
-    def load_subject(
-        self, subject_dynamic_data, subject_id: int, st: int, end: int
-    ) -> dict[str, list[float]]:
+    def load_subject(self, subject_id: int, st: int, end: int) -> dict[str, list[float]]:
         """Load and process data for a single subject.
 
         This method retrieves and processes the data for a specific subject, applying various transformations
@@ -818,120 +816,127 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         triplet, etc.) differently.     - The method is decorated with @SeedableMixin.WithSeed to ensure
         reproducibility.
         """
-        shard = self.subj_map[subject_id]
-        subject_idx = self.subj_indices[subject_id]
-        static_row = self.static_dfs[shard][subject_idx].to_dict()
+        with self._time_as("load_subject__all"):
+            shard = self.subj_map[subject_id]
+            subject_idx = self.subj_indices[subject_id]
+            static_row = self.static_dfs[shard][subject_idx].to_dict()
 
-        out = {
-            "static_indices": static_row["static_indices"].item().to_list(),
-            "static_values": static_row["static_values"].item().to_list(),
-        }
+            out = {
+                "static_indices": static_row["static_indices"].item().to_list(),
+                "static_values": static_row["static_values"].item().to_list(),
+            }
 
-        # TODO: remove this and handle flattening in the NRT class
-        if self.config.collate_type == CollateType.event_stream:
-            seq_len = end - st
-        if self.config.collate_type != CollateType.event_stream:
-            event_seq_len = end - st
-            tensors = subject_dynamic_data.tensors
-            seq_len = sum([array.size for array in tensors["dim1/code"][st:end]])
-            if not seq_len >= event_seq_len:
-                raise ValueError(
-                    f"Measurement sequence length {seq_len} is less than event sequence length"
-                    f" {event_seq_len}!"
-                )
-            tensors["dim1/numeric_value"] = np.concatenate(tensors["dim1/numeric_value"][st:end], axis=0)
-            tensors["dim1/code"] = np.concatenate(tensors["dim1/code"][st:end], axis=0)
-            seq_len = tensors["dim1/code"].shape[0]
-            tensors["dim0/time_delta_days"] = subpad_vectors(
-                tensors["dim0/time_delta_days"][st:end], tensors["dim1/bounds"][st:end]
-            )
-            st = 0
-            end = st + seq_len
-
-        if seq_len > self.config.max_seq_len:
-            match self.config.subsequence_sampling_strategy:
-                case SubsequenceSamplingStrategy.RANDOM:
-                    start_offset = np.random.choice(seq_len - self.config.max_seq_len)
-                case SubsequenceSamplingStrategy.TO_END:
-                    start_offset = seq_len - self.config.max_seq_len
-                case SubsequenceSamplingStrategy.FROM_START:
-                    start_offset = 0
-                case _:
+            # TODO: remove this and handle flattening in the NRT class
+            if self.config.collate_type == CollateType.event_stream:
+                seq_len = end - st
+            if self.config.collate_type != CollateType.event_stream:
+                event_seq_len = end - st
+                with self._time_as("load_subject__slice_jnrt"):
+                    subject_dynamic_data = JointNestedRaggedTensorDict(
+                        tensors_fp=Path(self.config.data_dir) / "data" / f"{shard}.nrt"
+                    )
+                    tensors = subject_dynamic_data[subject_idx, st:end].flatten().to_dense()
+                seq_len = sum([array.size for array in tensors["code"]])
+                if not seq_len >= event_seq_len:
                     raise ValueError(
-                        f"Invalid subsequence sampling strategy {self.config.subsequence_sampling_strategy}!"
+                        f"Measurement sequence length {seq_len} is less than event sequence length"
+                        f" {event_seq_len}!"
+                    )
+                seq_len = tensors["code"].shape[0]
+                st = 0
+                end = st + seq_len
+
+            if seq_len > self.config.max_seq_len:
+                match self.config.subsequence_sampling_strategy:
+                    case SubsequenceSamplingStrategy.RANDOM:
+                        start_offset = np.random.choice(seq_len - self.config.max_seq_len)
+                    case SubsequenceSamplingStrategy.TO_END:
+                        start_offset = seq_len - self.config.max_seq_len
+                    case SubsequenceSamplingStrategy.FROM_START:
+                        start_offset = 0
+                    case _:
+                        raise ValueError(
+                            "Invalid subsequence sampling strategy "
+                            f"{self.config.subsequence_sampling_strategy}!"
+                        )
+
+                st += start_offset
+                end = min(end, st + self.config.max_seq_len)
+
+            if self.config.do_include_subsequence_indices:
+                out["start_idx"] = st
+                out["end_idx"] = end
+
+            if self.config.collate_type == CollateType.event_stream:
+                out["dynamic"] = JointNestedRaggedTensorDict(
+                    tensors_fp=Path(self.config.data_dir) / "data" / f"{shard}.nrt"
+                )[subject_idx, st:end]
+            else:
+                with self._time_as("load_subject__concate_and_slice_measurements"):
+                    tensors["code"] = tensors["code"][st:end]
+                    tensors["numeric_value"] = tensors["numeric_value"][st:end]
+                    tensors["time_delta_days"] = tensors["time_delta_days"][st:end]
+                    out["dynamic"] = tensors
+
+            with self._time_as("load_subject__additional_processing"):
+                if self.config.do_include_start_time_min:
+                    out["start_time"] = static_row["time"].item().to_list()[st]
+
+                if end - st > self.config.max_seq_len:
+                    raise ValueError(
+                        f"Sequence length {end - st} exceeds max_seq_len {self.config.max_seq_len}!"
+                    )
+                if self.config.min_seq_len and (end - st < self.config.min_seq_len):
+                    raise ValueError(
+                        f"Sequence length {end - st} is less than min_seq_len {self.config.min_seq_len}!"
                     )
 
-            st += start_offset
-            end = min(end, st + self.config.max_seq_len)
+                if end == st:
+                    raise ValueError(f"Sequence length {end - st} is 0!")
 
-        if self.config.do_include_subsequence_indices:
-            out["start_idx"] = st
-            out["end_idx"] = end
+                if self.config.postpend_eos_token:
+                    if self.config.collate_type == CollateType.event_stream:
+                        # Append EOS token to the end of the sequence
+                        eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["code"].dtype)
+                        out["dynamic"]["code"] = np.append(out["dynamic"]["code"], eos_token)
 
-        if self.config.collate_type == CollateType.event_stream:
-            out["dynamic"] = subject_dynamic_data[st:end]
-        else:
-            tensors["dim1/code"] = tensors["dim1/code"][st:end]
-            tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
-            tensors["dim0/time_delta_days"] = tensors["dim0/time_delta_days"][st:end]
-            out["dynamic"] = tensors
+                        # Extend other relevant arrays
+                        numeric_dtype = out["dynamic"]["numeric_value"].dtype
+                        time_dtype = out["dynamic"]["time_delta_days"].dtype
+                        out["dynamic"]["numeric_value"] = np.append(
+                            out["dynamic"]["numeric_value"], np.array([0], dtype=numeric_dtype)
+                        )
+                        out["dynamic"]["time_delta_days"] = np.append(
+                            out["dynamic"]["time_delta_days"], np.array([0], dtype=time_dtype)
+                        )
 
-        if self.config.do_include_start_time_min:
-            out["start_time"] = static_row["time"].item().to_list()[st]
+                    else:
+                        # For other collate types
+                        eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["code"].dtype)
+                        out["dynamic"]["code"] = np.append(out["dynamic"]["code"], eos_token)
 
-        if end - st > self.config.max_seq_len:
-            raise ValueError(f"Sequence length {end - st} exceeds max_seq_len {self.config.max_seq_len}!")
-        if self.config.min_seq_len and (end - st < self.config.min_seq_len):
-            raise ValueError(
-                f"Sequence length {end - st} is less than min_seq_len {self.config.min_seq_len}!"
-            )
+                        numeric_dtype = out["dynamic"]["numeric_value"].dtype
+                        time_dtype = out["dynamic"]["time_delta_days"].dtype
+                        out["dynamic"]["numeric_value"] = np.append(
+                            out["dynamic"]["numeric_value"], np.array([0], dtype=numeric_dtype)
+                        )
+                        out["dynamic"]["time_delta_days"] = np.append(
+                            out["dynamic"]["time_delta_days"], np.array([0], dtype=time_dtype)
+                        )
 
-        if end == st:
-            raise ValueError(f"Sequence length {end - st} is 0!")
+                # Update end_idx if it's included
+                if self.config.do_include_subsequence_indices:
+                    out["end_idx"] = end
 
-        if self.config.postpend_eos_token:
-            if self.config.collate_type == CollateType.event_stream:
-                # Append EOS token to the end of the sequence
-                eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["dim1/code"].dtype)
-                out["dynamic"]["dim1/code"] = np.append(out["dynamic"]["dim1/code"], eos_token)
-
-                # Extend other relevant arrays
-                numeric_dtype = out["dynamic"]["dim1/numeric_value"].dtype
-                time_dtype = out["dynamic"]["dim0/time_delta_days"].dtype
-                out["dynamic"]["dim1/numeric_value"] = np.append(
-                    out["dynamic"]["dim1/numeric_value"], np.array([0], dtype=numeric_dtype)
-                )
-                out["dynamic"]["dim0/time_delta_days"] = np.append(
-                    out["dynamic"]["dim0/time_delta_days"], np.array([0], dtype=time_dtype)
-                )
-
-            else:
-                # For other collate types
-                eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["dim1/code"].dtype)
-                out["dynamic"]["dim1/code"] = np.append(out["dynamic"]["dim1/code"], eos_token)
-
-                numeric_dtype = out["dynamic"]["dim1/numeric_value"].dtype
-                time_dtype = out["dynamic"]["dim0/time_delta_days"].dtype
-                out["dynamic"]["dim1/numeric_value"] = np.append(
-                    out["dynamic"]["dim1/numeric_value"], np.array([0], dtype=numeric_dtype)
-                )
-                out["dynamic"]["dim0/time_delta_days"] = np.append(
-                    out["dynamic"]["dim0/time_delta_days"], np.array([0], dtype=time_dtype)
-                )
-
-        # Update end_idx if it's included
-        if self.config.do_include_subsequence_indices:
-            out["end_idx"] = end
-
-        if self.config.collate_type != CollateType.event_stream and not (
-            len(out["dynamic"]["dim1/code"])
-            == len(out["dynamic"]["dim1/numeric_value"])
-            == len(out["dynamic"]["dim0/time_delta_days"])
-        ):
-            code_shape = out["dynamic"]["dim1/code"].shape
-            numeric_shape = out["dynamic"]["dim1/numeric_value"].shape
-            time_shape = out["dynamic"]["dim0/time_delta_days"].shape
-            raise ValueError(f"Shape mismatch: {code_shape} vs {numeric_shape} vs {time_shape}")
+                if self.config.collate_type != CollateType.event_stream and not (
+                    len(out["dynamic"]["code"])
+                    == len(out["dynamic"]["numeric_value"])
+                    == len(out["dynamic"]["time_delta_days"])
+                ):
+                    code_shape = out["dynamic"]["code"].shape
+                    numeric_shape = out["dynamic"]["numeric_value"].shape
+                    time_shape = out["dynamic"]["time_delta_days"].shape
+                    raise ValueError(f"Shape mismatch: {code_shape} vs {numeric_shape} vs {time_shape}")
 
         return out
 
@@ -942,22 +947,14 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         This function is a seedable version of `__getitem__`.
         """
-
-        with self._time_as("getitem_subject_info"):
+        with self._time_as("getitem__subject_metadata"):
             subject_id, st, end = self.index[idx]
-
             shard = self.subj_map[subject_id]
-            subject_idx = self.subj_indices[subject_id]
 
-        with self._time_as("getitem_read_jnrt"):
-            subject_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-                Path(self.config.data_dir) / "data" / f"{shard}.nrt", subject_idx
-            )
+        with self._time_as("getitem__load_subject"):
+            out = self.load_subject(subject_id, st, end)
 
-        with self._time_as("getitem_subject"):
-            out = self.load_subject(subject_dynamic_data, subject_id, st, end)
-
-        with self._time_as("getitem_additional_processing"):
+        with self._time_as("getitem__additional_processing"):
             if self.config.do_include_subject_id:
                 out["subject_id"] = subject_id
 
@@ -1102,9 +1099,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             >>> from omegaconf import DictConfig
             >>> item =  {
             ...         'dynamic': {
-            ...                 'dim1/code': np.array([5, 6, 1, 2]),
-            ...                 'dim1/numeric_value': np.array([50.0, 60.0, np.nan, np.nan]),
-            ...                 'dim0/time_delta_days': np.array([0, 0, 12, 0])
+            ...                 'code': np.array([5, 6, 1, 2]),
+            ...                 'numeric_value': np.array([50.0, 60.0, np.nan, np.nan]),
+            ...                 'time_delta_days': np.array([0, 0, 12, 0])
             ...         },
             ...         'static_values': [70.0],
             ...         'static_indices': [2]
@@ -1126,9 +1123,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             numeric_value_mask [ True  True  True False False]
         """
         dynamic_data = item["dynamic"]
-        code = dynamic_data["dim1/code"]
-        numeric_value = dynamic_data["dim1/numeric_value"]
-        time_delta_days = dynamic_data["dim0/time_delta_days"]
+        code = dynamic_data["code"]
+        numeric_value = dynamic_data["numeric_value"]
+        time_delta_days = dynamic_data["time_delta_days"]
 
         static_mask = np.zeros(len(code), dtype=bool)
         if do_prepend_static_data:
@@ -1196,18 +1193,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             >>> batch = [
             ...     {
             ...         'dynamic': {
-            ...              'dim1/code': np.array([1]),
-            ...              'dim1/numeric_value': np.array([10.0]),
-            ...              'dim0/time_delta_days': np.array([0])},
+            ...              'code': np.array([1]),
+            ...              'numeric_value': np.array([10.0]),
+            ...              'time_delta_days': np.array([0])},
             ...         'static_values': [20.0],
             ...         'static_indices': [0],
             ...         'label': 0,
             ...     },
             ...     {
             ...         'dynamic':{
-            ...              'dim1/code': np.array([5, 6, 1, 2]),
-            ...              'dim1/numeric_value': np.array([50.0, 60.0, 0, 0]),
-            ...              'dim0/time_delta_days': np.array([0, 0, 12, 0])},
+            ...              'code': np.array([5, 6, 1, 2]),
+            ...              'numeric_value': np.array([50.0, 60.0, 0, 0]),
+            ...              'time_delta_days': np.array([0, 0, 12, 0])},
             ...         'static_values': [70.0],
             ...         'static_indices': [2],
             ...         'label': 1,
@@ -1282,9 +1279,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             >>> from omegaconf import DictConfig
             >>> item =  {
             ...         'dynamic': {
-            ...                 'dim1/code': np.array([5, 6, 1, 2]),
-            ...                 'dim1/numeric_value': np.array([50.0, 60.0, np.nan, np.nan]),
-            ...                 'dim0/time_delta_days': np.array([0, 0, 12, 0])
+            ...                 'code': np.array([5, 6, 1, 2]),
+            ...                 'numeric_value': np.array([50.0, 60.0, np.nan, np.nan]),
+            ...                 'time_delta_days': np.array([0, 0, 12, 0])
             ...         },
             ...         'static_values': [70.0],
             ...         'static_indices': [2]
@@ -1323,9 +1320,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             numeric_value_mask [ True  True  True False False]
         """
         dynamic_data = item["dynamic"]
-        code = dynamic_data["dim1/code"]
-        numeric_value = dynamic_data["dim1/numeric_value"]
-        time_delta_days = dynamic_data["dim0/time_delta_days"]
+        code = dynamic_data["code"]
+        numeric_value = dynamic_data["numeric_value"]
+        time_delta_days = dynamic_data["time_delta_days"]
 
         static_mask = np.zeros(len(code), dtype=bool)
         if do_prepend_static_data:
