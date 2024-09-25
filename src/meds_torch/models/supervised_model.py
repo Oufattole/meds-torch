@@ -5,6 +5,12 @@ import torchmetrics
 from loguru import logger
 from omegaconf import DictConfig
 from torch import nn
+from torchmetrics import MetricCollection
+from torchmetrics.classification import (
+    BinaryAccuracy,
+    BinaryAUROC,
+    BinaryAveragePrecision,
+)
 
 from meds_torch.models import BACKBONE_EMBEDDINGS_KEY
 from meds_torch.models.base_model import BaseModule
@@ -16,6 +22,31 @@ class SupervisedOutput(OutputBase):
     embeddings: torch.Tensor
     logits: torch.Tensor
     loss: torch.Tensor
+
+
+class SubgroupMetrics(torch.nn.Module):
+    # TODO: add a split prefix so we can compute it for val and test as well
+    def __init__(self, num_subgroups):
+        super().__init__()
+        self.num_subgroups = num_subgroups
+
+        metrics = {}
+        for i in range(num_subgroups):
+            metrics[f"subgroup_{i}_auc"] = BinaryAUROC()
+            metrics[f"subgroup_{i}_accuracy"] = BinaryAccuracy()
+            metrics[f"subgroup_{i}_apr"] = BinaryAveragePrecision()
+
+        self.metric_collection = MetricCollection(metrics)
+
+    def update(self, preds, targets, subgroups):
+        for i in range(self.num_subgroups):
+            mask = subgroups == i
+            self.metric_collection[f"subgroup_{i}_auc"](preds[mask], targets[mask])
+            self.metric_collection[f"subgroup_{i}_accuracy"](preds[mask], targets[mask])
+            self.metric_collection[f"subgroup_{i}_apr"](preds[mask], targets[mask])
+
+    def compute(self):
+        return self.metric_collection.compute()
 
 
 class SupervisedModule(BaseModule):
@@ -42,6 +73,10 @@ class SupervisedModule(BaseModule):
         self.test_acc = torchmetrics.Accuracy(task="binary")
         self.test_auc = torchmetrics.AUROC(task="binary")
         self.test_apr = torchmetrics.AveragePrecision(task="binary")
+
+        # TODO: add eval_groups to the config, and compute it in just the test step for now
+        if cfg.eval_groups:
+            self.fairness_metrics = SubgroupMetrics(cfg.eval_groups)
 
         self.criterion = torch.nn.BCEWithLogitsLoss()
 
@@ -141,6 +176,12 @@ class SupervisedModule(BaseModule):
         self.test_acc.update(output.logits.squeeze(), batch[self.task_name].float())
         self.test_auc.update(output.logits.squeeze(), batch[self.task_name].float())
         self.test_apr.update(output.logits.squeeze(), batch[self.task_name].int())
+        if self.cfg.eval_groups_fp:
+            # TODO: Add "groups" key to the batch in the pytorch_dataset class
+            # https://github.com/Oufattole/meds-torch/issues/48
+            self.fairness_metrics.update(
+                output.logits.squeeze(), batch[self.task_name].float(), batch["group"]
+            )
 
         self.log("test/loss", output.loss, batch_size=self.cfg.batch_size)
         return output.loss
@@ -164,6 +205,13 @@ class SupervisedModule(BaseModule):
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
+        if self.cfg.eval_groups_fp:
+            self.log(
+                "test/fairness",
+                self.fairness_metrics.compute(),
+                on_epoch=True,
+                batch_size=self.cfg.batch_size,
+            )
         logger.info(
             "test/auc",
             self.test_auc.compute(),

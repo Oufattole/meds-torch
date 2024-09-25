@@ -439,6 +439,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         # Initialize tokenizer here
         self.init_tokenizer()
 
+    def init_fairness_metrics(self, task_df: pl.DataFrame):
+        # TODO: load ACES label_schema compliant dataframes that have matching
+        # `subject_id` and `prediction_time` with the
+        # https://github.com/Oufattole/meds-torch/issues/48
+        for eval_group_fp in self.config.eval_groups_fps:
+            df = pl.read_parquet(eval_group_fp)
+            # reorder rows to match the task_df
+            df = task_df.select("subject_id", "prediction_time").join(
+                df, on=["subject_id", "prediction_time"], how="left"
+            )
+        self.index_to_group = df["categorical_value"].to_list()
+
     def init_tokenizer(self):
         if self.config.collate_type == CollateType.text_code:
             if not hasattr(self, "tokenized_codes"):
@@ -578,6 +590,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             task_df_joint = task_df_joint.filter(pl.col("subject_id").is_in(split_subjects))
             # Convert dates to indexes in the nested ragged tensor, (for fast indexing of data)
             self.index, self.labels = get_task_indices_and_labels(task_df_joint, self.tasks)
+            # Initialize Fairness Metrics
+            if self.config.eval_groups_fps:
+                self.init_fairness_metrics(task_df_joint)
+
         else:
             self.index = [(subj, *bounds) for subj, bounds in self.subj_seq_bounds.items()]
             self.labels = {}
@@ -957,6 +973,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         for t, t_labels in self.labels.items():
             out[t] = t_labels[idx]
+
+        # TODO: https://github.com/Oufattole/meds-torch/issues/48
+        # add the group to the batch here
+        if self.config.eval_groups_fps:
+            out["group"] = self.index_to_group[idx]
 
         assert "dynamic" in out, f"Failed to load dynamic data for subject {subject_id} in {shard}!"
         return out
