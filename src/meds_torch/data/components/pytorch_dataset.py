@@ -9,7 +9,7 @@ import numpy as np
 import polars as pl
 import torch
 from loguru import logger
-from mixins import SeedableMixin, TimeableMixin
+from mixins import TimeableMixin
 from nested_ragged_tensors.ragged_numpy import (
     NP_FLOAT_TYPES,
     NP_INT_TYPES,
@@ -346,7 +346,7 @@ def get_task_indices_and_labels(
     return indexes, labels
 
 
-class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
+class PytorchDataset(torch.utils.data.Dataset, TimeableMixin):
     """A PyTorch Dataset class for handling complex, multi-modal medical data.
 
     This dataset is designed to work with data from the MEDS (Medical Event Data Set) format, supporting
@@ -791,7 +791,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         """
         return self._seeded_getitem(idx)
 
-    @SeedableMixin.WithSeed
+    # @SeedableMixin.WithSeed
     @TimeableMixin.TimeAs
     def load_subject(self, subject_id: int, st: int, end: int) -> dict[str, list[float]]:
         """Load and process data for a single subject.
@@ -940,7 +940,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         return out
 
-    @SeedableMixin.WithSeed
+    # @SeedableMixin.WithSeed
     @TimeableMixin.TimeAs
     def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
         """Returns a Returns a dictionary corresponding to a single subject's data.

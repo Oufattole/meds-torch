@@ -1,6 +1,7 @@
 import os
 import re
 from importlib.resources import files
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -97,8 +98,6 @@ def benchmark(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     datamodule.data_val = get_dataset(datamodule.cfg, split="tuning")
 
     loguru.logger.info(f"Benchmarking Over: {len(datamodule.data_val)} patients")
-
-    from itertools import islice
 
     for batch in islice(tqdm(datamodule.val_dataloader()), None):
         continue
