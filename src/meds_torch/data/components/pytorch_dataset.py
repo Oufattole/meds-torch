@@ -89,7 +89,8 @@ def subpad_vectors(a: np.ndarray, b: np.ndarray):
 
 
 def count_or_proportion(N: int | pl.Expr | None, cnt_or_prop: int | float) -> int:
-    """Returns `cnt_or_prop` if it is an integer or `int(N*cnt_or_prop)` if it is a float.
+    """Returns `cnt_or_prop` if it is an integer or `int(N*cnt_or_prop)` if it is a
+    float.
 
     Resolves cutoff variables that can either be passed as integer counts or fractions of a whole. E.g., the
     vocabulary should contain only elements that occur with count or proportion at least X, where X might be
@@ -156,12 +157,19 @@ def count_or_proportion(N: int | pl.Expr | None, cnt_or_prop: int | float) -> in
 class SubsequenceSamplingStrategy(StrEnum):
     """An enumeration of the possible subsequence sampling strategies for the dataset.
 
-    Attributes:     RANDOM: Randomly sample a subsequence from the full sequence.     TO_END: Sample a
-    subsequence from the end of the full sequence.         Note this starts at the last element and moves
-    back.     FROM_START: Sample a subsequence from the start of the full sequence.
+    Attributes:
+        RANDOM: Randomly sample a subsequence from the full sequence.
+        AROUND_RANDOM: Sample a subsequence around a random point in the full sequence. Half maximum length
+            is before.
+        AROUND_END: Sample a subsequence around the end of the full sequence. Half maximum length is before.
+        TO_END: Sample a subsequence from the end of the full sequence.
+            Note this starts at the last element and moves back.
+        FROM_START: Sample a subsequence from the start of the full sequence.
     """
 
     RANDOM = "random"
+    AROUND_RANDOM = "around_random"
+    AROUND_END = "around_end"
     TO_END = "to_end"
     FROM_START = "from_start"
 
@@ -210,9 +218,9 @@ def to_int_index(col: pl.Expr) -> pl.Expr:
 
 
 def merge_task_with_static(task_df: pl.DataFrame, static_dfs: dict[str, pl.DataFrame], tasks: list[str]):
-    """Merges a DataFrame containing task information with multiple static DataFrames on the 'subject_id'
-    column. The function performs a sequence of operations to merge these dataframes based on subject
-    identifiers and respective timestamps.
+    """Merges a DataFrame containing task information with multiple static DataFrames on
+    the 'subject_id' column. The function performs a sequence of operations to merge
+    these dataframes based on subject identifiers and respective timestamps.
 
     Parameters:
     - task_df (DataFrame): A DataFrame with columns 'subject_id', 'start_time', 'end_time', and 'label'.
@@ -273,7 +281,8 @@ def merge_task_with_static(task_df: pl.DataFrame, static_dfs: dict[str, pl.DataF
 def get_task_indices_and_labels(
     task_df_joint: pl.DataFrame, tasks: list[str]
 ) -> tuple[list[tuple[int, int, int]], dict[str, list]]:
-    """Processes the joint DataFrame to determine the index range for each subject's tasks.
+    """Processes the joint DataFrame to determine the index range for each subject's
+    tasks.
 
     For each row in task_df_joint, it is assumed that `time` is a sorted column and the function
     computes the start index and end index of the span of time values in between `start_time` and `end_time`.
@@ -396,14 +405,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         classification, regression) based on the data type of the label column and applies any necessary
         transformations to normalize the data.
 
-        Args:     col (pl.Expr): The polars Expression containing the task labels.     dtype (pl.DataType):
-        The polars data type of the task labels.
+        Args:
+            col (pl.Expr): The polars Expression containing the task labels.
+            dtype (pl.DataType): The polars data type of the task labels.
 
-        Returns:     tuple: A tuple containing two elements:         - str: The determined task type (e.g.,
-        'multi_class_classification', 'binary_classification', 'regression').         - pl.Expr: The
-        normalized column expression.
+        Returns:
+            tuple: A tuple containing two elements:
+                - str: The determined task type (e.g., 'multi_class_classification',
+                    'binary_classification', 'regression').
+                - pl.Expr: The normalized column expression.
 
-        Raises:     TypeError: If the task labels are not of a supported type.
+        Raises:
+            TypeError: If the task labels are not of a supported type.
         """
         for task_type, checkers in cls.TYPE_CHECKERS.items():
             for valid_dtypes, normalize_fn in checkers:
@@ -455,8 +468,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
     def read_shards(self):
         """Reads the split-specific subject shards from the MEDS dataset.
 
-        This method scans the specified MEDS cohort directory for Parquet files, organizes them by split, and
-        creates mappings between subjects and their respective shards.
+        This method scans the specified MEDS cohort directory for Parquet files,
+        organizes them by split, and creates mappings between subjects and their
+        respective shards.
         """
         all_shards = generate_subject_split_dict(Path(self.config.meds_cohort_dir) / "data")
         self.shards = {sp: subjs for sp, subjs in all_shards.items() if sp.startswith(f"{self.split}")}
@@ -472,19 +486,27 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         This method processes the Parquet files for each shard in the dataset, extracting static data and
         creating various mappings and indices for efficient data access.
 
-        The method populates the following instance attributes: - self.static_dfs: Dictionary of static
-        DataFrames for each shard. - self.subj_indices: Mapping of subject IDs to their indices. -
-        self.subj_seq_bounds: Dictionary of sequence bounds for each subject. - self.index: List of
-        (subject_id, start, end) tuples for data access. - self.labels: Dictionary of task labels (if tasks
-        are specified). - self.tasks: List of task names. - self.task_types: Dictionary of task types. -
-        self.task_vocabs: Dictionary of task vocabularies.
+        The method populates the following instance attributes:
+        - self.static_dfs: Dictionary of static DataFrames for each shard.
+        - self.subj_indices: Mapping of subject IDs to their indices.
+        - self.subj_seq_bounds: Dictionary of sequence bounds for each subject.
+        - self.index: List of (subject_id, start, end) tuples for data access.
+        - self.labels: Dictionary of task labels (if tasks are specified).
+        - self.tasks: List of task names.
+        - self.task_types: Dictionary of task types.
+        - self.task_vocabs: Dictionary of task vocabularies.
 
-        If tasks are specified in the configuration, this method also processes the task labels and integrates
-        them with the static data.
+        If tasks are specified in the configuration, this method also processes the task labels and
+        integrates them with the static data.
 
-        Raises:     ValueError: If duplicate subjects are found across shards or if                 required
-        task information is missing.     FileNotFoundError: If specified task files are not found.
+        Raises:
+        ValueError: If duplicate subjects are found across shards or if required task information is missing.
+        FileNotFoundError: If specified task files are not found.
         """
+        if self.config.subsequence_sampling_strategy == SubsequenceSamplingStrategy.AROUND_END:
+            if not self.has_task:
+                raise ValueError("Subsequence sampling strategy 'around_end' requires tasks to be specified!")
+
         self.static_dfs = {}
         self.subj_indices = {}
         self.subj_seq_bounds = {}
@@ -594,11 +616,14 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         Args:     task_df (pl.DataFrame): DataFrame containing task labels and related information.
 
-        Returns:     dict: A dictionary containing processed task information:         - 'tasks': List of task
-        names.         - 'vocabs': Dictionary mapping task names to their vocabularies.         - 'types':
-        Dictionary mapping task names to their types.
+        Returns:
+            dict: A dictionary containing processed task information:
+                - 'tasks': List of task names.
+                - 'vocabs': Dictionary mapping task names to their vocabularies.
+                - 'types': Dictionary mapping task names to their types.
 
-        Raises:     NotImplementedError: If an unsupported task type is encountered.
+        Raises:
+            NotImplementedError: If an unsupported task type is encountered.
         """
         self.task_types = {}
         self.task_vocabs = {}
@@ -623,19 +648,23 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         return {"tasks": sorted(self.tasks), "vocabs": self.task_vocabs, "types": self.task_types}
 
     def filter_to_min_seq_len(self):
-        """Filter the dataset to include only subjects with at least the minimum sequence length.
+        """Filter the dataset to include only subjects with at least the minimum
+        sequence length.
 
         This method removes data points where the sequence length is less than the specified minimum sequence
         length (self.config.min_seq_len). It updates the dataset's index and labels accordingly.
 
-        Notes:     - This method modifies the self.index and self.labels attributes in-place.     - It logs
-        information about the number of data points and subjects before       and after filtering.     - If
-        tasks are specified, it warns that filtering may affect model comparability.
+        Notes:
+            - This method modifies the self.index and self.labels attributes in-place.
+            - It logs information about the number of data points and subjects before and after filtering.
+            - If tasks are specified, it warns that filtering may affect model comparability.
 
-        Raises:     AttributeError: If self.config.min_seq_len is not set.
+        Raises:
+            AttributeError: If self.config.min_seq_len is not set.
 
-        Side effects:     - Reduces the size of self.index and self.labels.     - Logs information about the
-        filtering process.
+        Side effects:
+            - Reduces the size of self.index and self.labels.
+            - Logs information about the filtering process.
         """
         if self.has_task:
             logger.warning(
@@ -658,7 +687,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         )
 
     def filter_to_subset(self):
-        """Filter the dataset to include only a subset of subjects for the training split.
+        """Filter the dataset to include only a subset of subjects for the training
+        split.
 
         This method randomly selects a subset of subjects based on the self.config.train_subset_size
         parameter. It's typically used to create smaller training sets for experimentation or debugging
@@ -667,15 +697,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         The method only applies to the training split ('train') and uses a random number generator seeded with
         self.config.train_subset_seed for reproducibility.
 
-        Notes:     - This method modifies the self.index and self.labels attributes in-place.     - It logs
-        information about the number of data points and subjects before       and after filtering.     - The
-        subset size can be specified as an integer (exact number of subjects)       or a float (proportion of
-        total subjects).
+        Notes:
+            - This method modifies the self.index and self.labels attributes in-place.
+            - It logs information about the number of data points and subjects before and after filtering.
+            - The subset size can be specified as an integer (exact number of subjects) or a float
+            (proportion of total subjects).
 
-        Raises:     ValueError: If self.config.train_subset_size is not properly set.
+        Raises:
+            ValueError: If self.config.train_subset_size is not properly set.
 
-        Side effects:     - Reduces the size of self.index and self.labels for the training split.     - Logs
-        information about the subset selection process.
+        Side effects:
+            - Reduces the size of self.index and self.labels for the training split.
+            - Logs information about the subset selection process.
         """
 
         orig_len = len(self)
@@ -702,15 +735,17 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         This method computes statistics related to the time differences between consecutive events in the
         dataset. It calculates the minimum, mean (log), and standard deviation (log) of inter-event times.
 
-        The computed statistics are stored as instance attributes: - self.mean_log_inter_event_time_min: Mean
-        of log inter-event times - self.std_log_inter_event_time_min: Standard deviation of log inter-event
-        times
+        The computed statistics are stored as instance attributes:
+            - self.mean_log_inter_event_time_min: Mean of log inter-event times
+            - self.std_log_inter_event_time_min: Standard deviation of log inter-event times
 
-        Raises:     ValueError: If the dataset is empty (no static DataFrames).
+        Raises:
+            ValueError: If the dataset is empty (no static DataFrames).
 
-        Side effects:     - Sets the above-mentioned instance attributes.     - Logs warnings if any non-
-        positive inter-event times are found.     - Removes subjects with invalid (non-positive) inter-event
-        times from the dataset.
+        Side effects:
+            - Sets the above-mentioned instance attributes.
+            - Logs warnings if any non-positive inter-event times are found.
+            - Removes subjects with invalid (non-positive) inter-event times from the dataset.
 
         TODO: allow use of inter-event time statistics for normalizing time-deltas
         """
@@ -775,18 +810,23 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         This method returns a dictionary corresponding to a single subject's data at the specified index. The
         data is not tensorized in this method, as that work is typically done in the collate function.
 
-        Args:     idx (int): The index of the data point to retrieve.
+        Args:
+            idx (int): The index of the data point to retrieve.
 
-        Returns:     dict: A dictionary containing the data for the specified index. The structure typically
-        includes:         - 'time_delta_days': List of time deltas between events.         -
-        'dynamic_indices': List of categorical metadata elements.         - 'dynamic_values': List of
-        numerical metadata elements.         - 'static_indices': List of static categorical metadata elements.
-        Additional keys may be present based on the dataset configuration.
+        Returns:
+        dict: A dictionary containing the data for the specified index. The structure typically includes:
+            - 'time_delta_days': List of time deltas between events.
+            - 'dynamic_indices': List of categorical metadata elements.
+            - 'dynamic_values': List of numerical metadata elements.
+            - 'static_indices': List of static categorical metadata elements.
+            Additional keys may be present based on the dataset configuration.
 
-        Notes:     - The exact structure of the output dictionary depends on the dataset configuration and the
-        collate type specified.     - This method uses the SeedableMixin to ensure reproducibility in data
-        loading.     - The returned data is typically in a 'raw' format and may require further processing or
-        tensorization in the collate function.
+        Notes:
+            - The exact structure of the output dictionary depends on the dataset configuration and the
+                collate type specified.
+            - This method uses the SeedableMixin to ensure reproducibility in data loading.
+            - The returned data is typically in a 'raw' format and may require further processing or
+                tensorization in the collate function.
         """
         return self._seeded_getitem(idx)
 
@@ -800,17 +840,21 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         This method retrieves and processes the data for a specific subject, applying various transformations
         and filters based on the dataset configuration.
 
-        Args:     subject_dynamic_data: The dynamic data for the subject.     subject_id (int): The ID of the
-        subject to load.     st (int): The start index of the sequence to load.     end (int): The end index
-        of the sequence to load.
+        Args:
+            subject_dynamic_data: The dynamic data for the subject.
+            subject_id (int): The ID of the subject to load.
+            st (int): The start index of the sequence to load.
+            end (int): The end index of the sequence to load.
 
-        Returns:     dict: A dictionary containing the processed data for the subject. The exact contents
-        depend on the dataset configuration but typically include:           - Static data (indices and
-        values)           - Dynamic data (time series data, event codes, etc.)           - Sequence
-        information (start and end indices, if configured)
+        Returns:
+            dict: A dictionary containing the processed data for the subject. The exact contents
+                depend on the dataset configuration but typically include:
+                - Static data (indices and values)
+                - Dynamic data (time series data, event codes, etc.)
+                - Sequence information (start and end indices, if configured)
 
-        Raises:     ValueError: If the sequence length is invalid or if there are inconsistencies in the data
-        shapes.
+        Raises:
+        ValueError: If the sequence length is invalid or if there are inconsistencies in the data shapes.
 
         Notes:     - This method applies sequence length constraints and sampling strategies       as
         specified in the dataset configuration.     - It handles different collate types (event_stream,
@@ -828,46 +872,69 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         # TODO: remove this and handle flattening in the NRT class
         if self.config.collate_type == CollateType.event_stream:
+            if self.config.subsequence_sampling_strategy == SubsequenceSamplingStrategy.AROUND_END:
+                center_idx = end
             seq_len = end - st
-        if self.config.collate_type != CollateType.event_stream:
+            event_seq_len = seq_len
+        else:
             event_seq_len = end - st
+            # end is the prediction_time if self.has_task, otherwise it is the last patient observation in
+            # their full history for AROUND_END subsequence sampling strategy, we require self.has_task to
+            # be true, and we sample around the prediction_time end_cutoff represents the end of the
+            # sequence to sample around the prediction_time.
             tensors = subject_dynamic_data.tensors
-            seq_len = sum([array.size for array in tensors["dim1/code"][st:end]])
+            if self.config.subsequence_sampling_strategy == SubsequenceSamplingStrategy.AROUND_END:
+                end_cutoff = None
+                center_idx = np.concatenate(tensors["dim1/code"][st:end], axis=0).shape[0]
+            else:
+                end_cutoff = end
+
+            seq_len = sum([array.size for array in tensors["dim1/code"][st:end_cutoff]])
             if not seq_len >= event_seq_len:
                 raise ValueError(
                     f"Measurement sequence length {seq_len} is less than event sequence length"
                     f" {event_seq_len}!"
                 )
-            tensors["dim1/numeric_value"] = np.concatenate(tensors["dim1/numeric_value"][st:end], axis=0)
-            tensors["dim1/code"] = np.concatenate(tensors["dim1/code"][st:end], axis=0)
+            tensors["dim1/numeric_value"] = np.concatenate(
+                tensors["dim1/numeric_value"][st:end_cutoff], axis=0
+            )
+            tensors["dim1/code"] = np.concatenate(tensors["dim1/code"][st:end_cutoff], axis=0)
             seq_len = tensors["dim1/code"].shape[0]
             tensors["dim0/time_delta_days"] = subpad_vectors(
-                tensors["dim0/time_delta_days"][st:end], tensors["dim1/bounds"][st:end]
+                tensors["dim0/time_delta_days"][st:end_cutoff], tensors["dim1/bounds"][st:end_cutoff]
             )
             st = 0
             end = st + seq_len
 
-        if seq_len > self.config.max_seq_len:
-            match self.config.subsequence_sampling_strategy:
-                case SubsequenceSamplingStrategy.RANDOM:
-                    start_offset = np.random.choice(seq_len - self.config.max_seq_len)
-                case SubsequenceSamplingStrategy.TO_END:
-                    start_offset = seq_len - self.config.max_seq_len
-                case SubsequenceSamplingStrategy.FROM_START:
-                    start_offset = 0
-                case _:
-                    raise ValueError(
-                        f"Invalid subsequence sampling strategy {self.config.subsequence_sampling_strategy}!"
-                    )
+        start_offset = 0
 
-            st += start_offset
-            end = min(end, st + self.config.max_seq_len)
+        match self.config.subsequence_sampling_strategy:
+            case SubsequenceSamplingStrategy.RANDOM:
+                start_offset = np.random.choice(max(seq_len - self.config.max_seq_len, 1))
+            case SubsequenceSamplingStrategy.TO_END:
+                start_offset = max(seq_len - self.config.max_seq_len, 0)
+            case SubsequenceSamplingStrategy.FROM_START:
+                start_offset = 0
+            case SubsequenceSamplingStrategy.AROUND_RANDOM:
+                start_offset = np.random.choice(max(seq_len - self.config.max_seq_len, 1))
+                out["center_idx"] = start_offset + seq_len // 2
+            case SubsequenceSamplingStrategy.AROUND_END:
+                start_offset = max(center_idx - self.config.max_seq_len // 2, 0)
+                out["center_idx"] = center_idx
+            case _:
+                raise ValueError(
+                    f"Invalid subsequence sampling strategy {self.config.subsequence_sampling_strategy}!"
+                )
+
+        st += start_offset
+        end = min(end, st + self.config.max_seq_len)
 
         if self.config.do_include_subsequence_indices:
             out["start_idx"] = st
             out["end_idx"] = end
 
         if self.config.collate_type == CollateType.event_stream:
+            end = min(end, len(subject_dynamic_data.tensors["dim1/code"]))
             out["dynamic"] = subject_dynamic_data[st:end]
         else:
             tensors["dim1/code"] = tensors["dim1/code"][st:end]
@@ -1008,22 +1075,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         if self.config.do_include_subject_id:
             out_batch["subject_id"] = collated["subject_id"].long()
 
-        if not self.has_task:
-            return out_batch
-
-        out_labels = {}
-        for task in self.tasks:
-            match self.task_types[task]:
-                case "multi_class_classification":
-                    out_labels[task] = collated[task].long()
-                case "binary_classification":
-                    out_labels[task] = collated[task].float()
-                case "regression":
-                    out_labels[task] = collated[task].float()
-                case _:
-                    raise TypeError(f"Don't know how to tensorify task of type {self.task_types[task]}!")
-
-        # add task labels
         for k in batch[0].keys():
             if k not in ("dynamic", "static_values", "static_indices"):
                 out_batch[k] = torch.Tensor([item[k] for item in batch])
@@ -1031,7 +1082,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         return out_batch
 
     def collate_event_stream(self, batch: list[dict]) -> dict:
-        """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
+        """Combines the ragged dictionaries produced by `__getitem__` into a tensorized
+        batch.
 
         This function handles conversion of arrays to tensors and padding of elements within the batch across
         static data elements, sequence events, and dynamic data elements.
@@ -1155,6 +1207,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             time_delta_days=time_delta_days,
             numeric_value_mask=numeric_value_mask,
         )
+        if "center_idx" in item:
+            output["center_idx"] = item["center_idx"]
         return output
 
     @classmethod
@@ -1224,14 +1278,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                     [ 0,  0,  0, 12,  0]])}
         """
         processed_batch = [cls.process_triplet(item, do_prepend_static_data) for item in batch]
+        sequence_keys = {k for k, v in processed_batch[0].items() if hasattr(v, "__iter__")}
+        scaler_keys = [k for k in processed_batch[0].keys() if k not in sequence_keys]
         tensorized_batch = {
             k: torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x[k]) for x in processed_batch],
                 batch_first=True,
                 padding_value=0,
             )
-            for k in processed_batch[0].keys()
+            for k in sequence_keys
         }
+        for k in scaler_keys:
+            tensorized_batch[k] = torch.Tensor([item[k] for item in processed_batch])
 
         # Add task labels to batch
         for k in batch[0].keys():
@@ -1366,33 +1424,44 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         This method combines multiple data points in text-code format into a single batch, applying necessary
         padding, tensorization, and handling of tokenized code representations.
 
-        Args:     tokenized_codes (dict): A dictionary mapping codes to their tokenized representations. batch
-        (list[dict]): A list of dictionaries, each representing a single data point. prepend_static_data
-        (bool): Whether to prepend static data to the dynamic data.
+        Args:
+            tokenized_codes (dict): A dictionary mapping codes to their tokenized representations.
+            batch (list[dict]): A list of dictionaries, each representing a single data point.
+            prepend_static_data (bool): Whether to prepend static data to the dynamic data.
 
-        Returns:     dict: A dictionary containing the collated batch data, including:         - mask: Tensor
-        indicating valid data points across the batch.         - static_mask: Tensor indicating static data
-        points.         - code: Tensor of original codes.         - code_tokens: Tensor of tokenized code
-        representations.         - code_mask: Tensor mask for tokenized code sequences.         -
-        numeric_value: Tensor of numerical values.         - time_delta_days: Tensor of time deltas between
-        events.         - Additional task-specific labels if present in the input data.
+        Returns:
+            dict: A dictionary containing the collated batch data, including:
+                - mask: Tensor indicating valid data points across the batch.
+                - static_mask: Tensor indicating static data points.
+                - code: Tensor of original codes.
+                - code_tokens: Tensor of tokenized code representations.
+                - code_mask: Tensor mask for tokenized code sequences.
+                - numeric_value: Tensor of numerical values.
+                - time_delta_days: Tensor of time deltas between events.
+                - Additional task-specific labels if present in the input data.
 
-        Notes:     - This method is specifically designed for models that use text representations of codes. -
-        It handles padding to ensure uniform sequence lengths within the batch.     - All data is converted to
-        PyTorch tensors.     - The method is flexible to handle additional task-specific data present in the
-        input.
+        Notes:
+            - This method is specifically designed for models that use text representations of codes.
+            - It handles padding to ensure uniform sequence lengths within the batch.
+            - All data is converted to PyTorch tensors.
+            - The method is flexible to handle additional task-specific data present in the input.
         """
         processed_batch = [
             cls.process_text_code(item, tokenized_codes, prepend_static_data) for item in batch
         ]
+        sequence_keys = {k for k, v in processed_batch[0].items() if hasattr(v, "__iter__")}
+        scaler_keys = [k for k in processed_batch[0].keys() if k not in sequence_keys]
         tensorized_batch = {
             k: torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x[k]) for x in processed_batch],
                 batch_first=True,
                 padding_value=0,
             )
-            for k in processed_batch[0].keys()
+            for k in sequence_keys
         }
+        for k in scaler_keys:
+            tensorized_batch[k] = torch.Tensor([item[k] for item in processed_batch])
+
         for k in batch[0].keys():
             if k not in ("dynamic", "static_values", "static_indices"):
                 tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
@@ -1470,18 +1539,23 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         the dataset configuration. It delegates to specific collation methods depending on the collate_type
         specified in the configuration.
 
-        Args:     batch (list[dict]): A list of dictionaries, each representing a single data point as
-        returned by the __getitem__ method.
+        Args:
+            batch (list[dict]): A list of dictionaries, each representing a single data point as
+                returned by the __getitem__ method.
 
-        Returns:     dict: A dictionary containing the collated batch data. The exact structure depends on the
-        collation strategy used.
+        Returns:
+            dict: A dictionary containing the collated batch data. The exact structure depends on the
+                collation strategy used.
 
-        Raises:     NotImplementedError: If an unsupported collate type is specified in the configuration.
+        Raises:
+            NotImplementedError: If an unsupported collate type is specified in the configuration.
 
-        Notes:     - The method supports various collation strategies including event_stream,       triplet,
-        triplet_prompt, eic, and text_code.     - Each collation strategy is optimized for different model
-        architectures and data representations.     - The collated output is fully tensorized and padded,
-        ready for input into a PyTorch model.
+        Notes:
+            - The method supports various collation strategies including event_stream, triplet,
+                triplet_prompt, eic, and text_code.
+            - Each collation strategy is optimized for different model architectures and data
+                representations.
+            - The collated output is fully tensorized and padded, ready for input into a PyTorch model.
         """
         collate_type = self.config.collate_type
         if collate_type == CollateType.event_stream:
