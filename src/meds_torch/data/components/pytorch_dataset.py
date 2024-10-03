@@ -38,13 +38,17 @@ def generate_subject_split_dict(meds_dir):
 
     Args:     meds_dir (str): Path to the root directory of the MEDS dataset.
 
-    Returns:     dict: A dictionary where keys are split names (e.g., 'train/shard0')           and values are
-    lists of subject IDs belonging to that split.
+    Returns:
+        dict: A dictionary where keys are split names (e.g., 'train/shard0') and values are lists of subject
+            IDs belonging to that split.
 
-    Raises:     FileNotFoundError: If the specified directory does not exist.
+    Raises:
+        FileNotFoundError: If the specified directory does not exist.
 
-    Notes:     - The function expects a directory structure where split directories       contain Parquet
-    files with subject data.     - It logs a warning if a specified path is not a directory.
+    Notes:
+        - The function expects a directory structure where split directories contain Parquet files with
+            subject data.
+        - It logs a warning if a specified path is not a directory.
     """
     subject_split_dict = {}
 
@@ -452,6 +456,15 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         # Initialize tokenizer here
         self.init_tokenizer()
 
+    #     # Load patient metadata (e.g., cluster IDs)
+    #     self.patient_metadata = self.load_patient_metadata()
+
+    # def load_patient_metadata(self):
+    #     # TODO Implement this method to load your patient metadata, essentially expects
+    #     metadata_df = pl.read_parquet(self.config.patient_metadata_fp)
+    #     metadata_dict =
+    #     return {subject_id: cluster_id for subject_id, cluster_id in loaded_metadata}
+
     def init_tokenizer(self):
         if self.config.collate_type == CollateType.text_code:
             if not hasattr(self, "tokenized_codes"):
@@ -830,6 +843,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         """
         return self._seeded_getitem(idx)
 
+    def _get_rng(self, idx: int) -> np.random.Generator:
+        if self.split == "train":
+            return np.random.default_rng()
+        return np.random.default_rng(idx)
+
     @SeedableMixin.WithSeed
     @TimeableMixin.TimeAs
     def load_subject(
@@ -910,17 +928,19 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         match self.config.subsequence_sampling_strategy:
             case SubsequenceSamplingStrategy.RANDOM:
-                start_offset = np.random.choice(max(seq_len - self.config.max_seq_len, 1))
+                rng = self._get_rng(subject_id)
+                start_offset = rng.choice(max(seq_len - self.config.max_seq_len, 1))
             case SubsequenceSamplingStrategy.TO_END:
                 start_offset = max(seq_len - self.config.max_seq_len, 0)
             case SubsequenceSamplingStrategy.FROM_START:
                 start_offset = 0
             case SubsequenceSamplingStrategy.AROUND_RANDOM:
-                start_offset = np.random.choice(max(seq_len - self.config.max_seq_len, 1))
-                out["center_idx"] = start_offset + seq_len // 2
+                rng = self._get_rng(subject_id)
+                start_offset = rng.choice(max(seq_len - self.config.max_seq_len, 1))
+                out["center_idx"] = seq_len // 2
             case SubsequenceSamplingStrategy.AROUND_END:
                 start_offset = max(center_idx - self.config.max_seq_len // 2, 0)
-                out["center_idx"] = center_idx
+                out["center_idx"] = center_idx - start_offset
             case _:
                 raise ValueError(
                     f"Invalid subsequence sampling strategy {self.config.subsequence_sampling_strategy}!"

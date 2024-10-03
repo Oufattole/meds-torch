@@ -119,6 +119,14 @@ def test_pytorch_dataset(meds_dir, collate_type, sub_sampling_strategy):
     else:
         raise NotImplementedError(f"{collate_type} not implemented")
 
+    if sub_sampling_strategy in [
+        SubsequenceSamplingStrategy.AROUND_END,
+        SubsequenceSamplingStrategy.AROUND_RANDOM,
+    ]:
+        if collate_type != "event_stream":  # TODO: Make this work for event stream
+            assert (batch["center_idx"] < batch["mask"].sum(axis=1)).all()
+            assert batch["center_idx"].min() >= 0
+
 
 @pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt", "text_code", "eic"])
 @pytest.mark.parametrize(
@@ -250,6 +258,14 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type, sub_sampli
         }.union(additional_key)
     else:
         raise NotImplementedError(f"{collate_type} not implemented")
+
+    if sub_sampling_strategy in [
+        SubsequenceSamplingStrategy.AROUND_END,
+        SubsequenceSamplingStrategy.AROUND_RANDOM,
+    ]:
+        if collate_type != "event_stream":  # TODO: Make this work for event stream
+            assert (batch["center_idx"] < batch["mask"].sum(axis=1)).all()
+            assert batch["center_idx"].min() >= 0
 
 
 @pytest.mark.parametrize("subject_level_sampling", [False, True])
