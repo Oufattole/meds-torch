@@ -1,23 +1,105 @@
 #!/usr/bin/env python
-"""Functions for tokenizing MEDS datasets.
+"""Functions for tensorizing MEDS datasets."""
 
-Here, _tokenization_ refers specifically to the process of converting a longitudinal, irregularly sampled,
-continuous time sequence into a temporal sequence at the level that will be consumed by deep-learning models.
-
-All these functions take in _normalized_ data -- meaning data where there are _no longer_ any code modifiers,
-as those have been normalized alongside codes into integer indices (in the output code column). The only
-columns of concern here thus are `subject_id`, `time`, `code`, `numeric_value`.
-"""
-
-from pathlib import Path
+from functools import partial
 
 import hydra
 import polars as pl
 from loguru import logger
+from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
+from omegaconf import DictConfig
+
 from MEDS_transforms import PREPROCESS_CONFIG_YAML
-from MEDS_transforms.mapreduce.utils import rwlock_wrap, shard_iterator
-from MEDS_transforms.utils import hydra_loguru_init, write_lazyframe
-from omegaconf import DictConfig, OmegaConf
+from MEDS_transforms.mapreduce.mapper import map_over
+from MEDS_transforms.mapreduce.utils import shard_iterator
+
+
+def convert_to_NRT(df: pl.LazyFrame) -> JointNestedRaggedTensorDict:
+    """This converts a tokenized dataframe into a nested ragged tensor.
+
+    Most of the work for this function is actually done in `tokenize` -- this function is just a wrapper
+    to convert the output into a nested ragged tensor using polars' built-in `to_dict` method.
+
+    Args:
+        df: The tokenized dataframe.
+
+    Returns:
+        A `JointNestedRaggedTensorDict` object representing the tokenized dataframe, accounting for however
+        many levels of ragged nesting are present among the codes and numeric values.
+
+    Raises:
+        ValueError: If there are no time delta columns or if there are multiple time delta columns.
+
+    Examples:
+        >>> df = pl.DataFrame({
+        ...     "subject_id": [1, 2],
+        ...     "time_delta_days": [[float("nan"), 12.0], [float("nan")]],
+        ...     "code": [[[101.0, 102.0], [103.0]], [[201.0, 202.0]]],
+        ...     "numeric_value": [[[2.0, 3.0], [4.0]], [[6.0, 7.0]]]
+        ... })
+        >>> df
+        shape: (2, 4)
+        ┌────────────┬─────────────────┬───────────────────────────┬─────────────────────┐
+        │ subject_id ┆ time_delta_days ┆ code                      ┆ numeric_value       │
+        │ ---        ┆ ---             ┆ ---                       ┆ ---                 │
+        │ i64        ┆ list[f64]       ┆ list[list[f64]]           ┆ list[list[f64]]     │
+        ╞════════════╪═════════════════╪═══════════════════════════╪═════════════════════╡
+        │ 1          ┆ [NaN, 12.0]     ┆ [[101.0, 102.0], [103.0]] ┆ [[2.0, 3.0], [4.0]] │
+        │ 2          ┆ [NaN]           ┆ [[201.0, 202.0]]          ┆ [[6.0, 7.0]]        │
+        └────────────┴─────────────────┴───────────────────────────┴─────────────────────┘
+        >>> nrt = convert_to_NRT(df.lazy())
+        >>> for k, v in sorted(list(nrt.to_dense().items())):
+        ...     print(k)
+        ...     print(v)
+        code
+        [[[101. 102.]
+          [103.   0.]]
+        <BLANKLINE>
+         [[201. 202.]
+          [  0.   0.]]]
+        dim1/mask
+        [[ True  True]
+         [ True False]]
+        dim2/mask
+        [[[ True  True]
+          [ True False]]
+        <BLANKLINE>
+         [[ True  True]
+          [False False]]]
+        numeric_value
+        [[[2. 3.]
+          [4. 0.]]
+        <BLANKLINE>
+         [[6. 7.]
+          [0. 0.]]]
+        time_delta_days
+        [[nan 12.]
+         [nan  0.]]
+    """
+    import pdb; pdb.set_trace()
+    # There should only be one time delta column, but this ensures we catch it regardless of the unit of time
+    # used to convert the time deltas, and that we verify there is only one such column.
+    time_delta_cols = [c for c in df.collect_schema().names() if c.startswith("time_delta_")]
+
+
+    if len(time_delta_cols) == 0:
+        raise ValueError("Expected at least one time delta column, found none")
+    elif len(time_delta_cols) > 1:
+        raise ValueError(f"Expected exactly one time delta column, found columns: {time_delta_cols}")
+
+    time_delta_col = time_delta_cols[0]
+
+    tensors_dict = df.select(time_delta_col, "code", "numeric_value").collect().to_dict(as_series=False)
+
+    if all((not v) for v in tensors_dict.values()):
+        logger.warning("All columns are empty. Returning an empty tensor dict.")
+        return JointNestedRaggedTensorDict({})
+
+    for k, v in tensors_dict.items():
+        if not v:
+            raise ValueError(f"Column {k} is empty")
+
+    return JointNestedRaggedTensorDict(tensors_dict)
 
 
 @hydra.main(
@@ -26,49 +108,13 @@ from omegaconf import DictConfig, OmegaConf
 def main(cfg: DictConfig):
     """TODO."""
 
-    hydra_loguru_init()
-
-    logger.info(
-        f"Running with config:\n{OmegaConf.to_yaml(cfg)}\n"
-        f"Stage: {cfg.stage}\n\n"
-        f"Stage config:\n{OmegaConf.to_yaml(cfg.stage_cfg)}"
+    map_over(
+        cfg,
+        compute_fn=convert_to_NRT,
+        write_fn=JointNestedRaggedTensorDict.save,
+        shard_iterator_fntr=partial(shard_iterator, in_prefix="event_seqs/", out_suffix=".nrt"),
     )
 
-    output_dir = Path(cfg.stage_cfg.output_dir)
-    # May need to fix this so it goes through JNRT
-    shards_single_output, include_only_train = shard_iterator(cfg)
-    meds_dir = Path(cfg.stage_cfg.meds_dir)
 
-    if include_only_train:
-        raise ValueError("Not supported for this stage.")
-
-    for in_fp, out_fp in shards_single_output:
-        nrt_path = out_fp.relative_to(output_dir)
-        def read_fn(in_fp):
-            return JointNestedRaggedTensor.load(in_fp)
-        def compute_fn(jnrt):
-            static_df = pl.read_parquet(schema_in_fp)
-            for patient in patients_in_nrt(nrt_path):
-                docs, times = load_patient_documents(patient, meds_dir)
-                # get JNRT indexes of docs useing static_df like in get_task_indices_and_labels
-                JNRT_indexes = get_JNRT_indexes(docs, static_df)
-                # add docs to the JNRT
-                jnrt.update(???)
-                return jnrt
-        def write_fn(jnrt, out_fp):
-            jnrt.save(out_fp)
-
-        rwlock_wrap(
-            in_fp,
-            schema_out_fp,
-            read_fn,
-            write_fn,
-            compute_fn
-            do_overwrite=cfg.do_overwrite,
-        )
-
-    logger.info(f"Done with {cfg.stage}")
-
-
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
