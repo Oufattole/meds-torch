@@ -97,6 +97,7 @@ admit_vitals:
     time: col(vitals_date)
     time_format: "%m/%d/%Y, %H:%M:%S"
     numeric_value: HR
+    text_value: col(HR_text)
     _metadata:
       input_metadata:
         description: {"title": {"lab_code": "HR"}}
@@ -146,14 +147,15 @@ def generate_admit_vitals(rng, subjects, num_visits_per_subject=2):
                 )
                 hr = round(rng.uniform(60, 100), 1)
                 temp = round(rng.uniform(97, 99), 1)
+                hr_text = rng.choice(["normal", "abnormal"])
 
                 admit_vitals.append(
                     f"{mrn},\"{admit_date.strftime('%m/%d/%Y, %H:%M:%S')}\",\""
                     f"{discharge_date.strftime('%m/%d/%Y, %H:%M:%S')}\",{department},\""
-                    f"{vitals_date.strftime('%m/%d/%Y, %H:%M:%S')}\",{hr},{temp}"
+                    f"{vitals_date.strftime('%m/%d/%Y, %H:%M:%S')}\",{hr},{temp},{hr_text}"
                 )
 
-    return "\n".join(["subject_id,admit_date,disch_date,department,vitals_date,HR,temp"] + admit_vitals)
+    return "\n".join(["subject_id,admit_date,disch_date,department,vitals_date,HR,temp,HR_text"] + admit_vitals)
 
 
 def test_extraction(output_dir: Path):
