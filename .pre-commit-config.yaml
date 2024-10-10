@@ -29,9 +29,6 @@ repos:
           [
             "-i",
             "--black",
-            "--wrap-descriptions=110",
-            "--wrap-summaries=110",
-            "--force-wrap",
           ]
   # python code formatting
   - repo: https://github.com/psf/black
@@ -59,13 +56,6 @@ repos:
     hooks:
       - id: pyupgrade
         args: [--py310-plus]
-
-  # python docstring formatting
-  - repo: https://github.com/myint/docformatter
-    rev: v1.7.5
-    hooks:
-      - id: docformatter
-        args: [--in-place, --wrap-summaries=110, --wrap-descriptions=110]
 
   # python check (PEP8), programming errors and code complexity
   - repo: https://github.com/PyCQA/flake8
