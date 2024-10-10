@@ -53,6 +53,5 @@ max_query_offset: 60
 min_query_duration: 0
 max_query_duration: 60
 query_sampling_strategy: 'within_record' # ('within_record','random','fixed')
-fit_inputs_before_query: true
 query_fixed_duration: 10
 query_fixed_offset: 0

@@ -14,9 +14,7 @@ from tests.conftest import create_cfg
 
 class EveryQueryDataset(PytorchDataset):
     def __init__(self, cfg, split):
-        # self.actual_max_seq_len = cfg.max_seq_len
-        # cfg.max_seq_len = 1000000000 # artificially increaase to get full subject record
-        # cfg.subsequence_sampling_strategy = 'from_start'
+        cfg.max_seq_len = 5
         cfg.do_include_subsequence_indices = True
         super().__init__(cfg, split)
 
@@ -73,31 +71,6 @@ class EveryQueryDataset(PytorchDataset):
             normalized_query_duration = query_duration
 
         return censored, query_duration, normalized_query_duration
-
-    def sample_input_indices(self, times, query_duration, censored):
-        seq_len = self.actual_max_seq_len
-
-        record_duration = times[-1]
-        if not censored and self.config.fit_inputs_before_query:
-            max_input_end_time = record_duration - query_duration
-            max_input_end_idx = np.max(np.argwhere((times) < max_input_end_time))
-            if max_input_end_idx > seq_len:
-                input_start_idx = np.random.choice(max_input_end_idx - seq_len)
-                input_end_idx = input_start_idx + seq_len
-            else:
-                input_start_idx = 0
-                input_end_idx = max_input_end_idx
-        else:
-            raise NotImplementedError
-            # seq_len = tensors["dim1/code"].shape[0]
-            # randomly sample over full input
-            # should we allow existing FROM_SUBSEQUENCE_SAMPLE in meds torch
-            # check if query fits in remaining data and update censored
-            # start_offset = np.random.choice(seq_len - self.max_seq_len)
-            # st += start_offset
-            # end = min(end, st + self.max_seq_len)
-
-        return censored, input_start_idx, input_end_idx
 
     def sample_query_offset(self, times, censored, input_end_idx, query_duration):
         record_duration = times[-1]
@@ -157,19 +130,24 @@ class EveryQueryDataset(PytorchDataset):
 
     @SeedableMixin.WithSeed
     def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
-        subject_dynamic_data, subject_id, st, end = super().load_subject_dynamic_data(idx)
+        context = super()._seeded_getitem(idx)
 
-        # context = super()._seeded_getitem(idx)
+        (
+            subject_dynamic_data,
+            subject_id,
+            record_start_idx,
+            record_end_idx,
+        ) = super().load_subject_dynamic_data(idx)
 
-        record = super()._seeded_getitem(idx)
-        record_dynamic = record["dynamic"].tensors
-        """(issue) given very large self.config.max_seq_len given
-        self.config.subsequence_sampling_strategy=FROM_START can we assume the full record is returned?"""
+        query_region_dynamic = subject_dynamic_data[context["end_idx"] : record_end_idx].tensors
 
-        time_delta = record_dynamic["dim0/time_delta_days"] * 1440  # days to minutes
+        time_delta = query_region_dynamic["dim0/time_delta_days"] * 1440  # days to minutes
         if np.isnan(time_delta[0]):
             time_delta[0] = 0
         times = np.cumsum(time_delta)
+
+        record = None
+        record_dynamic = None
 
         censored, query_duration, normalized_query_duration = self.sample_query_duration(times)
 
