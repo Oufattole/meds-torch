@@ -11,8 +11,6 @@ from mixins import SeedableMixin
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
 from tests.conftest import create_cfg
 
-# my imports
-
 
 class EveryQueryDataset(PytorchDataset):
     def __init__(self, cfg, split):
@@ -160,6 +158,8 @@ class EveryQueryDataset(PytorchDataset):
     @SeedableMixin.WithSeed
     def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
         subject_dynamic_data, subject_id, st, end = super().load_subject_dynamic_data(idx)
+
+        # context = super()._seeded_getitem(idx)
 
         record = super()._seeded_getitem(idx)
         record_dynamic = record["dynamic"].tensors
