@@ -26,8 +26,10 @@ class EveryQueryDataset(PytorchDataset):
         self.actual_max_seq_len = cfg.max_seq_len
         cfg.max_seq_len = 1000000000 # artificially increaase to get full subject record 
         cfg.subsequence_sampling_strategy = 'from_start'
+        cfg.do_include_subsequence_indices = True 
         super().__init__(cfg, split)
 
+        # throw ValueErrors 
         assert self.config.min_query_offset >= 0 
         assert self.config.min_query_duration >= 0 
         assert self.config.min_query_offset < self.config.max_query_offset
@@ -161,19 +163,30 @@ class EveryQueryDataset(PytorchDataset):
 
         time_delta = record_dynamic["dim0/time_delta_days"] * 1440 # days to minutes 
         if np.isnan(time_delta[0]): time_delta[0] = 0
-        times = np.array([sum(time_delta[:i]) for i in range(1, len(time_delta)+1)])
+        times = np.array([sum(time_delta[:i]) for i in range(1, len(time_delta)+1)]) 
+        # do a cumsum
 
         censored, query_duration, normalized_query_duration = self.sample_query_duration(times)
 
-        censored, input_start_idx, input_end_idx = self.sample_input_indices(times, query_duration, censored)
+        censored, input_start_idx, input_end_idx = self.sample_input_indices(times, query_duration, censored) # can move this above the time delta info
+
+        # sample input first 
+        # then fit query within record 
 
         censored, query_offset, normalized_query_offset = self.sample_query_offset(times, censored, input_end_idx, query_duration)
-        
+
+        if censored:
+            pass 
+            # dont compute this 
+
         query_start_idx, query_end_idx = self.get_query_indices(times, query_offset, query_duration, input_end_idx)
         query_window_codes = record_dynamic["dim1/code"][query_start_idx:query_end_idx]
         query_window_values = record_dynamic["dim1/numeric_value"][query_start_idx:query_end_idx]
 
         # query_code = self.config.sample_code() 
+        # fixed codes, valid subset of codes to sample: HydraConfig list  
+        # metadata/codes.parquet read from disk 
+        # look in triplet 
         query_code = {
             'idx':2,
             'has_value':True,
