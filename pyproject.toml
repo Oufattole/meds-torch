@@ -34,7 +34,7 @@ dependencies = [
 [tool.setuptools_scm]
 
 [project.optional-dependencies]
-dev = ["pre-commit","notebook", "pdbpp"]
+dev = ["pre-commit<4","notebook", "pdbpp"]
 tests = ["pytest", "pytest-cov[toml]", "rootutils", "pytest-sugar", "pytest-instafail", "pytest-xdist", "sh", "MEDS-transforms==0.0.7"]
 docs = [
     "mkdocs==1.6.0",
