@@ -160,6 +160,84 @@ def generate_test_triplet_tokenize(tmp_path):
     stderr, stdout = run_command("MEDS_transform-tensorization", args, {}, "tensorize")
 
 
+def generate_test_multimodal_triplet_tokenize(tmp_path):
+    input_dir = tmp_path / "MEDS_cohort"
+    cohort_dir = tmp_path / "multimodal_tensors"
+
+    # Create the directories
+    input_dir.mkdir(parents=True, exist_ok=True)
+    cohort_dir.mkdir(parents=True, exist_ok=True)
+
+    config_kwargs = {
+        "input_dir": str(input_dir.resolve()),
+        "cohort_dir": str(cohort_dir.resolve()),
+        "stage_configs": {
+            "aggregate_code_metadata": {"aggregations": AGGREGATIONS, "do_summarize_over_all_codes": True}
+        },
+        "stages": [
+            "aggregate_code_metadata",
+            "filter_subjects",
+            "add_time_derived_measurements",
+            "filter_measurements",
+            "occlude_outliers",
+            "fit_vocabulary_indices",
+            "normalization",
+            "tokenization",
+            "custom_text_tensorization",
+        ],
+    }
+    # config = OmegaConf.create(config_kwargs)
+    config_name = "_preprocess"
+    if config_name is None:
+        raise ValueError("config_name must be provided if do_use_config_yaml is True.")
+
+    conf = OmegaConf.create(
+        {
+            "defaults": [config_name],
+            **config_kwargs,
+        }
+    )
+
+    conf_dir = tempfile.TemporaryDirectory()
+    conf_path = Path(conf_dir.name) / "config.yaml"
+    OmegaConf.save(conf, conf_path)
+
+    args = [
+        f"--config-path={str(conf_path.parent.resolve())}",
+        "--config-name=config",
+        "'hydra.searchpath=[pkg://MEDS_transforms.configs]'",
+    ]
+    run_command("MEDS_transform-aggregate_code_metadata", args, {}, "aggregate code metadata")
+
+    logger.info("Converting to code metadata...")
+
+    logger.info("Filtering subjects...")
+    stderr, stdout = run_command("MEDS_transform-filter_subjects", args, {}, "filter subjects")
+
+    logger.info("Generating time derived measurements...")
+    stderr, stdout = run_command(
+        "MEDS_transform-add_time_derived_measurements", args, {}, "time derived measurements"
+    )
+
+    logger.info("Filtering measurements...")
+    stderr, stdout = run_command("MEDS_transform-filter_measurements", args, {}, "filter_codes")
+
+    logger.info("Occluding outliers...")
+    stderr, stdout = run_command("MEDS_transform-occlude_outliers", args, {}, "filter_outliers")
+
+    logger.info("Fitting vocabulary indices...")
+    stderr, stdout = run_command("MEDS_transform-fit_vocabulary_indices", args, {}, "fit_vocabulary_indices")
+
+    logger.info("Normalizing data (converting codes to use integer encodings)...")
+    stderr, stdout = run_command("MEDS_transform-normalization", args, {}, "normalize")
+
+    logger.info("Converting to tokenization...")
+    stderr, stdout = run_command("MEDS_transform-tokenization", args, {}, "tokenize")
+
+    logger.info("Converting to tensor...")
+    stderr, stdout = run_command("python -m meds_torch.utils.custom_text_tensorization", args, {}, "text tensorize")
+
+
 def generate_test_eic_tokenize(tmp_path):
     input_dir = tmp_path / "MEDS_cohort"
     cohort_dir = tmp_path / "eic_tensors"
@@ -245,8 +323,9 @@ def generate_test_eic_tokenize(tmp_path):
 if __name__ == "__main__":
     output_dir = Path(__file__).parent.parent / "test_data"
 
-    generate_test_triplet_tokenize(output_dir)
-    generate_test_eic_tokenize(output_dir)
+    # generate_test_triplet_tokenize(output_dir)
+    # generate_test_eic_tokenize(output_dir)
+    generate_test_multimodal_triplet_tokenize(output_dir)
 
     logger.info("Deleting log files and moving data from temporary directory to project...")
     for log_dir in output_dir.rglob(".logs"):
