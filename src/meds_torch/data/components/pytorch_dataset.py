@@ -790,6 +790,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         """
         return self._seeded_getitem(idx)
 
+    @TimeableMixin.TimeAs
+    def load_subject_dynamic_data(self, idx: int):
+        """Loads and returns the dynamic data slice for a given subject index, with subject ID and time
+        range."""
+        subject_id, st, end = self.index[idx]
+        shard = self.subj_map[subject_id]
+        subject_idx = self.subj_indices[subject_id]
+        subject_dynamic_data = JointNestedRaggedTensorDict.load_slice(
+            Path(self.config.data_dir) / "data" / f"{shard}.nrt", subject_idx
+        )
+        return subject_dynamic_data, subject_id, st, end
+
     @SeedableMixin.WithSeed
     @TimeableMixin.TimeAs
     def load_subject(
@@ -942,14 +954,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         This function is a seedable version of `__getitem__`.
         """
 
-        subject_id, st, end = self.index[idx]
+        subject_dynamic_data, subject_id, st, end = self.load_subject_dynamic_data(idx)
 
-        shard = self.subj_map[subject_id]
-        subject_idx = self.subj_indices[subject_id]
-
-        subject_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-            Path(self.config.data_dir) / "data" / f"{shard}.nrt", subject_idx
-        )
         out = self.load_subject(subject_dynamic_data, subject_id, st, end)
 
         if self.config.do_include_subject_id:
@@ -958,7 +964,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         for t, t_labels in self.labels.items():
             out[t] = t_labels[idx]
 
-        assert "dynamic" in out, f"Failed to load dynamic data for subject {subject_id} in {shard}!"
+        assert "dynamic" in out, f"Failed to load dynamic data for subject {subject_id} at idx {idx}!"
         return out
 
     @TimeableMixin.TimeAs
