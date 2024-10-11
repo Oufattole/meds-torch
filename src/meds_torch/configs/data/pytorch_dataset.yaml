@@ -48,10 +48,11 @@ postpend_eos_token: ${model.backbone.postpend_eos_token}
 
 # EveryQuery Params
 normalize_query: true
-min_query_offset: 0
-max_query_offset: 60
-min_query_duration: 0
-max_query_duration: 60
-query_sampling_strategy: 'within_record' # ('within_record','random','fixed')
-query_fixed_duration: 10
-query_fixed_offset: 0
+min_offset: 0
+max_offset: 60
+min_duration: 0
+max_duration: 60
+duration_sampling_strategy: 'within_record' # ('within_record','random','fixed')
+offset_sampling_strategy: 'within_record' # ('within_record','random','fixed')
+fixed_duration: 10
+fixed_offset: 0
