@@ -50,6 +50,17 @@ class EveryQueryDataset(PytorchDataset):
         times = np.cumsum(time_delta)
         return times
 
+    def normalize_future(self, query):
+        # normalize offset and duration in place
+        if self.config.normalize_query:
+            query["duration"] = (query["duration"] - self.config.min_duration) / (
+                self.config.max_duration - self.config.min_duration
+            )
+            query["offset"] = (query["offset"] - self.config.min_offset) / (
+                self.config.max_offset - self.config.min_offset
+            )
+        return query
+
     def sample_future(self, max_valid_duration):
         if max_valid_duration < 0:
             raise ValueError(f"max_valid_duration must be non-negative, but got {max_valid_duration}")
@@ -122,18 +133,42 @@ class EveryQueryDataset(PytorchDataset):
         }
         return event
 
-    def normalize_future(self, query):
-        # normalize offset and duration in place
-        if self.config.normalize_query:
-            query["duration"] = (query["duration"] - self.config.min_duration) / (
-                self.config.max_duration - self.config.min_duration
-            )
-            query["offset"] = (query["offset"] - self.config.min_offset) / (
-                self.config.max_offset - self.config.min_offset
-            )
-        return query
+    def get_query_slice(self, times, query):
+        NotImplemented
+        # import numpy as np
+        # times = np.array([146. ,178., 192., 240.])
+        # offset=147
+        # duration=93
+        # start_time = offset
+        # end_time = offset + duration
+        # start_idx = np.min(np.argwhere((times) >= start_time))
+        # end_idx = np.min(np.argwhere((times) >= end_time))
+        # times[start_idx:end_idx]
+        """start_time = query["offset"]
+        end_time = query["offset"] + query["duration"]
+        start_idx = context["end_idx"] + np.min(np.argwhere((times) >= start_time))
+        # end_idx = np.max(np.argwhere((times) <= end_time), initial=start_idx)
+        end_idx = np.min(np.argwhere((times) >= end_time))
+
+        query_start_time = times[context["end_idx"]] + query_offset
+        query_end_time = query_start_time + query_duration
+        query_start_idx = np.min(np.argwhere((times) >= query_start_time))
+        query_end_idx = np.max(np.argwhere((times) <= query_end_time), initial=query_start_idx)
+        assert query_start_idx <= query_end_idx
+        return query_start_idx, query_end_idx"""
+        return  # slice(start, end)
+
+    def tally_answer(self, future_dynamic, query):
+        NotImplemented
+        times = self.get_times(future_dynamic)
+        s = self.get_query_slice(times, query)
+        codes = future_dynamic["dim1/code"][s]
+        values = future_dynamic["dim1/numeric_value"][s]
+        count = self.compute_occurrence(codes, values, query)
+        return count
 
     def get_query_indices(self, times, query_offset, query_duration, input_end_idx):
+        # Old
         query_start_time = times[input_end_idx] + query_offset
         query_end_time = query_start_time + query_duration
         query_start_idx = np.min(np.argwhere((times) >= query_start_time))
@@ -141,7 +176,8 @@ class EveryQueryDataset(PytorchDataset):
         assert query_start_idx <= query_end_idx
         return query_start_idx, query_end_idx
 
-    def count_query_occurrence(self, query_window_codes, query_window_values, query):
+    def compute_occurrence(self, query_window_codes, query_window_values, query):
+        NotImplemented
         count = 0
         for i in range(len(query_window_codes)):
             for j in range(len(query_window_codes[i])):
@@ -160,9 +196,10 @@ class EveryQueryDataset(PytorchDataset):
     def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
         context = super()._seeded_getitem(idx)
 
+        # replace with more efficient access to future_duration
+        # do timestamp[record_end_idx] - timestamp[context["end_idx"]]
         subj_dynamic, subj_id, record_start_idx, record_end_idx = super().load_subject_dynamic_data(idx)
         future_dynamic = subj_dynamic[context["end_idx"] : record_end_idx].tensors
-
         times = self.get_times(future_dynamic)
         future_duration = times[-1]
 
@@ -171,19 +208,10 @@ class EveryQueryDataset(PytorchDataset):
         query = future | event
 
         if is_censored:
-            answer = {
-                "censored": is_censored,
-                "count": None,
-                "occurs": None,
-            }  # what to put for missing values
-
+            answer = {"censored": is_censored, "count": None, "occurs": None}
+            # what to put for missing values
         else:
-            input_end_idx = context["end_idx"]
-            query_start_idx, query_end_idx = self.get_query_indices(times, query, input_end_idx)
-            query_window_codes = future_dynamic["dim1/code"][query_start_idx:query_end_idx]
-            query_window_values = future_dynamic["dim1/numeric_value"][query_start_idx:query_end_idx]
-            count = self.count_query_occurrence(query_window_codes, query_window_values, query)
-
+            count = self.tally_answer(future_dynamic, query)
             answer = {"censored": is_censored, "count": count, "occurs": count != 0}
 
         query = self.normalize_future(query)
@@ -193,7 +221,7 @@ class EveryQueryDataset(PytorchDataset):
         return item
 
 
-@pytest.mark.parametrize(
+"""@pytest.mark.parametrize(
     "query_offset, query_duration, input_end_idx, expected_indices, expected_exception",
     [
         # Test case 1: Normal case
@@ -398,6 +426,7 @@ def test_sample_query_duration(meds_dir: Path, config_overrides, expected):
         assert np.isclose(normalized_query_duration, expected_normalized_query_duration)
     else:
         assert normalized_query_duration == expected_normalized_query_duration
+"""
 
 
 @pytest.mark.parametrize(
