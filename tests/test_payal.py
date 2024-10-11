@@ -18,92 +18,120 @@ class EveryQueryDataset(PytorchDataset):
         cfg.do_include_subsequence_indices = True
         super().__init__(cfg, split)
 
-        if self.config.min_query_offset < 0:
+        if self.config.min_offset < 0:
             raise ValueError("min_query_offset must be non-negative.")
-        if self.config.min_query_duration < 0:
+        if self.config.min_duration < 0:
             raise ValueError("min_query_duration must be non-negative.")
-        if self.config.min_query_offset >= self.config.max_query_offset:
+        if self.config.min_offset >= self.config.max_offset:
             raise ValueError("min_query_offset must be less than max_query_offset.")
-        if self.config.min_query_duration >= self.config.max_query_duration:
+        if self.config.min_duration >= self.config.max_duration:
             raise ValueError("min_query_duration must be less than max_query_duration.")
-        if self.config.query_sampling_strategy not in ("within_record", "random", "fixed"):
-            raise ValueError("query_sampling_strategy must be one of 'within_record', 'random', or 'fixed'.")
-        if self.config.query_sampling_strategy == "fixed":
-            if self.config.query_fixed_duration is None:
+        if self.config.duration_sampling_strategy not in ("within_record", "random", "fixed"):
+            raise ValueError(
+                "duration_sampling_strategy must be one of 'within_record', 'random', or 'fixed'."
+            )
+        if self.config.duration_sampling_strategy == "fixed":
+            if self.config.fixed_duration is None:
                 raise ValueError("query_fixed_duration must be specified for 'fixed' sampling strategy.")
-            if self.config.query_fixed_duration < 0:
+            if self.config.fixed_duration < 0:
                 raise ValueError("query_fixed_duration must be non-negative.")
-            if self.config.query_fixed_offset is None:
+        if self.config.offset_sampling_strategy not in ("within_record", "random", "fixed"):
+            raise ValueError("offset_sampling_strategy must be one of 'within_record', 'random', or 'fixed'.")
+        if self.config.offset_sampling_strategy == "fixed":
+            if self.config.fixed_offset is None:
                 raise ValueError("query_fixed_offset must be specified for 'fixed' sampling strategy.")
-            if self.config.query_fixed_offset < 0:
+            if self.config.fixed_offset < 0:
                 raise ValueError("query_fixed_offset must be non-negative.")
 
-    def sample_query_duration(self, times):
-        record_duration = times[-1]
-        min_input_duration = times[1]  # so that we have at least one event in input
-        max_valid_query_duration = record_duration - min_input_duration
+    def get_times(self, dynamic):
+        time_delta = dynamic["dim0/time_delta_days"] * 1440
+        if np.isnan(time_delta[0]):
+            time_delta[0] = 0
+        times = np.cumsum(time_delta)
+        return times
 
-        match self.config.query_sampling_strategy:
+    def sample_future(self, max_valid_duration):
+        if max_valid_duration < 0:
+            raise ValueError(f"max_valid_duration must be non-negative, but got {max_valid_duration}")
+
+        duration = self.sample_duration(max_valid_duration)
+
+        max_valid_offset = max_valid_duration - duration
+        if max_valid_offset < 0:
+            raise ValueError(f"max_valid_offset must be non-negative, but got {max_valid_offset}")
+
+        offset = self.sample_offset(max_valid_offset)
+
+        if (duration > max_valid_duration) or (offset > max_valid_offset):
+            is_censored = True
+        else:
+            is_censored = False
+
+        future = {"offset": offset, "duration": duration}
+
+        return future, is_censored
+
+    def sample_duration(self, max_valid_duration):
+        match self.config.duration_sampling_strategy:
             case "within_record":
-                if max_valid_query_duration <= self.config.min_query_duration:
-                    query_duration = max_valid_query_duration
+                if max_valid_duration <= self.config.min_duration:
+                    duration = max_valid_duration
                 else:
-                    query_duration = np.random.randint(
-                        low=self.config.min_query_duration,
-                        high=min(self.config.max_query_duration, max_valid_query_duration),
+                    duration = np.random.randint(
+                        low=self.config.min_duration,
+                        high=min(self.config.max_duration, max_valid_duration),
                     )
             case "random":
-                query_duration = np.random.randint(
-                    self.config.min_query_duration, self.config.max_query_duration
-                )
+                duration = np.random.randint(self.config.min_duration, self.config.max_duration)
             case "fixed":
-                query_duration = self.config.query_fixed_duration
+                duration = self.config.fixed_duration
+        if duration < 0:
+            raise ValueError(f"duration must be non-negative, but got {duration}")
+        return duration
 
-        assert query_duration > 0
-
-        censored = query_duration > max_valid_query_duration
-
-        if self.config.normalize_query:
-            normalized_query_duration = (query_duration - self.config.min_query_duration) / (
-                self.config.max_query_duration - self.config.min_query_duration
-            )
-        else:
-            normalized_query_duration = query_duration
-
-        return censored, query_duration, normalized_query_duration
-
-    def sample_query_offset(self, times, censored, input_end_idx, query_duration):
-        record_duration = times[-1]
-        input_duration = times[input_end_idx]
-        max_valid_offset = record_duration - input_duration - query_duration
-
-        match self.config.query_sampling_strategy:
+    def sample_offset(self, max_valid_offset):
+        match self.config.offset_sampling_strategy:
             case "within_record":
-                if max_valid_offset <= self.config.min_query_offset:
-                    query_offset = max_valid_offset
+                if max_valid_offset <= self.config.min_offset:
+                    offset = max_valid_offset
                 else:
-                    query_offset = np.random.randint(
-                        low=self.config.min_query_offset,
-                        high=min(self.config.max_query_offset, max_valid_offset),
+                    offset = np.random.randint(
+                        low=self.config.min_offset,
+                        high=min(self.config.max_offset, max_valid_offset),
                     )
             case "random":
-                query_offset = np.random.randint(self.config.min_query_offset, self.config.max_query_offset)
+                offset = np.random.randint(self.config.min_offset, self.config.max_offset)
             case "fixed":
-                query_offset = self.config.query_fixed_offset
+                offset = self.config.fixed_offset
+        if offset < 0:
+            raise ValueError(f"offset must be non-negative, but got {offset}")
+        return offset
 
-        assert query_offset >= 0
+    def sample_event(self):
+        NotImplemented
+        # query_code = self.config.sample_code()
+        # fixed codes, valid subset of codes to sample: HydraConfig list
+        # metadata/codes.parquet read from disk
+        # look in triplet
+        event = {
+            "idx": 2,
+            "has_value": True,
+            "range_min": 0.4,
+            "range_max": 0.7,
+            # can also include code name and code type
+        }
+        return event
 
-        if not censored and query_offset > max_valid_offset:
-            censored = True
-
+    def normalize_future(self, query):
+        # normalize offset and duration in place
         if self.config.normalize_query:
-            normalized_query_offset = (query_offset - self.config.min_query_offset) / (
-                self.config.max_query_offset - self.config.min_query_offset
+            query["duration"] = (query["duration"] - self.config.min_duration) / (
+                self.config.max_duration - self.config.min_duration
             )
-        else:
-            normalized_query_offset = query_offset
-
-        return censored, query_offset, normalized_query_offset
+            query["offset"] = (query["offset"] - self.config.min_offset) / (
+                self.config.max_offset - self.config.min_offset
+            )
+        return query
 
     def get_query_indices(self, times, query_offset, query_duration, input_end_idx):
         query_start_time = times[input_end_idx] + query_offset
@@ -132,73 +160,35 @@ class EveryQueryDataset(PytorchDataset):
     def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
         context = super()._seeded_getitem(idx)
 
-        (
-            subject_dynamic_data,
-            subject_id,
-            record_start_idx,
-            record_end_idx,
-        ) = super().load_subject_dynamic_data(idx)
+        subj_dynamic, subj_id, record_start_idx, record_end_idx = super().load_subject_dynamic_data(idx)
+        future_dynamic = subj_dynamic[context["end_idx"] : record_end_idx].tensors
 
-        query_region_dynamic = subject_dynamic_data[context["end_idx"] : record_end_idx].tensors
+        times = self.get_times(future_dynamic)
+        future_duration = times[-1]
 
-        time_delta = query_region_dynamic["dim0/time_delta_days"] * 1440  # days to minutes
-        if np.isnan(time_delta[0]):
-            time_delta[0] = 0
-        times = np.cumsum(time_delta)
+        future, is_censored = self.sample_future(max_valid_duration=future_duration)
+        event = self.sample_event()
+        query = future | event
 
-        record = None
-        record_dynamic = None
+        if is_censored:
+            answer = {
+                "censored": is_censored,
+                "count": None,
+                "occurs": None,
+            }  # what to put for missing values
 
-        censored, query_duration, normalized_query_duration = self.sample_query_duration(times)
+        else:
+            input_end_idx = context["end_idx"]
+            query_start_idx, query_end_idx = self.get_query_indices(times, query, input_end_idx)
+            query_window_codes = future_dynamic["dim1/code"][query_start_idx:query_end_idx]
+            query_window_values = future_dynamic["dim1/numeric_value"][query_start_idx:query_end_idx]
+            count = self.count_query_occurrence(query_window_codes, query_window_values, query)
 
-        censored, input_start_idx, input_end_idx = self.sample_input_indices(times, query_duration, censored)
+            answer = {"censored": is_censored, "count": count, "occurs": count != 0}
 
-        # can move this above the time delta info
+        query = self.normalize_future(query)
 
-        # sample input first
-        # then fit query within record
-
-        censored, query_offset, normalized_query_offset = self.sample_query_offset(
-            times, censored, input_end_idx, query_duration
-        )
-
-        if censored:
-            pass
-            # dont compute this
-
-        query_start_idx, query_end_idx = self.get_query_indices(
-            times, query_offset, query_duration, input_end_idx
-        )
-        query_window_codes = record_dynamic["dim1/code"][query_start_idx:query_end_idx]
-        query_window_values = record_dynamic["dim1/numeric_value"][query_start_idx:query_end_idx]
-
-        # query_code = self.config.sample_code()
-        # fixed codes, valid subset of codes to sample: HydraConfig list
-        # metadata/codes.parquet read from disk
-        # look in triplet
-        query_code = {
-            "idx": 2,
-            "has_value": True,
-            "range_min": 0.4,
-            "range_max": 0.7,
-            # can also include code name and code type
-        }
-        query = query_code | {
-            "offset": normalized_query_offset,
-            "duration": normalized_query_duration,
-        }
-
-        count = self.count_query_occurrence(query_window_codes, query_window_values, query)
-        answer = {"censored": censored, "count": count, "occurs": count != 0}
-
-        # after calculating answer from the query window, reduce record to input window
-        record["dynamic"] = record["dynamic"][input_start_idx:input_end_idx]
-
-        item = {
-            "context": record,
-            "query": query,
-            "answer": answer,
-        }
+        item = {"context": context, "query": query, "answer": answer}
 
         return item
 
@@ -423,8 +413,8 @@ def test_pytorch_dataset(meds_dir: Path, collate_type):
     assert not pyd.has_task
     item = pyd[0]
     assert item.keys() == {"context", "query", "answer"}
-    assert item["context"].keys() == {"static_indices", "static_values", "dynamic"}
-    # assert False
+    assert item["context"].keys() == {"static_indices", "static_values", "dynamic", "start_idx", "end_idx"}
+    assert False
     batch = pyd.collate([pyd[i]["context"] for i in range(2)])
     if collate_type == "event_stream":
         assert batch.keys() == {
@@ -435,6 +425,8 @@ def test_pytorch_dataset(meds_dir: Path, collate_type):
             "dynamic_values",
             "static_indices",
             "static_values",
+            "start_idx",
+            "end_idx",
         }
     else:
         raise NotImplementedError(f"{collate_type} not implemented")
