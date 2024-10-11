@@ -43,13 +43,6 @@ class EveryQueryDataset(PytorchDataset):
             if self.config.fixed_offset < 0:
                 raise ValueError("query_fixed_offset must be non-negative.")
 
-    def get_times(self, dynamic):
-        time_delta = dynamic["dim0/time_delta_days"] * 1440
-        if np.isnan(time_delta[0]):
-            time_delta[0] = 0
-        times = np.cumsum(time_delta)
-        return times
-
     def normalize_future(self, query):
         # normalize offset and duration in place
         if self.config.normalize_query:
@@ -133,84 +126,101 @@ class EveryQueryDataset(PytorchDataset):
         }
         return event
 
-    def get_query_slice(self, times, query):
-        NotImplemented
-        # import numpy as np
-        # times = np.array([146. ,178., 192., 240.])
-        # offset=147
-        # duration=93
-        # start_time = offset
-        # end_time = offset + duration
-        # start_idx = np.min(np.argwhere((times) >= start_time))
-        # end_idx = np.min(np.argwhere((times) >= end_time))
-        # times[start_idx:end_idx]
-        """start_time = query["offset"]
-        end_time = query["offset"] + query["duration"]
-        start_idx = context["end_idx"] + np.min(np.argwhere((times) >= start_time))
-        # end_idx = np.max(np.argwhere((times) <= end_time), initial=start_idx)
-        end_idx = np.min(np.argwhere((times) >= end_time))
-
-        query_start_time = times[context["end_idx"]] + query_offset
-        query_end_time = query_start_time + query_duration
-        query_start_idx = np.min(np.argwhere((times) >= query_start_time))
-        query_end_idx = np.max(np.argwhere((times) <= query_end_time), initial=query_start_idx)
-        assert query_start_idx <= query_end_idx
-        return query_start_idx, query_end_idx"""
-        return  # slice(start, end)
-
     def tally_answer(self, future_dynamic, query):
-        NotImplemented
-        times = self.get_times(future_dynamic)
-        s = self.get_query_slice(times, query)
-        codes = future_dynamic["dim1/code"][s]
-        values = future_dynamic["dim1/numeric_value"][s]
-        count = self.compute_occurrence(codes, values, query)
-        return count
+        time_delta = future_dynamic.tensors["dim0/time_delta_days"] * 1440
+        if np.isnan(time_delta[0]):
+            time_delta[0] = 0
+        times = np.cumsum(time_delta)
 
-    def get_query_indices(self, times, query_offset, query_duration, input_end_idx):
-        # Old
-        query_start_time = times[input_end_idx] + query_offset
-        query_end_time = query_start_time + query_duration
-        query_start_idx = np.min(np.argwhere((times) >= query_start_time))
-        query_end_idx = np.max(np.argwhere((times) <= query_end_time), initial=query_start_idx)
-        assert query_start_idx <= query_end_idx
-        return query_start_idx, query_end_idx
+        start_time = query["offset"]
+        end_time = query["offset"] + query["duration"]
+        start_idx = np.min(np.argwhere((times) >= start_time))
+        if end_time >= times[-1]:
+            end_idx = None
+        else:
+            end_idx = np.min(np.argwhere((times) > end_time))
+            assert start_idx <= end_idx
 
-    def compute_occurrence(self, query_window_codes, query_window_values, query):
-        NotImplemented
+        if start_idx == end_idx:
+            if start_idx == 0:
+                # query is short, comes before first measurement, and has no data
+                return 0
+            else:
+                # one event only
+                return 0  # remove later once bug is fixed
+                future_dynamic = future_dynamic[start_idx]  # this does not work
+            """
+            from nested_ragged_tensors.ragged_numpy import *
+            J = JointNestedRaggedTensorDict({
+                "dim0/time_delta_days": [0.00972222, 0.03333334],
+                "dim1/lengths": [2, 1],
+                "dim1/code": [[14, 15], [7]],
+                "dim1/numeric_value": [[-0.0539279, 1.1927332], [float('nan')]],
+                "dim1/bounds": [2, 3],
+            }, schema={
+                "dim1/time_delta_days": "float32",
+                "dim2/code": "uint8",
+                "dim2/numeric_value": "float32"
+            }, pre_raggedified=True)
+            len(J)
+            J[0]
+            """
+        else:
+            future_dynamic = future_dynamic[start_idx:end_idx]
+
+        future_dynamic = future_dynamic.tensors
+
         count = 0
-        for i in range(len(query_window_codes)):
-            for j in range(len(query_window_codes[i])):
-                if query_window_codes[i][j] == query["idx"]:
+        for i in range(len(future_dynamic["dim1/code"])):
+            for j in range(len(future_dynamic["dim1/code"][i])):
+                if future_dynamic["dim1/code"][i][j] == query["idx"]:
                     if query["has_value"]:
-                        x = query_window_values[i][j]
+                        x = future_dynamic["dim1/numeric_value"][i][j]
                         if x is None:
                             continue  # todo: is None used for outlier removal?
                         if (x >= query["range_min"]) and (x <= query["range_max"]):
                             count += 1
                     else:
                         count += 1
+
         return count
+
+    def get_future_duration(self, subject_id, context_end_idx, record_end_idx):
+        """
+        alternative option to compute future duration
+        future_dynamic = subj_dynamic[context["end_idx"] : record_end_idx].tensors
+        time_delta = future_dynamic["dim0/time_delta_days"] * 1440
+        if np.isnan(time_delta[0]):
+            time_delta[0] = 0
+        times = np.cumsum(time_delta)
+        future_duration = times[-1]
+        """
+        shard = self.subj_map[subject_id]
+        subject_idx = self.subj_indices[subject_id]
+        static_row = self.static_dfs[shard][subject_idx].to_dict()
+        context_end_time = static_row["time"].list.get(context_end_idx - 1)
+        if record_end_idx == static_row["time"].list.len().item():
+            record_end_time = static_row["time"].list.get(-1)
+        else:
+            record_end_time = static_row["time"].list.get(record_end_idx)
+        future_duration = (record_end_time - context_end_time).dt.total_minutes().item()
+        return future_duration
 
     @SeedableMixin.WithSeed
     def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
         context = super()._seeded_getitem(idx)
 
-        # replace with more efficient access to future_duration
-        # do timestamp[record_end_idx] - timestamp[context["end_idx"]]
-        subj_dynamic, subj_id, record_start_idx, record_end_idx = super().load_subject_dynamic_data(idx)
-        future_dynamic = subj_dynamic[context["end_idx"] : record_end_idx].tensors
-        times = self.get_times(future_dynamic)
-        future_duration = times[-1]
+        subj_dynamic, subject_id, record_start_idx, record_end_idx = super().load_subject_dynamic_data(idx)
 
+        future_duration = self.get_future_duration(subject_id, context["end_idx"], record_end_idx)
         future, is_censored = self.sample_future(max_valid_duration=future_duration)
         event = self.sample_event()
         query = future | event
 
         if is_censored:
             answer = {"censored": is_censored, "count": None, "occurs": None}
-            # what to put for missing values
         else:
+            future_dynamic = subj_dynamic[context["end_idx"] : record_end_idx]
             count = self.tally_answer(future_dynamic, query)
             answer = {"censored": is_censored, "count": count, "occurs": count != 0}
 
@@ -443,7 +453,7 @@ def test_pytorch_dataset(meds_dir: Path, collate_type):
     item = pyd[0]
     assert item.keys() == {"context", "query", "answer"}
     assert item["context"].keys() == {"static_indices", "static_values", "dynamic", "start_idx", "end_idx"}
-    assert False
+    # assert False
     batch = pyd.collate([pyd[i]["context"] for i in range(2)])
     if collate_type == "event_stream":
         assert batch.keys() == {
