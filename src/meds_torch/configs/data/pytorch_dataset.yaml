@@ -56,3 +56,5 @@ duration_sampling_strategy: 'within_record' # ('within_record','random','fixed')
 offset_sampling_strategy: 'within_record' # ('within_record','random','fixed')
 fixed_duration: 10
 fixed_offset: 0
+codes: []
+code_sampling_strategy: 'uniform' # uniform, frequency

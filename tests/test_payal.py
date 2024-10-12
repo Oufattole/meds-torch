@@ -5,6 +5,7 @@ root = rootutils.setup_root(__file__, dotenv=True, pythonpath=True, cwd=True)
 from pathlib import Path
 
 import numpy as np
+import polars as pl
 import pytest
 from mixins import SeedableMixin
 
@@ -17,7 +18,10 @@ class EveryQueryDataset(PytorchDataset):
         cfg.max_seq_len = 5
         cfg.do_include_subsequence_indices = True
         super().__init__(cfg, split)
+        self.set_codes(names=self.config.codes)
 
+        if self.config.code_sampling_strategy not in ("uniform", "frequency"):
+            raise ValueError("code_sampling_strategy must be one of 'uniform', 'frequency'.")
         if self.config.min_offset < 0:
             raise ValueError("min_query_offset must be non-negative.")
         if self.config.min_duration < 0:
@@ -43,8 +47,53 @@ class EveryQueryDataset(PytorchDataset):
             if self.config.fixed_offset < 0:
                 raise ValueError("query_fixed_offset must be non-negative.")
 
-    def normalize_future(self, query):
-        # normalize offset and duration in place
+    @property
+    def _all_codes_metadata(self):
+        # assuming unique codes
+        # is there an UNK code?
+        return pl.read_parquet(self.config.code_metadata_fp).with_columns(
+            pl.col("code/vocab_index").alias("code_index"),
+            pl.col("code").alias("code_name"),
+            (pl.col("values/n_occurrences") > 0).alias("code_has_value"),
+            (pl.col("code/n_occurrences") / pl.col("code/n_occurrences").sum()).alias("code_frequency"),
+        )
+
+    def set_codes(self, names: list = None):
+        if names is None or not names:
+            self.codes = self._all_codes_metadata
+        else:
+            names = {x.lower() for x in names}
+            self.codes = (
+                self._all_codes_metadata.filter(pl.col("code_name").str.to_lowercase().is_in(names))
+                .drop("code_frequency")
+                .with_columns(
+                    (pl.col("code/n_occurrences") / pl.col("code/n_occurrences").sum()).alias(
+                        "code_frequency"
+                    )
+                )
+            )
+        return
+
+    def sample_event(self):
+        match self.config.code_sampling_strategy:
+            case "uniform":
+                options = self.codes
+            case "frequency":
+                num_buckets = int(self.codes["code_frequency"].log(base=10).floor().to_numpy().min())
+                bucket = np.random.choice([*range(num_buckets, 0)])
+                lower, upper = np.logspace(bucket, bucket + 1, 2)
+                options = self.codes.filter(
+                    pl.col("code_frequency").is_between(lower_bound=lower, upper_bound=upper)
+                )
+
+        event = options.sample().to_dicts()[0]
+        event["range_min"], event["range_max"] = 0.0, 0.0
+
+        # are values already normalized?
+
+        return event
+
+    def normalize(self, query):
         if self.config.normalize_query:
             query["duration"] = (query["duration"] - self.config.min_duration) / (
                 self.config.max_duration - self.config.min_duration
@@ -52,6 +101,8 @@ class EveryQueryDataset(PytorchDataset):
             query["offset"] = (query["offset"] - self.config.min_offset) / (
                 self.config.max_offset - self.config.min_offset
             )
+            # (todo) code_range_min
+            # (todo) code_range_max
         return query
 
     def sample_future(self, max_valid_duration):
@@ -110,21 +161,6 @@ class EveryQueryDataset(PytorchDataset):
         if offset < 0:
             raise ValueError(f"offset must be non-negative, but got {offset}")
         return offset
-
-    def sample_event(self):
-        NotImplemented
-        # query_code = self.config.sample_code()
-        # fixed codes, valid subset of codes to sample: HydraConfig list
-        # metadata/codes.parquet read from disk
-        # look in triplet
-        event = {
-            "idx": 2,
-            "has_value": True,
-            "range_min": 0.4,
-            "range_max": 0.7,
-            # can also include code name and code type
-        }
-        return event
 
     def tally_answer(self, future_dynamic, query):
         time_delta = future_dynamic.tensors["dim0/time_delta_days"] * 1440
@@ -224,7 +260,7 @@ class EveryQueryDataset(PytorchDataset):
             count = self.tally_answer(future_dynamic, query)
             answer = {"censored": is_censored, "count": count, "occurs": count != 0}
 
-        query = self.normalize_future(query)
+        query = self.normalize(query)
 
         item = {"context": context, "query": query, "answer": answer}
 
@@ -453,7 +489,7 @@ def test_pytorch_dataset(meds_dir: Path, collate_type):
     item = pyd[0]
     assert item.keys() == {"context", "query", "answer"}
     assert item["context"].keys() == {"static_indices", "static_values", "dynamic", "start_idx", "end_idx"}
-    # assert False
+    assert False
     batch = pyd.collate([pyd[i]["context"] for i in range(2)])
     if collate_type == "event_stream":
         assert batch.keys() == {
