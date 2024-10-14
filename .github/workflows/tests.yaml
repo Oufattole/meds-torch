@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, "release/*", "dev"]
+    branches: [main, "release/*", "dev", '\d+_.*']
 
 jobs:
   run_tests_ubuntu:
