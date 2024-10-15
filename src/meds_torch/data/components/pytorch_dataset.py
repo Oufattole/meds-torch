@@ -797,9 +797,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         subject_id, st, end = self.index[idx]
         shard = self.subj_map[subject_id]
         subject_idx = self.subj_indices[subject_id]
-        subject_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-            Path(self.config.data_dir) / "data" / f"{shard}.nrt", subject_idx
-        )
+
+        dynamic_data_fp = Path(self.config.data_dir) / "data" / f"{shard}.nrt"
+
+        subject_dynamic_data = JointNestedRaggedTensorDict(tensors_fp=dynamic_data_fp)[subject_idx]
+
         return subject_dynamic_data, subject_id, st, end
 
     @SeedableMixin.WithSeed
