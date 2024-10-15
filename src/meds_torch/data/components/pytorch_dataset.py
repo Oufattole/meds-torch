@@ -1,4 +1,3 @@
-import os
 from collections import defaultdict
 from datetime import datetime
 from enum import StrEnum
@@ -25,38 +24,6 @@ class CollateType(StrEnum):
     triplet = "triplet"
     triplet_prompt = "triplet_prompt"
     eic = "eic"
-
-
-def generate_subject_split_dict(meds_dir):
-    """Generate a dictionary mapping split names to lists of subject IDs.
-
-    This function scans through the directory structure of a MEDS dataset, reading Parquet files to extract
-    unique subject IDs for each split.
-
-    Args:     meds_dir (str): Path to the root directory of the MEDS dataset.
-
-    Returns:     dict: A dictionary where keys are split names (e.g., 'train/shard0')           and values are
-    lists of subject IDs belonging to that split.
-
-    Raises:     FileNotFoundError: If the specified directory does not exist.
-
-    Notes:     - The function expects a directory structure where split directories       contain Parquet
-    files with subject data.     - It logs a warning if a specified path is not a directory.
-    """
-    subject_split_dict = {}
-
-    for split_dir in os.listdir(meds_dir):
-        split_path = Path(meds_dir) / split_dir
-        if split_path.is_dir():
-            for shard_file in split_path.glob("*.parquet"):
-                split_name = f"{split_dir}/{shard_file.stem}"
-                df = pl.read_parquet(shard_file)
-                subject_ids = df["subject_id"].unique().to_list()
-                subject_split_dict[split_name] = subject_ids
-        else:
-            logger.warning(f"Directory {split_path} does not exist or is not a directory.")
-
-    return subject_split_dict
 
 
 def subpad_vectors(a: np.ndarray, b: np.ndarray):
@@ -277,25 +244,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         logger.info("Scanning code metadata")
         self.code_metadata = pl.scan_parquet(self.config.code_metadata_fp)
 
-        logger.info("Reading splits & subject shards")
-        self.read_shards()
-
-        logger.info("Reading subject descriptors")
+        logger.info("Reading subject schema and static data")
         self.read_subject_descriptors()
-
-    def read_shards(self):
-        """Reads the split-specific subject shards from the MEDS dataset.
-
-        This method scans the specified MEDS cohort directory for Parquet files, organizes them by split, and
-        creates mappings between subjects and their respective shards.
-        """
-        all_shards = generate_subject_split_dict(Path(self.config.meds_cohort_dir) / "data")
-        self.shards = {sp: subjs for sp, subjs in all_shards.items() if sp.startswith(f"{self.split}")}
-        self.subj_map = {subj: sp for sp, subjs in self.shards.items() for subj in subjs}
-        if not self.shards:
-            logger.warning(
-                f"No shards found for split {self.split}. Check the directory structure and file names."
-            )
 
     def read_subject_descriptors(self):
         """Read subject schemas and static data from the dataset.
@@ -315,15 +265,22 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         Raises:     ValueError: If duplicate subjects are found across shards or if                 required
         task information is missing.     FileNotFoundError: If specified task files are not found.
         """
+
+        schema_root = Path(self.config.schema_files_root)
+
         self.static_dfs = {}
         self.subj_indices = {}
         self.subj_seq_bounds = {}
 
-        for shard in self.shards.keys():
-            static_fp = Path(self.config.schema_files_root) / f"{shard}.parquet"
+        schema_files = list(schema_root.glob("**.parquet"))
+        if not schema_files:
+            raise FileNotFoundError(f"No schema files found in {schema_root}!")
+
+        for schema_fp in schema_files:
+            shard = str(schema_fp.relative_to(schema_root).with_suffix(""))
             df = (
                 pl.read_parquet(
-                    static_fp,
+                    schema_fp,
                     columns=[
                         "subject_id",
                         "start_time",
@@ -342,6 +299,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
             self.static_dfs[shard] = df
             subject_ids = df["subject_id"]
+            self.subj_map.update({subj: shard for subj in subject_ids})
+
             n_events = df.select(pl.col("time").list.len().alias("n_events")).get_column("n_events")
             for i, (subj, n_events_count) in enumerate(zip(subject_ids, n_events)):
                 if subj in self.subj_indices or subj in self.subj_seq_bounds:
