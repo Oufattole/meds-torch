@@ -271,6 +271,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         self.static_dfs = {}
         self.subj_indices = {}
         self.subj_seq_bounds = {}
+        self.subj_map = {}
 
         schema_files = list(schema_root.glob("**/*.parquet")) + list(schema_root.glob("*.parquet"))
         if not schema_files:
