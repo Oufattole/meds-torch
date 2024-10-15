@@ -174,6 +174,7 @@ def generate_test_multimodal_triplet_tokenize(tmp_path):
         "stage_configs": {
             "aggregate_code_metadata": {"aggregations": AGGREGATIONS, "do_summarize_over_all_codes": True}
         },
+        # preprocessing steps applied to the MEDS table
         "stages": [
             "aggregate_code_metadata",
             "filter_subjects",
@@ -181,8 +182,8 @@ def generate_test_multimodal_triplet_tokenize(tmp_path):
             "filter_measurements",
             "occlude_outliers",
             "fit_vocabulary_indices",
-            "normalization",
-            "tokenization",
+            "custom_text_normalization",
+            "custom_text_tokenization",
             "custom_text_tensorization",
         ],
     }
@@ -229,10 +230,10 @@ def generate_test_multimodal_triplet_tokenize(tmp_path):
     stderr, stdout = run_command("MEDS_transform-fit_vocabulary_indices", args, {}, "fit_vocabulary_indices")
 
     logger.info("Normalizing data (converting codes to use integer encodings)...")
-    stderr, stdout = run_command("MEDS_transform-normalization", args, {}, "normalize")
+    stderr, stdout = run_command("python -m meds_torch.utils.custom_text_normalization", args, {}, "normalize")
 
     logger.info("Converting to tokenization...")
-    stderr, stdout = run_command("MEDS_transform-tokenization", args, {}, "tokenize")
+    stderr, stdout = run_command("python -m meds_torch.utils.custom_text_tokenization", args, {}, "tokenize")
 
     logger.info("Converting to tensor...")
     stderr, stdout = run_command("python -m meds_torch.utils.custom_text_tensorization", args, {}, "text tensorize")
