@@ -153,24 +153,28 @@ def filter_measurements_fntr(
 
     min_subjects_per_code = stage_cfg.get("min_subjects_per_code", None)
     min_occurrences_per_code = stage_cfg.get("min_occurrences_per_code", None)
-    allowed_codes = stage_cfg.get("allowed_codes", None)
+    additional_codes = stage_cfg.get("additional_codes", None)
 
     filter_exprs = []
     if min_subjects_per_code is not None:
         filter_exprs.append(pl.col("code/n_subjects") >= min_subjects_per_code)
     if min_occurrences_per_code is not None:
         filter_exprs.append(pl.col("code/n_occurrences") >= min_occurrences_per_code)
-    if allowed_codes is not None:
-        filter_exprs.append(pl.col("code").str.contains("|".join(allowed_codes)))
 
-    if not filter_exprs:
-        return lambda df: df
+    if additional_codes is not None:
+        filter_expr = pl.any_horizontal(
+            [pl.all_horizontal(filter_exprs), pl.col("code").str.contains("|".join(additional_codes))]
+        )
+    else:
+        if not filter_exprs:
+            return lambda df: df
+        filter_expr = pl.all_horizontal(filter_exprs)
 
     join_cols = ["code"]
     if code_modifiers:
         join_cols.extend(code_modifiers)
 
-    allowed_code_metadata = (code_metadata.filter(pl.all_horizontal(filter_exprs)).select(join_cols)).lazy()
+    allowed_code_metadata = (code_metadata.filter(filter_expr).select(join_cols)).lazy()
 
     def filter_measurements_fn(df: pl.LazyFrame) -> pl.LazyFrame:
         f"""Filters subject events to only encompass those with a set of permissible codes.

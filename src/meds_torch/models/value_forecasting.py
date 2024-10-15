@@ -59,7 +59,7 @@ class ValueForecastingModule(BaseModule):
 
             # create value target
             numeric_value_mask = forecast_window_data["numeric_value_mask"]
-            numeric_value_codes = codes * numeric_value_mask
+            numeric_value_codes = codes.to(torch.int64) * numeric_value_mask
             value_target = torch.zeros(
                 (numeric_value_codes.shape[0], vocab_size), dtype=torch.float32, device=codes.device
             )
