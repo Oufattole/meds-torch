@@ -239,16 +239,12 @@ def extract_info_from_path(file_path):
     match file_path:
         case _ if "eic_mtr" in file_path:
             tokenization_strategy = "eic"
-        case _ if "text_code_mtr" in file_path:
-            tokenization_strategy = "text_code"
         case _ if "triplet_mtr" in file_path:
             tokenization_strategy = "triplet"
         case _ if "triplet_forecast_mtr" in file_path:
             tokenization_strategy = "triplet"
         case _ if "eic_forecast_mtr" in file_path:
             tokenization_strategy = "eic"
-        case _ if "text_code_forecast_mtr" in file_path:
-            tokenization_strategy = "text_code"
         case _:
             tokenization_strategy = "unknown"
 
