@@ -800,7 +800,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         dynamic_data_fp = Path(self.config.data_dir) / "data" / f"{shard}.nrt"
 
-        subject_dynamic_data = JointNestedRaggedTensorDict(tensors_fp=dynamic_data_fp)[subject_idx]
+        subject_dynamic_data = JointNestedRaggedTensorDict(tensors_fp=dynamic_data_fp)[subject_idx, st:end]
 
         return subject_dynamic_data, subject_id, st, end
 
@@ -840,26 +840,15 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             "static_values": static_row["static_values"].item().to_list(),
         }
 
-        # TODO: remove this and handle flattening in the NRT class
+        global_st = st
+        global_end = end
+        st = 0
+
         if self.config.collate_type == CollateType.event_stream:
-            seq_len = end - st
-        if self.config.collate_type != CollateType.event_stream:
-            event_seq_len = end - st
-            tensors = subject_dynamic_data.tensors
-            seq_len = sum([array.size for array in tensors["dim1/code"][st:end]])
-            if not seq_len >= event_seq_len:
-                raise ValueError(
-                    f"Measurement sequence length {seq_len} is less than event sequence length"
-                    f" {event_seq_len}!"
-                )
-            tensors["dim1/numeric_value"] = np.concatenate(tensors["dim1/numeric_value"][st:end], axis=0)
-            tensors["dim1/code"] = np.concatenate(tensors["dim1/code"][st:end], axis=0)
-            seq_len = tensors["dim1/code"].shape[0]
-            tensors["dim0/time_delta_days"] = subpad_vectors(
-                tensors["dim0/time_delta_days"][st:end], tensors["dim1/bounds"][st:end]
-            )
-            st = 0
-            end = st + seq_len
+            seq_len = global_end - global_st
+        else:
+            subject_dynamic_data = subject_dynamic_data.flatten()
+            seq_len = len(subject_dynamic_data)
 
         if seq_len > self.config.max_seq_len:
             match self.config.subsequence_sampling_strategy:
@@ -875,22 +864,24 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                     )
 
             st += start_offset
-            end = min(end, st + self.config.max_seq_len)
+            end = min(seq_len, st + self.config.max_seq_len)
+
+            subject_dynamic_data = subject_dynamic_data[st:end]
+            global_st += st
+            global_end += end
 
         if self.config.do_include_subsequence_indices:
-            out["start_idx"] = st
-            out["end_idx"] = end
+            out["start_idx"] = global_st
+            out["end_idx"] = global_end
 
         if self.config.collate_type == CollateType.event_stream:
-            out["dynamic"] = subject_dynamic_data[st:end]
+            out["dynamic"] = subject_dynamic_data
         else:
-            tensors["dim1/code"] = tensors["dim1/code"][st:end]
-            tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
-            tensors["dim0/time_delta_days"] = tensors["dim0/time_delta_days"][st:end]
+            tensors = subject_dynamic_data.to_dense()
             out["dynamic"] = tensors
 
         if self.config.do_include_start_time_min:
-            out["start_time"] = static_row["time"].item().to_list()[st]
+            out["start_time"] = static_row["time"].item().to_list()[global_st]
 
         if end - st > self.config.max_seq_len:
             raise ValueError(f"Sequence length {end - st} exceeds max_seq_len {self.config.max_seq_len}!")
@@ -904,19 +895,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         if self.config.postpend_eos_token:
             if self.config.collate_type == CollateType.event_stream:
-                # Append EOS token to the end of the sequence
-                eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["dim1/code"].dtype)
-                out["dynamic"]["dim1/code"] = np.append(out["dynamic"]["dim1/code"], eos_token)
-
-                # Extend other relevant arrays
-                numeric_dtype = out["dynamic"]["dim1/numeric_value"].dtype
-                time_dtype = out["dynamic"]["dim0/time_delta_days"].dtype
-                out["dynamic"]["dim1/numeric_value"] = np.append(
-                    out["dynamic"]["dim1/numeric_value"], np.array([0], dtype=numeric_dtype)
-                )
-                out["dynamic"]["dim0/time_delta_days"] = np.append(
-                    out["dynamic"]["dim0/time_delta_days"], np.array([0], dtype=time_dtype)
-                )
+                raise NotImplementedError("This was wrong before, but should be tested and fixed.")
 
             else:
                 # For other collate types
@@ -931,10 +910,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                 out["dynamic"]["dim0/time_delta_days"] = np.append(
                     out["dynamic"]["dim0/time_delta_days"], np.array([0], dtype=time_dtype)
                 )
-
-        # Update end_idx if it's included
-        if self.config.do_include_subsequence_indices:
-            out["end_idx"] = end
 
         if self.config.collate_type != CollateType.event_stream and not (
             len(out["dynamic"]["dim1/code"])
