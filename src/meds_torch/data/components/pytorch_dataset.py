@@ -85,71 +85,6 @@ def subpad_vectors(a: np.ndarray, b: np.ndarray):
     return result
 
 
-def count_or_proportion(N: int | pl.Expr | None, cnt_or_prop: int | float) -> int:
-    """Returns `cnt_or_prop` if it is an integer or `int(N*cnt_or_prop)` if it is a float.
-
-    Resolves cutoff variables that can either be passed as integer counts or fractions of a whole. E.g., the
-    vocabulary should contain only elements that occur with count or proportion at least X, where X might be
-    20 times, or 1%.
-
-    Arguments:
-        N: The total number of elements in the whole. Only used if `cnt_or_prop` is a proportion (float).
-        cnt_or_prop: The cutoff value, either as an integer count or a proportion of the whole.
-
-    Returns:
-        The cutoff value as an integer count of the whole.
-
-    Raises:
-        TypeError: If `cnt_or_prop` is not an integer or a float or if `N` is needed and is not an integer or
-            a polars Expression.
-        ValueError: If `cnt_or_prop` is not a positive integer or a float between 0 and 1.
-
-    Examples:
-        >>> count_or_proportion(100, 0.1)
-        10
-        >>> count_or_proportion(None, 11)
-        11
-        >>> count_or_proportion(100, 0.116)
-        12
-        >>> count_or_proportion(None, 0)
-        Traceback (most recent call last):
-            ...
-        ValueError: 0 must be positive if it is an integer
-        >>> count_or_proportion(None, 1.3)
-        Traceback (most recent call last):
-            ...
-        ValueError: 1.3 must be between 0 and 1 if it is a float
-        >>> count_or_proportion(None, "a")
-        Traceback (most recent call last):
-            ...
-        TypeError: a must be a positive integer or a float between 0 or 1
-        >>> count_or_proportion("a", 0.2)
-        Traceback (most recent call last):
-            ...
-        TypeError: a must be an integer or a polars.Expr when cnt_or_prop is a float!
-    """
-
-    match cnt_or_prop:
-        case int() if 0 < cnt_or_prop:
-            return cnt_or_prop
-        case int():
-            raise ValueError(f"{cnt_or_prop} must be positive if it is an integer")
-        case float() if 0 < cnt_or_prop < 1:
-            pass
-        case float():
-            raise ValueError(f"{cnt_or_prop} must be between 0 and 1 if it is a float")
-        case _:
-            raise TypeError(f"{cnt_or_prop} must be a positive integer or a float between 0 or 1")
-
-    match N:
-        case int():
-            return int(round(cnt_or_prop * N))
-        case pl.Expr():
-            return (N * cnt_or_prop).round(0).cast(int)
-        case _:
-            raise TypeError(f"{N} must be an integer or a polars.Expr when cnt_or_prop is a float!")
-
-
 class SubsequenceSamplingStrategy(StrEnum):
     """An enumeration of the possible subsequence sampling strategies for the dataset.
 
@@ -348,10 +283,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         logger.info("Reading subject descriptors")
         self.read_subject_descriptors()
 
-        if self.config.train_subset_size not in (None, "FULL") and self.split == "train":
-            logger.info(f"Filtering training subset size to {self.config.train_subset_size}")
-            self.filter_to_subset()
-
     def read_shards(self):
         """Reads the split-specific subject shards from the MEDS dataset.
 
@@ -465,45 +396,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             self.index = [(subj, *bounds) for subj, bounds in self.subj_seq_bounds.items()]
             self.labels = {}
             self.tasks = None
-
-    def filter_to_subset(self):
-        """Filter the dataset to include only a subset of subjects for the training split.
-
-        This method randomly selects a subset of subjects based on the self.config.train_subset_size
-        parameter. It's typically used to create smaller training sets for experimentation or debugging
-        purposes.
-
-        The method only applies to the training split ('train') and uses a random number generator seeded with
-        self.config.train_subset_seed for reproducibility.
-
-        Notes:     - This method modifies the self.index and self.labels attributes in-place.     - It logs
-        information about the number of data points and subjects before       and after filtering.     - The
-        subset size can be specified as an integer (exact number of subjects)       or a float (proportion of
-        total subjects).
-
-        Raises:     ValueError: If self.config.train_subset_size is not properly set.
-
-        Side effects:     - Reduces the size of self.index and self.labels for the training split.     - Logs
-        information about the subset selection process.
-        """
-
-        orig_len = len(self)
-        orig_n_subjects = len(set(self.subject_ids))
-        rng = np.random.default_rng(self.config.train_subset_seed)
-        subset_subjects = rng.choice(
-            list(set(self.subject_ids)),
-            size=count_or_proportion(orig_n_subjects, self.config.train_subset_size),
-            replace=False,
-        )
-        valid_indices = [i for i, (subj, start, end) in enumerate(self.index) if subj in subset_subjects]
-        self.index = [self.index[i] for i in valid_indices]
-        self.labels = {t: [t_labels[i] for i in valid_indices] for t, t_labels in self.labels.items()}
-        new_len = len(self)
-        new_n_subjects = len(set(self.subject_ids))
-        logger.info(
-            f"Filtered data to subset of {self.config.train_subset_size} subjects from "
-            f"{orig_len} to {new_len} rows and {orig_n_subjects} to {new_n_subjects} subjects."
-        )
 
     @property
     def subject_ids(self) -> list[int]:
