@@ -1,4 +1,3 @@
-import json
 import os
 from collections import defaultdict
 from datetime import datetime
@@ -171,42 +170,6 @@ class SeqPaddingSide(StrEnum):
     RIGHT = "right"
 
 
-def to_int_index(col: pl.Expr) -> pl.Expr:
-    """Returns an integer index of the unique elements seen in this column.
-
-    The returned index is into a vocabulary sorted lexographically.
-
-    Args:
-        col: The column containing the data to be converted into integer indices.
-
-    Examples:
-        >>> import polars as pl
-        >>> X = pl.DataFrame({
-        ...     'c': ['foo', 'bar', 'foo', 'bar', 'baz', None, 'bar', 'aba'],
-        ...     'd': [1, 2, 3, 4, 5, 6, 7, 8]
-        ... })
-        >>> X.with_columns(to_int_index(pl.col('c')).alias("c_index"))
-        shape: (8, 3)
-        ┌──────┬─────┬─────────┐
-        │ c    ┆ d   ┆ c_index │
-        │ ---  ┆ --- ┆ ---     │
-        │ str  ┆ i64 ┆ u32     │
-        ╞══════╪═════╪═════════╡
-        │ foo  ┆ 1   ┆ 3       │
-        │ bar  ┆ 2   ┆ 1       │
-        │ foo  ┆ 3   ┆ 3       │
-        │ bar  ┆ 4   ┆ 1       │
-        │ baz  ┆ 5   ┆ 2       │
-        │ null ┆ 6   ┆ null    │
-        │ bar  ┆ 7   ┆ 1       │
-        │ aba  ┆ 8   ┆ 0       │
-        └──────┴─────┴─────────┘
-    """
-
-    indices = col.drop_nulls().unique().sort().search_sorted(col, side="left")
-    return pl.when(col.is_null()).then(pl.lit(None)).otherwise(indices).alias(col.meta.output_name())
-
-
 def merge_task_with_static(task_df: pl.DataFrame, static_dfs: dict[str, pl.DataFrame], tasks: list[str]):
     """Merges a DataFrame containing task information with multiple static DataFrames on the 'subject_id'
     column. The function performs a sequence of operations to merge these dataframes based on subject
@@ -363,50 +326,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
     DataFrames for each data shard.     subj_indices (dict): Mapping of subject IDs to their indices in the
     dataset.     subj_seq_bounds (dict): Sequence bounds (start, end) for each subject.     index (list): List
     of (subject_id, start, end) tuples for data access.     labels (dict): Task-specific labels for each data
-    point.     tasks (list): List of task names.     task_types (dict): Mapping of task names to their types
-    (classification, regression, etc.).     task_vocabs (dict): Vocabularies for classification tasks.
+    point.     tasks (list): List of task names.
 
     Methods:     __len__(): Returns the number of items in the dataset.     __getitem__(idx): Retrieves a
     single data point.     collate(batch): Collates a batch of data points based on the specified collation
     strategy.
     """
-
-    TYPE_CHECKERS = {
-        "multi_class_classification": [
-            (
-                {pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64, pl.Int8, pl.Int16, pl.Int32, pl.Int64},
-                None,
-            ),
-            ({pl.Categorical(ordering="physical"), pl.Categorical(ordering="lexical")}, to_int_index),
-            ({pl.Utf8}, to_int_index),
-        ],
-        "binary_classification": [({pl.Boolean}, lambda Y: Y.cast(pl.Float32))],
-        "regression": [({pl.Float32, pl.Float64}, None)],
-    }
-    """Type checker and conversion parameters for labeled datasets."""
-
-    @classmethod
-    def normalize_task(cls, col: pl.Expr, dtype: pl.DataType) -> tuple[str, pl.Expr]:
-        """Normalize task labels to a common format based on their data type.
-
-        This method determines the appropriate task type (e.g., multi-class classification, binary
-        classification, regression) based on the data type of the label column and applies any necessary
-        transformations to normalize the data.
-
-        Args:     col (pl.Expr): The polars Expression containing the task labels.     dtype (pl.DataType):
-        The polars data type of the task labels.
-
-        Returns:     tuple: A tuple containing two elements:         - str: The determined task type (e.g.,
-        'multi_class_classification', 'binary_classification', 'regression').         - pl.Expr: The
-        normalized column expression.
-
-        Raises:     TypeError: If the task labels are not of a supported type.
-        """
-        for task_type, checkers in cls.TYPE_CHECKERS.items():
-            for valid_dtypes, normalize_fn in checkers:
-                if dtype in valid_dtypes:
-                    return task_type, (col if normalize_fn is None else normalize_fn(col))
-        raise TypeError(f"Can't process label of {dtype} type!")
 
     def __init__(self, cfg: DictConfig, split: str):
         super().__init__()
@@ -451,8 +376,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         DataFrames for each shard. - self.subj_indices: Mapping of subject IDs to their indices. -
         self.subj_seq_bounds: Dictionary of sequence bounds for each subject. - self.index: List of
         (subject_id, start, end) tuples for data access. - self.labels: Dictionary of task labels (if tasks
-        are specified). - self.tasks: List of task names. - self.task_types: Dictionary of task types. -
-        self.task_vocabs: Dictionary of task vocabularies.
+        are specified). - self.tasks: List of task names.
 
         If tasks are specified in the configuration, this method also processes the task labels and integrates
         them with the static data.
@@ -504,8 +428,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                 task_df_fp = task_df_fp.with_suffix("") / "**/*.parquet"
                 logger.info(f"Searching for task parquets over the glob {task_df_fp}")
 
-            task_info_fp = Path(self.config.task_info_path)
-
             logger.info(f"Reading task constraints for {self.config.task_name} from {task_df_fp}")
             task_df = pl.read_parquet(task_df_fp)
             if "prediction_time" in task_df.columns:
@@ -523,20 +445,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                 self.tasks = sorted(
                     [c for c in task_df.columns if c not in ["subject_id", "start_time", "end_time"]]
                 )
-
-            task_info = self.get_task_info(task_df)
-
-            if task_info_fp.is_file():
-                loaded_task_info = json.loads(task_info_fp.read_text())
-                if loaded_task_info != task_info:
-                    raise ValueError(
-                        f"Task info differs from on disk!\nDisk:\n{loaded_task_info}\n"
-                        f"Local:\n{task_info}\nSplit: {self.split}"
-                    )
-                logger.info(f"Re-built existing {task_info_fp} and it matches.")
-            else:
-                task_info_fp.parent.mkdir(exist_ok=True, parents=True)
-                task_info_fp.write_text(json.dumps(task_info))
 
             idx_col = "_row_index"
             while idx_col in task_df.columns:
@@ -557,45 +465,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             self.index = [(subj, *bounds) for subj, bounds in self.subj_seq_bounds.items()]
             self.labels = {}
             self.tasks = None
-            self.task_types = None
-            self.task_vocabs = None
-
-    def get_task_info(self, task_df: pl.DataFrame):
-        """Extract and process task information from the task DataFrame.
-
-        This method analyzes the task DataFrame to determine the type of each task (e.g., binary
-        classification, multi-class classification) and creates appropriate vocabularies for classification
-        tasks.
-
-        Args:     task_df (pl.DataFrame): DataFrame containing task labels and related information.
-
-        Returns:     dict: A dictionary containing processed task information:         - 'tasks': List of task
-        names.         - 'vocabs': Dictionary mapping task names to their vocabularies.         - 'types':
-        Dictionary mapping task names to their types.
-
-        Raises:     NotImplementedError: If an unsupported task type is encountered.
-        """
-        self.task_types = {}
-        self.task_vocabs = {}
-
-        normalized_cols = []
-        for t in self.tasks:
-            task_type, normalized_vals = self.normalize_task(col=pl.col(t), dtype=task_df.schema[t])
-            self.task_types[t] = task_type
-            normalized_cols.append(normalized_vals.alias(t))
-
-        task_df = task_df.with_columns(normalized_cols)
-
-        for t in self.tasks:
-            match self.task_types[t]:
-                case "binary_classification":
-                    self.task_vocabs[t] = [False, True]
-                case "multi_class_classification":
-                    self.task_vocabs[t] = list(range(task_df.select(pl.col(t).max()).item() + 1))
-                case _:
-                    raise NotImplementedError(f"Task type {self.task_types[t]} not implemented!")
-
-        return {"tasks": sorted(self.tasks), "vocabs": self.task_vocabs, "types": self.task_types}
 
     def filter_to_subset(self):
         """Filter the dataset to include only a subset of subjects for the training split.
@@ -897,15 +766,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         out_labels = {}
         for task in self.tasks:
-            match self.task_types[task]:
-                case "multi_class_classification":
-                    out_labels[task] = collated[task].long()
-                case "binary_classification":
-                    out_labels[task] = collated[task].float()
-                case "regression":
-                    out_labels[task] = collated[task].float()
-                case _:
-                    raise TypeError(f"Don't know how to tensorify task of type {self.task_types[task]}!")
+            out_labels[task] = collated[task].float()
 
         # add task labels
         for k in batch[0].keys():
