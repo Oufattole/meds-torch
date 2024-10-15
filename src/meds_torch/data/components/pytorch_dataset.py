@@ -273,12 +273,17 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         self.subj_seq_bounds = {}
         self.subj_map = {}
 
-        schema_files = list(schema_root.glob("**/*.parquet")) + list(schema_root.glob("*.parquet"))
+        schema_files = list(schema_root.glob(f"{self.split}/*.parquet"))
         if not schema_files:
-            raise FileNotFoundError(f"No schema files found in {schema_root}!")
+            raise FileNotFoundError(
+                f"No schema files found in {schema_root}! If your data is not sharded by split, this error "
+                "may occur because this codebase does not handle non-split sharded data. See Issue #79 for "
+                "tracking this issue."
+            )
 
         for schema_fp in schema_files:
             shard = str(schema_fp.relative_to(schema_root).with_suffix(""))
+
             df = (
                 pl.read_parquet(
                     schema_fp,
