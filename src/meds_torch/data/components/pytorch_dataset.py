@@ -884,7 +884,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         return out
 
-    @SeedableMixin.WithSeed
     @TimeableMixin.TimeAs
     def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
         """Returns a Returns a dictionary corresponding to a single subject's data.
@@ -904,7 +903,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         if "dynamic" not in out:
             raise ValueError(f"Failed to load dynamic data for subject {subject_id} at idx {idx}!")
-        return out
         return out
 
     @TimeableMixin.TimeAs
