@@ -423,10 +423,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         logger.info("Reading subject descriptors")
         self.read_subject_descriptors()
 
-        if self.config.min_seq_len is not None and self.config.min_seq_len > 1:
-            logger.info(f"Restricting to subjects with at least {self.config.min_seq_len} events")
-            self.filter_to_min_seq_len()
-
         if self.config.train_subset_size not in (None, "FULL") and self.split == "train":
             logger.info(f"Filtering training subset size to {self.config.train_subset_size}")
             self.filter_to_subset()
@@ -602,41 +598,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                     raise NotImplementedError(f"Task type {self.task_types[t]} not implemented!")
 
         return {"tasks": sorted(self.tasks), "vocabs": self.task_vocabs, "types": self.task_types}
-
-    def filter_to_min_seq_len(self):
-        """Filter the dataset to include only subjects with at least the minimum sequence length.
-
-        This method removes data points where the sequence length is less than the specified minimum sequence
-        length (self.config.min_seq_len). It updates the dataset's index and labels accordingly.
-
-        Notes:     - This method modifies the self.index and self.labels attributes in-place.     - It logs
-        information about the number of data points and subjects before       and after filtering.     - If
-        tasks are specified, it warns that filtering may affect model comparability.
-
-        Raises:     AttributeError: If self.config.min_seq_len is not set.
-
-        Side effects:     - Reduces the size of self.index and self.labels.     - Logs information about the
-        filtering process.
-        """
-        if self.has_task:
-            logger.warning(
-                f"Filtering task {self.config.task_name} to min_seq_len {self.config.min_seq_len}. "
-                "This may result in incomparable model results against runs with different constraints!"
-            )
-
-        orig_len = len(self)
-        orig_n_subjects = len(set(self.subject_ids))
-        valid_indices = [
-            i for i, (subj, start, end) in enumerate(self.index) if end - start >= self.config.min_seq_len
-        ]
-        self.index = [self.index[i] for i in valid_indices]
-        self.labels = {t: [t_labels[i] for i in valid_indices] for t, t_labels in self.labels.items()}
-        new_len = len(self)
-        new_n_subjects = len(set(self.subject_ids))
-        logger.info(
-            f"Filtered data due to sequence length constraint (>= {self.config.min_seq_len}) from "
-            f"{orig_len} to {new_len} rows and {orig_n_subjects} to {new_n_subjects} subjects."
-        )
 
     def filter_to_subset(self):
         """Filter the dataset to include only a subset of subjects for the training split.
@@ -873,10 +834,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         if end - st > self.config.max_seq_len:
             raise ValueError(f"Sequence length {end - st} exceeds max_seq_len {self.config.max_seq_len}!")
-        if self.config.min_seq_len and (end - st < self.config.min_seq_len):
-            raise ValueError(
-                f"Sequence length {end - st} is less than min_seq_len {self.config.min_seq_len}!"
-            )
 
         if end == st:
             raise ValueError(f"Sequence length {end - st} is 0!")
