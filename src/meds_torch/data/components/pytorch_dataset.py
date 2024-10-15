@@ -272,7 +272,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         self.subj_indices = {}
         self.subj_seq_bounds = {}
 
-        schema_files = list(schema_root.glob("**.parquet"))
+        schema_files = list(schema_root.glob("**/*.parquet")) + list(schema_root.glob("*.parquet"))
         if not schema_files:
             raise FileNotFoundError(f"No schema files found in {schema_root}!")
 
