@@ -1,7 +1,7 @@
 import json
 import os
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -431,8 +431,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             logger.info(f"Filtering training subset size to {self.config.train_subset_size}")
             self.filter_to_subset()
 
-        self.set_inter_event_time_stats()
-
     def read_shards(self):
         """Reads the split-specific subject shards from the MEDS dataset.
 
@@ -676,64 +674,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             f"Filtered data to subset of {self.config.train_subset_size} subjects from "
             f"{orig_len} to {new_len} rows and {orig_n_subjects} to {new_n_subjects} subjects."
         )
-
-    def set_inter_event_time_stats(self):
-        """Calculate and set inter-event time statistics for the dataset.
-
-        This method computes statistics related to the time differences between consecutive events in the
-        dataset. It calculates the minimum, mean (log), and standard deviation (log) of inter-event times.
-
-        The computed statistics are stored as instance attributes: - self.mean_log_inter_event_time_min: Mean
-        of log inter-event times - self.std_log_inter_event_time_min: Standard deviation of log inter-event
-        times
-
-        Raises:     ValueError: If the dataset is empty (no static DataFrames).
-
-        Side effects:     - Sets the above-mentioned instance attributes.     - Logs warnings if any non-
-        positive inter-event times are found.     - Removes subjects with invalid (non-positive) inter-event
-        times from the dataset.
-
-        TODO: allow use of inter-event time statistics for normalizing time-deltas
-        """
-        if len(self.static_dfs) == 0:
-            raise ValueError(
-                f"The {self.split} dataset is empty, there should be at least one static dataframe."
-            )
-        data_for_stats = pl.concat([x.lazy() for x in self.static_dfs.values()])
-        stats = (
-            data_for_stats.select(
-                pl.col("time").list.diff().explode().drop_nulls().drop_nans().alias("inter_event_time")
-            )
-            .select(
-                pl.col("inter_event_time").min().alias("min"),
-                pl.col("inter_event_time").log().mean().alias("mean_log"),
-                pl.col("inter_event_time").log().std().alias("std_log"),
-            )
-            .collect()
-        )
-
-        if stats["min"].item() <= timedelta(0):
-            bad_inter_event_times = data_for_stats.filter(
-                pl.col("time").list.diff().list.min() <= 0
-            ).collect()
-            bad_subject_ids = set(bad_inter_event_times["subject_id"].to_list())
-            warning_strs = [
-                f"Observed inter-event times <= 0 for {len(bad_inter_event_times)} subjects!",
-                f"Bad Subject IDs: {', '.join(str(x) for x in bad_subject_ids)}",
-                f"Global min: {stats['min'].item()}",
-            ]
-            if self.config.meds_dir is not None:
-                fp = Path(self.config.meds_dir) / f"malformed_data_{self.split}.parquet"
-                bad_inter_event_times.write_parquet(fp)
-                warning_strs.append(f"Wrote malformed data records to {fp}")
-            warning_strs.append("Removing malformed subjects")
-
-            logger.warning("\n".join(warning_strs))
-
-            self.index = [x for x in self.index if x[0] not in bad_subject_ids]
-
-        self.mean_log_inter_event_time_min = stats["mean_log"].item()
-        self.std_log_inter_event_time_min = stats["std_log"].item()
 
     @property
     def subject_ids(self) -> list[int]:
