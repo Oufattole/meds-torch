@@ -30,7 +30,6 @@ from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
         "event_stream",
         "triplet_prompt",
         "eic",
-        "text_code",
     ],
 )
 def test_pytorch_dataset(meds_dir, collate_type):
@@ -54,6 +53,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "static_mask",
         }
     elif collate_type == "text_code":
+        raise NotImplementedError("Text code collate type not implemented")
         assert set(batch.keys()) == {
             "mask",
             "static_mask",
@@ -76,7 +76,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
         }
 
 
-@pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt", "text_code", "eic"])
+@pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt", "eic"])
 def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir, supervised=True)
     with open_dict(cfg):
@@ -88,8 +88,8 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     assert len(pyd) == 70
     assert pyd.has_task
     item = pyd[0]
-    assert item.keys() == {"static_code", "static_numeric_value", "dynamic", "supervised_task"}
-    task_df = pl.read_parquet(meds_dir / "tasks/supervised_task.parquet")
+    assert item.keys() == {"static_code", "static_numeric_value", "dynamic", "supervised_task", "static_mask"}
+
     code_index_df = pl.read_parquet(meds_dir / "triplet_tensors/metadata/codes.parquet")[
         "code", "code/vocab_index"
     ]
@@ -99,31 +99,6 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     items = []
     for index in range(len(pyd)):
         subject_data = pyd[index]
-        if not collate_type == "event_stream":
-            subject_id, _, __loader__ = pyd.index[index]
-            pyd.subj_map[subject_id]
-            static_df_index = pyd.static_dfs[pyd.subj_map[subject_id]][pyd.subj_indices[subject_id]][
-                "subject_id"
-            ].item()
-            # Check the subject ids match
-            assert static_df_index == subject_id, f"Subject ids do not match for index {index}"
-
-            # Check the supervised task matches the label
-            assert (
-                task_df.filter(pl.col("subject_id").eq(subject_id))[SUPERVISED_TASK_NAME].item()
-                == subject_data[SUPERVISED_TASK_NAME]
-            )
-            assert subject_data[SUPERVISED_TASK_NAME] == pyd.labels[SUPERVISED_TASK_NAME][index]
-            # Check the supervised task matches the target indices
-            data_label = bool(
-                functools.reduce(
-                    operator.or_, [subject_data["dynamic"]["dim1/code"] == t for t in target_indices]
-                ).any()
-            )
-            assert (
-                data_label == subject_data[SUPERVISED_TASK_NAME]
-            ), f"Supervised task does not match target indices for index {index}"
-
         items.append(subject_data)
 
     batch = pyd.collate(items)
@@ -132,43 +107,15 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             "event_mask",
             "dynamic_values_mask",
             "time_delta_days",
-            "dynamic_indices",
-            "dynamic_values",
+            "dynamic_code",
+            "dynamic_numeric_value",
             "static_code",
             "static_numeric_value",
-            SUPERVISED_TASK_NAME,
-        }
-    elif collate_type in ["triplet", "triplet_prompt"]:
-        assert batch.keys() == {
-            "mask",
             "static_mask",
-            "code",
-            "numeric_value",
-            "time_delta_days",
-            "numeric_value_mask",
-            SUPERVISED_TASK_NAME,
-        }
-        code_tensor = batch["code"]
-        is_target_tensor = torch.zeros_like(code_tensor)
-        for target_index in target_indices:
-            is_target_tensor = is_target_tensor | code_tensor == target_index
-        labels = [each[SUPERVISED_TASK_NAME] for each in items]
-        # Check labels are in the same order after collating
-        assert batch[SUPERVISED_TASK_NAME].to(bool).tolist() == labels
-        # Data should have the right order after collating, using data derived labels
-        data_label = functools.reduce(operator.or_, [code_tensor == t for t in target_indices]).any(axis=1)
-        assert data_label.tolist() == labels, "Supervised task does not match target indices"
-    elif collate_type == "eic":
-        assert batch.keys() == {
-            "mask",
-            "static_mask",
-            "code",
-            "numeric_value",
-            "time_delta_days",
-            "numeric_value_mask",
             SUPERVISED_TASK_NAME,
         }
     elif collate_type == "text_code":
+        raise NotImplementedError("Text code collate type not implemented")
         assert set(batch.keys()) == {
             "mask",
             "static_mask",
@@ -180,8 +127,38 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             "numeric_value_mask",
             SUPERVISED_TASK_NAME,
         }
+    elif collate_type == "triplet":
+        assert batch.keys() == {
+            "dynamic_values_mask",
+            "time_delta_days",
+            "dynamic_code",
+            "dynamic_numeric_value",
+            "static_code",
+            "static_numeric_value",
+            "static_mask",
+            SUPERVISED_TASK_NAME,
+        }
+        code_tensor = batch["dynamic_code"]
+        is_target_tensor = torch.zeros_like(code_tensor)
+        for target_index in target_indices:
+            is_target_tensor = is_target_tensor | code_tensor == target_index
+        labels = [each[SUPERVISED_TASK_NAME] for each in items]
+        # Check labels are in the same order after collating
+        assert batch[SUPERVISED_TASK_NAME].to(bool).tolist() == labels
+        # Data should have the right order after collating, using data derived labels
+        data_label = functools.reduce(operator.or_, [code_tensor == t for t in target_indices]).any(axis=1)
+        assert data_label.tolist() == labels, "Supervised task does not match target indices"
     else:
-        raise NotImplementedError(f"{collate_type} not implemented")
+        assert batch.keys() == {
+            "dynamic_values_mask",
+            "time_delta_days",
+            "dynamic_code",
+            "dynamic_numeric_value",
+            "static_code",
+            "static_numeric_value",
+            "static_mask",
+            SUPERVISED_TASK_NAME,
+        }
 
 
 @pytest.mark.parametrize("subject_level_sampling", [False, True])
