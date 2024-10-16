@@ -2,11 +2,14 @@ import rootutils
 
 root = rootutils.setup_root(__file__, dotenv=True, pythonpath=True, cwd=True)
 
+import random
 from pathlib import Path
 
 import numpy as np
+import omegaconf
 import polars as pl
 import pytest
+import scipy
 from mixins import SeedableMixin
 
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
@@ -18,10 +21,36 @@ class EveryQueryDataset(PytorchDataset):
         cfg.max_seq_len = 5
         cfg.do_include_subsequence_indices = True
         super().__init__(cfg, split)
-        self.set_codes(names=self.config.codes)
 
-        if self.config.code_sampling_strategy not in ("uniform", "frequency"):
-            raise ValueError("code_sampling_strategy must be one of 'uniform', 'frequency'.")
+        self.code_strategies = ["uniform", "frequency"]
+        if self.config.code_sampling_strategy not in self.code_strategies:
+            raise ValueError(f"code_sampling_strategy must be one of {self.code_strategies}.")
+        self.value_strategies = ["ignore", "random_quantile", "random_normal", "manual"]
+        if self.config.default_value_sampling_strategy not in self.value_strategies:
+            raise ValueError(f"default_value_sampling_strategy must be one of {self.value_strategies}")
+
+        self.metadata = self._load_data()
+
+        obj = self.config.get("codes", None)
+        if obj is not None:
+            if not isinstance(obj, omegaconf.listconfig.ListConfig):
+                raise TypeError(f"codes must be a list, got {type(obj)}")
+        self.set_codes(obj)
+
+        for param, expected_type in [
+            ("values_ignore", omegaconf.listconfig.ListConfig),
+            ("values_random_quantile", omegaconf.listconfig.ListConfig),
+            ("values_random_normal", omegaconf.listconfig.ListConfig),
+            ("values_manual", omegaconf.dictconfig.DictConfig),
+        ]:
+            obj = self.config.get(param, None)
+            if obj is not None:
+                if not isinstance(obj, expected_type):
+                    raise TypeError(f"{param} should be {expected_type}, but got {type(obj)}")
+                self.set_values(strategy=param.replace("values_", ""), data=obj)
+
+        # future
+        self.future_strategies = ["within_record", "random", "fixed"]
         if self.config.min_offset < 0:
             raise ValueError("min_query_offset must be non-negative.")
         if self.config.min_duration < 0:
@@ -30,67 +59,172 @@ class EveryQueryDataset(PytorchDataset):
             raise ValueError("min_query_offset must be less than max_query_offset.")
         if self.config.min_duration >= self.config.max_duration:
             raise ValueError("min_query_duration must be less than max_query_duration.")
-        if self.config.duration_sampling_strategy not in ("within_record", "random", "fixed"):
-            raise ValueError(
-                "duration_sampling_strategy must be one of 'within_record', 'random', or 'fixed'."
-            )
+        if self.config.duration_sampling_strategy not in self.future_strategies:
+            raise ValueError(f"duration_sampling_strategy must be one of {self.future_strategies}.")
         if self.config.duration_sampling_strategy == "fixed":
             if self.config.fixed_duration is None:
                 raise ValueError("query_fixed_duration must be specified for 'fixed' sampling strategy.")
             if self.config.fixed_duration < 0:
                 raise ValueError("query_fixed_duration must be non-negative.")
-        if self.config.offset_sampling_strategy not in ("within_record", "random", "fixed"):
-            raise ValueError("offset_sampling_strategy must be one of 'within_record', 'random', or 'fixed'.")
+        if self.config.offset_sampling_strategy not in self.future_strategies:
+            raise ValueError(f"offset_sampling_strategy must be one of {self.future_strategies}.")
         if self.config.offset_sampling_strategy == "fixed":
             if self.config.fixed_offset is None:
                 raise ValueError("query_fixed_offset must be specified for 'fixed' sampling strategy.")
             if self.config.fixed_offset < 0:
                 raise ValueError("query_fixed_offset must be non-negative.")
 
-    @property
-    def _all_codes_metadata(self):
+    def _load_data(self):
         # assuming unique codes
-        # is there an UNK code?
-        return pl.read_parquet(self.config.code_metadata_fp).with_columns(
-            pl.col("code/vocab_index").alias("code_index"),
-            pl.col("code").alias("code_name"),
-            (pl.col("values/n_occurrences") > 0).alias("code_has_value"),
-            (pl.col("code/n_occurrences") / pl.col("code/n_occurrences").sum()).alias("code_frequency"),
+        # is there an UNK code? why is there a none code
+        return (
+            pl.read_parquet(self.config.code_metadata_fp)
+            .filter(pl.col("code").is_not_null())
+            .with_columns(
+                pl.col("values/min").alias("values/quantile/0"),
+                pl.col("values/quantiles").struct.field("values/quantile/0.25").alias("values/quantile/25"),
+                pl.col("values/quantiles").struct.field("values/quantile/0.5").alias("values/quantile/50"),
+                pl.col("values/quantiles").struct.field("values/quantile/0.75").alias("values/quantile/75"),
+                pl.col("values/max").alias("values/quantile/100"),
+                (pl.col("values/n_occurrences") > 0).alias("code/has_value"),
+                (pl.col("code/n_occurrences") / pl.col("code/n_occurrences").sum()).alias("code/frequency"),
+                (pl.col("values/sum") / pl.col("values/n_occurrences")).alias("values/mean"),
+                pl.lit(self.config.default_value_sampling_strategy).alias("values/strategy"),
+                pl.lit([]).cast(pl.List(pl.List(pl.Float64))).alias("values/range_options"),
+            )
+            .with_columns(
+                (
+                    (pl.col("values/sum_sqd") / pl.col("values/n_occurrences")) - (pl.col("values/mean")) ** 2
+                ).alias("values/variance"),
+            )
+            .with_columns(
+                pl.col("values/variance").sqrt().alias("values/std"),
+            )
         )
 
-    def set_codes(self, names: list = None):
-        if names is None or not names:
-            self.codes = self._all_codes_metadata
+    def _set_data_at_code(self, code, col, value):
+        code = code.lower()
+        self.metadata = self.metadata.with_columns(
+            pl.when(pl.col("code").str.to_lowercase() == code)
+            .then(pl.lit(value))
+            .otherwise(pl.col(col))
+            .alias(col)
+        )
+
+    def _get_data_at_code(self, code, col):
+        code = code.lower()
+        return self.metadata.filter(pl.col("code").str.to_lowercase() == code).select(col).item()
+
+    def _validate_codes(self, codes):
+        valid_codes = {x.lower() for x in self.metadata["code"].to_list()}
+        for x in codes:
+            x = x.lower()
+            if x not in valid_codes:
+                raise ValueError(f"Code '{x}' is not found in metadata\n\nValid options: {valid_codes}")
+        return
+
+    def _validate_range_bound(self, x):
+        if isinstance(x, str):
+            if not x.startswith("Q"):
+                raise ValueError(f"String value '{x}' start with Q followed by the quantile.")
+            if float(x.replace("Q", "")) not in self.config.quantiles:
+                raise ValueError(f"Quantile '{x}' not supported, options are {self.config.quantiles}.")
+        elif not isinstance(x, (int, float)):
+            raise ValueError(f"Value '{x}' must be an int, float, or str.")
+
+    def set_codes(self, codes: list[str] = None):
+        if codes is None or not codes:
+            self.code_options = self.metadata
         else:
-            names = {x.lower() for x in names}
-            self.codes = (
-                self._all_codes_metadata.filter(pl.col("code_name").str.to_lowercase().is_in(names))
-                .drop("code_frequency")
+            self._validate_codes(codes)
+            codes = [x.lower() for x in codes]
+            self.code_options = (
+                self.metadata.filter(pl.col("code").str.to_lowercase().is_in(codes))
+                .drop("code/frequency")
                 .with_columns(
                     (pl.col("code/n_occurrences") / pl.col("code/n_occurrences").sum()).alias(
-                        "code_frequency"
+                        "code/frequency"
                     )
                 )
             )
-        return
 
-    def sample_event(self):
+    def set_values(self, strategy: str, data: list | dict):
+        assert strategy in self.value_strategies
+        if strategy == "manual":
+            assert isinstance(data, dict) or isinstance(data, omegaconf.dictconfig.DictConfig)
+        else:
+            assert isinstance(data, list) or isinstance(data, omegaconf.listconfig.ListConfig)
+
+        codes = data.keys() if strategy == "manual" else data
+        self._validate_codes(codes)
+
+        for code in codes:
+            self._set_data_at_code(code=code, col="values/strategy", value=strategy)
+            if strategy == "manual":
+                ranges = []
+                for lower, upper in data[code]:
+                    self._validate_range_bound(lower)
+                    self._validate_range_bound(upper)
+                    if isinstance(lower, str):
+                        lower_quantile = int(lower.replace("Q", ""))
+                        lower = self._get_data_at_code(code=code, col=f"values/quantile/{lower_quantile}")
+                    if isinstance(upper, str):
+                        upper_quantile = int(upper.replace("Q", ""))
+                        upper = self._get_data_at_code(code=code, col=f"values/quantile/{upper_quantile}")
+                    assert lower <= upper
+                    ranges.append([float(lower), float(upper)])
+                self._set_data_at_code(code=code, col="values/range_options", value=ranges)
+
+        # refresh code options with new value info
+        self.set_codes(codes=self.code_options["code"].to_list())
+
+    def sample_code(self):
         match self.config.code_sampling_strategy:
             case "uniform":
-                options = self.codes
+                options = self.code_options
             case "frequency":
-                num_buckets = int(self.codes["code_frequency"].log(base=10).floor().to_numpy().min())
+                num_buckets = int(self.code_options["code/frequency"].log(base=10).floor().to_numpy().min())
                 bucket = np.random.choice([*range(num_buckets, 0)])
                 lower, upper = np.logspace(bucket, bucket + 1, 2)
-                options = self.codes.filter(
-                    pl.col("code_frequency").is_between(lower_bound=lower, upper_bound=upper)
+                options = self.code_options.filter(
+                    pl.col("code/frequency").is_between(lower_bound=lower, upper_bound=upper)
                 )
+        code = options.sample().to_dicts()[0]
+        return code
 
-        event = options.sample().to_dicts()[0]
-        event["range_min"], event["range_max"] = 0.0, 0.0
+    def sample_value_range(self, code):
+        match code["values/strategy"]:
+            case "manual":
+                lower, upper = random.choice(code["values/range_options"])
+            case "random_quantile":
+                lower_quantile, upper_quantile = sorted(random.sample(self.config.quantiles, 2))
+                lower = code[f"values/quantile/{int(lower_quantile)}"]
+                upper = code[f"values/quantile/{int(upper_quantile)}"]
+            case "random_normal":
+                # random interval from the support of the normal distribution sampled according to its density
+                def _normal_support(mu, sigma):
+                    return scipy.stats.norm.ppf(np.random.rand(), loc=mu, scale=sigma)
 
-        # are values already normalized?
+                mu, sigma = code["values/mean"], code["values/std"]
+                lower, upper = sorted([_normal_support(mu, sigma), _normal_support(mu, sigma)])
+        return lower, upper
 
+    def sample_event(self):
+        code = self.sample_code()
+        if code["code/has_value"] and code["values/strategy"] != "ignore":
+            use_value = True
+            lower, upper = self.sample_value_range(code)
+        else:
+            use_value = False
+            lower, upper = None, None
+        event = {
+            "name": code["code"],
+            "vocab_index": code["code/vocab_index"],
+            "has_value": code["code/has_value"],
+            "use_value": use_value,
+            "range_lower": lower,
+            "range_upper": upper,
+        }
         return event
 
     def normalize(self, query):
@@ -101,9 +235,10 @@ class EveryQueryDataset(PytorchDataset):
             query["offset"] = (query["offset"] - self.config.min_offset) / (
                 self.config.max_offset - self.config.min_offset
             )
-            # (todo) code_range_min
-            # (todo) code_range_max
-        return query
+            # tbd: query['range_lower'], query['range_upper']
+            # range is provided in un-normalized units by user
+            # can use mean/std from metadata
+            return query
 
     def sample_future(self, max_valid_duration):
         if max_valid_duration < 0:
@@ -184,20 +319,20 @@ class EveryQueryDataset(PytorchDataset):
             else:
                 # one event only
                 return 0  # remove later once bug is fixed
-                future_dynamic = future_dynamic[start_idx]  # this does not work
+                future_dynamic = future_dynamic[start_idx:end_idx]  # this does not work
             """
             from nested_ragged_tensors.ragged_numpy import *
             J = JointNestedRaggedTensorDict({
-                "dim0/time_delta_days": [0.00972222, 0.03333334],
-                "dim1/lengths": [2, 1],
-                "dim1/code": [[14, 15], [7]],
-                "dim1/numeric_value": [[-0.0539279, 1.1927332], [float('nan')]],
-                "dim1/bounds": [2, 3],
+            "dim0/time_delta_days": [0.00972222, 0.03333334],
+            "dim1/lengths": [2, 1],
+            "dim1/code": [[14, 15], [7]],
+            "dim1/numeric_value": [[-0.0539279, 1.1927332], [float('nan')]],
+            "dim1/bounds": [2, 3],
             }, schema={
-                "dim1/time_delta_days": "float32",
-                "dim2/code": "uint8",
-                "dim2/numeric_value": "float32"
-            }, pre_raggedified=True)
+            "dim1/time_delta_days": "float32",
+            "dim2/code": "uint8",
+            "dim2/numeric_value": "float32"
+            })
             len(J)
             J[0]
             """
@@ -209,12 +344,12 @@ class EveryQueryDataset(PytorchDataset):
         count = 0
         for i in range(len(future_dynamic["dim1/code"])):
             for j in range(len(future_dynamic["dim1/code"][i])):
-                if future_dynamic["dim1/code"][i][j] == query["idx"]:
-                    if query["has_value"]:
+                if future_dynamic["dim1/code"][i][j] == query["vocab_index"]:
+                    if query["has_value"] and query["use_value"]:
                         x = future_dynamic["dim1/numeric_value"][i][j]
                         if x is None:
                             continue  # todo: is None used for outlier removal?
-                        if (x >= query["range_min"]) and (x <= query["range_max"]):
+                        if (x >= query["range_lower"]) and (x <= query["range_upper"]):
                             count += 1
                     else:
                         count += 1
@@ -489,7 +624,7 @@ def test_pytorch_dataset(meds_dir: Path, collate_type):
     item = pyd[0]
     assert item.keys() == {"context", "query", "answer"}
     assert item["context"].keys() == {"static_indices", "static_values", "dynamic", "start_idx", "end_idx"}
-    assert False
+    # assert False
     batch = pyd.collate([pyd[i]["context"] for i in range(2)])
     if collate_type == "event_stream":
         assert batch.keys() == {

@@ -52,9 +52,30 @@ min_offset: 0
 max_offset: 60
 min_duration: 0
 max_duration: 60
-duration_sampling_strategy: 'within_record' # ('within_record','random','fixed')
-offset_sampling_strategy: 'within_record' # ('within_record','random','fixed')
+duration_sampling_strategy: within_record # ('within_record','random','fixed')
+offset_sampling_strategy: within_record # ('within_record','random','fixed')
 fixed_duration: 10
 fixed_offset: 0
-codes: []
+quantiles: [0, 25, 50, 75, 100]
 code_sampling_strategy: 'uniform' # uniform, frequency
+codes:
+  # - ADMISSION//PULMONARY
+  - TEMP
+  - HEIGHT
+  - HR
+default_value_sampling_strategy: 'ignore' # ignore, random_quantile, random_normal, manual
+# values_ignore:
+#   - TEMP
+#   - HEIGHT
+values_random_quantile:
+  - TEMP
+  - HEIGHT
+values_random_normal:
+  - TEMP
+  - HEIGHT
+values_manual:
+  TEMP:
+    - [50, 55.7]
+    - [97, 'Q100']
+  HEIGHT:
+    - [60, 70]
