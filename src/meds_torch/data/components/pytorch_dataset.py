@@ -926,7 +926,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
     def __dynamic_only_collate(self, batch: list[dict[str, list[float]]]) -> dict:
         """An internal collate function for only dynamic data."""
         keys = batch[0].keys()
-        dense_keys = {k for k in keys if k != "dynamic"}
+        dense_keys = {
+            k for k in keys if k not in {"dynamic", "static_numeric_value", "static_code", "static_mask"}
+        }
 
         if dense_keys:
             dense_collated = torch.utils.data.default_collate([{k: x[k] for k in dense_keys} for x in batch])
@@ -953,44 +955,14 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             else:
                 raise TypeError(f"Don't know how to tensorify {k} of type {v.dtype}!")
 
-        collated = {**dense_collated, **dynamic_collated}
+        out_batch = {**dense_collated, **dynamic_collated}
 
-        out_batch = {}
-        if "event_mask" in collated:
-            out_batch["event_mask"] = collated["event_mask"]
-        out_batch["dynamic_values_mask"] = collated["dynamic_values_mask"]
-        out_batch["time_delta_days"] = torch.nan_to_num(collated["time_delta_days"].float(), nan=0)
-        out_batch["dynamic_code"] = collated["code"].long()
-        out_batch["dynamic_numeric_value"] = torch.nan_to_num(collated["numeric_value"].float(), nan=0)
-        out_batch["static_mask"] = collated["static_mask"]
-
-        if self.config.do_include_start_time_min:
-            out_batch["start_time"] = collated["start_time"].float()
-        if self.config.do_include_subsequence_indices:
-            out_batch["start_idx"] = collated["start_idx"].long()
-            out_batch["end_idx"] = collated["end_idx"].long()
-        if self.config.do_include_subject_id:
-            out_batch["subject_id"] = collated["subject_id"].long()
-
-        if not self.has_task:
-            return out_batch
-
-        out_labels = {}
-        for task in self.tasks:
-            match self.task_types[task]:
-                case "multi_class_classification":
-                    out_labels[task] = collated[task].long()
-                case "binary_classification":
-                    out_labels[task] = collated[task].float()
-                case "regression":
-                    out_labels[task] = collated[task].float()
-                case _:
-                    raise TypeError(f"Don't know how to tensorify task of type {self.task_types[task]}!")
-
-        # add task labels
-        for k in batch[0].keys():
-            if k not in ("dynamic", "static_numeric_value", "static_code"):
-                out_batch[k] = torch.Tensor([item[k] for item in batch])
+        out_batch["time_delta_days"] = torch.nan_to_num(out_batch["time_delta_days"].float(), nan=0)
+        out_batch["dynamic_code"] = out_batch.pop("code").long()
+        out_batch["dynamic_numeric_value"] = torch.nan_to_num(out_batch.pop("numeric_value").float(), nan=0)
+        out_batch["static_mask"] = torch.nn.utils.rnn.pad_sequence(
+            [x["static_mask"] for x in batch], batch_first=True
+        )
 
         return out_batch
 
