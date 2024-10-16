@@ -217,7 +217,7 @@ def merge_task_with_static(task_df: pl.DataFrame, static_dfs: dict[str, pl.DataF
     Parameters:
     - task_df (DataFrame): A DataFrame with columns 'subject_id', 'start_time', 'end_time', and 'label'.
     - static_dfs (dict of DataFrames): A dictionary of DataFrames indexed by their source names,
-      each containing 'subject_id', 'start_time', 'static_indices', 'static_values', and "time".
+      each containing 'subject_id', 'start_time', 'static_code', 'static_numeric_value', and "time".
     - tasks (list[str]): A list of task names to be merged with the static DataFrames.
 
     Returns:
@@ -503,10 +503,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                     ],
                     use_pyarrow=True,
                 )
-                .rename({"code": "static_indices", "numeric_value": "static_values"})
+                .rename({"code": "static_code", "numeric_value": "static_numeric_value"})
                 .with_columns(
-                    pl.col("static_values").list.eval(pl.element().fill_null(0)),
-                    pl.col("static_indices").list.eval(pl.element().fill_null(0)),
+                    pl.col("static_numeric_value").list.eval(pl.element().fill_null(0)),
+                    pl.col("static_code").list.eval(pl.element().fill_null(0)),
                 )
             )
 
@@ -780,7 +780,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         Returns:     dict: A dictionary containing the data for the specified index. The structure typically
         includes:         - 'time_delta_days': List of time deltas between events.         -
         'dynamic_indices': List of categorical metadata elements.         - 'dynamic_values': List of
-        numerical metadata elements.         - 'static_indices': List of static categorical metadata elements.
+        numerical metadata elements.         - 'static_code': List of static categorical metadata elements.
         Additional keys may be present based on the dataset configuration.
 
         Notes:     - The exact structure of the output dictionary depends on the dataset configuration and the
@@ -836,8 +836,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         static_row = self.static_dfs[shard][subject_idx].to_dict()
 
         out = {
-            "static_indices": static_row["static_indices"].item().to_list(),
-            "static_values": static_row["static_values"].item().to_list(),
+            "static_code": static_row["static_code"].item().to_list(),
+            "static_numeric_value": static_row["static_numeric_value"].item().to_list(),
         }
 
         global_st = st
@@ -874,11 +874,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             out["start_idx"] = global_st
             out["end_idx"] = global_end
 
-        if self.config.collate_type == CollateType.event_stream:
-            out["dynamic"] = subject_dynamic_data
-        else:
-            tensors = subject_dynamic_data.to_dense()
-            out["dynamic"] = tensors
+        out["dynamic"] = subject_dynamic_data
 
         if self.config.do_include_start_time_min:
             out["start_time"] = static_row["time"].item().to_list()[global_st]
@@ -893,33 +889,13 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         if end == st:
             raise ValueError(f"Sequence length {end - st} is 0!")
 
+        if self.config.do_prepend_static_data:
+            raise NotImplementedError("To implement using the JNRT API.")
+        else:
+            out["static_mask"] = torch.zeros(seq_len, dtype=torch.bool)
+
         if self.config.postpend_eos_token:
-            if self.config.collate_type == CollateType.event_stream:
-                raise NotImplementedError("This was wrong before, but should be tested and fixed.")
-
-            else:
-                # For other collate types
-                eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["dim1/code"].dtype)
-                out["dynamic"]["dim1/code"] = np.append(out["dynamic"]["dim1/code"], eos_token)
-
-                numeric_dtype = out["dynamic"]["dim1/numeric_value"].dtype
-                time_dtype = out["dynamic"]["dim0/time_delta_days"].dtype
-                out["dynamic"]["dim1/numeric_value"] = np.append(
-                    out["dynamic"]["dim1/numeric_value"], np.array([0], dtype=numeric_dtype)
-                )
-                out["dynamic"]["dim0/time_delta_days"] = np.append(
-                    out["dynamic"]["dim0/time_delta_days"], np.array([0], dtype=time_dtype)
-                )
-
-        if self.config.collate_type != CollateType.event_stream and not (
-            len(out["dynamic"]["dim1/code"])
-            == len(out["dynamic"]["dim1/numeric_value"])
-            == len(out["dynamic"]["dim0/time_delta_days"])
-        ):
-            code_shape = out["dynamic"]["dim1/code"].shape
-            numeric_shape = out["dynamic"]["dim1/numeric_value"].shape
-            time_shape = out["dynamic"]["dim0/time_delta_days"].shape
-            raise ValueError(f"Shape mismatch: {code_shape} vs {numeric_shape} vs {time_shape}")
+            raise NotImplementedError("To implement using the JNRT API.")
 
         return out
 
@@ -950,7 +926,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
     def __dynamic_only_collate(self, batch: list[dict[str, list[float]]]) -> dict:
         """An internal collate function for only dynamic data."""
         keys = batch[0].keys()
-        dense_keys = {k for k in keys if k not in ("dynamic", "static_indices", "static_values")}
+        dense_keys = {k for k in keys if k != "dynamic"}
 
         if dense_keys:
             dense_collated = torch.utils.data.default_collate([{k: x[k] for k in dense_keys} for x in batch])
@@ -960,10 +936,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         dynamic = JointNestedRaggedTensorDict.vstack([x["dynamic"] for x in batch]).to_dense(
             padding_side=self.config.seq_padding_side
         )
-        dynamic["event_mask"] = dynamic.pop("dim1/mask")
-        dynamic["dynamic_values"] = dynamic.pop("numeric_value")
-        dynamic["dynamic_indices"] = dynamic.pop("code")
-        dynamic["dynamic_values_mask"] = dynamic.pop("dim2/mask") & ~np.isnan(dynamic["dynamic_values"])
+        if "dim2/mask" in dynamic:
+            dynamic["dynamic_values_mask"] = dynamic.pop("dim2/mask")
+            dynamic["event_mask"] = dynamic.pop("dim1/mask")
+        else:
+            dynamic["dynamic_values_mask"] = dynamic.pop("dim1/mask")
 
         dynamic_collated = {}
         for k, v in dynamic.items():
@@ -979,11 +956,13 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         collated = {**dense_collated, **dynamic_collated}
 
         out_batch = {}
-        out_batch["event_mask"] = collated["event_mask"]
+        if "event_mask" in collated:
+            out_batch["event_mask"] = collated["event_mask"]
         out_batch["dynamic_values_mask"] = collated["dynamic_values_mask"]
         out_batch["time_delta_days"] = torch.nan_to_num(collated["time_delta_days"].float(), nan=0)
-        out_batch["dynamic_indices"] = collated["dynamic_indices"].long()
-        out_batch["dynamic_values"] = torch.nan_to_num(collated["dynamic_values"].float(), nan=0)
+        out_batch["dynamic_code"] = collated["code"].long()
+        out_batch["dynamic_numeric_value"] = torch.nan_to_num(collated["numeric_value"].float(), nan=0)
+        out_batch["static_mask"] = collated["static_mask"]
 
         if self.config.do_include_start_time_min:
             out_batch["start_time"] = collated["start_time"].float()
@@ -1010,13 +989,14 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         # add task labels
         for k in batch[0].keys():
-            if k not in ("dynamic", "static_values", "static_indices"):
+            if k not in ("dynamic", "static_numeric_value", "static_code"):
                 out_batch[k] = torch.Tensor([item[k] for item in batch])
 
         return out_batch
 
-    def collate_event_stream(self, batch: list[dict]) -> dict:
-        """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
+    @TimeableMixin.TimeAs
+    def collate(self, batch: list[dict]) -> dict:
+        """Combines the JNRT produced by `__getitem__` into a tensorized batch.
 
         This function handles conversion of arrays to tensors and padding of elements within the batch across
         static data elements, sequence events, and dynamic data elements.
@@ -1028,12 +1008,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         out_batch = self.__dynamic_only_collate(batch)
 
-        max_n_static = max(len(x["static_indices"]) for x in batch)
+        max_n_static = max(len(x["static_code"]) for x in batch)
         static_padded_fields = defaultdict(list)
         for e in batch:
-            n_static = len(e["static_indices"])
+            n_static = len(e["static_code"])
             static_delta = max_n_static - n_static
-            for k in ("static_indices", "static_values"):
+            for k in ("static_code", "static_numeric_value"):
                 if static_delta > 0:
                     static_padded_fields[k].append(
                         torch.nn.functional.pad(
@@ -1047,437 +1027,3 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             out_batch[k] = torch.cat([T.unsqueeze(0) for T in v], dim=0)
 
         return out_batch
-
-    @classmethod
-    def process_triplet(cls, item: dict, do_prepend_static_data=True) -> dict:
-        """Process a single triplet of dynamic and static data.
-
-        This method takes a dictionary containing dynamic and static data for a single
-        data point and processes it into a unified representation suitable for model input.
-
-        Args:
-            item (dict): A dictionary containing 'dynamic' and 'static' data.
-            do_prepend_static_data (bool, optional): Whether to prepend static data
-                                                     to the dynamic data. Defaults to True.
-
-        Returns:
-            dict: A processed dictionary containing:
-                - mask: Boolean mask indicating valid data points.
-                - static_mask: Boolean mask indicating static data points.
-                - code: Concatenated static and dynamic codes.
-                - numeric_value: Concatenated static and dynamic numerical values.
-                - time_delta_days: Time deltas between events.
-                - numeric_value_mask: Boolean mask for valid numeric values.
-
-        Notes:
-            - This method handles the integration of static and dynamic data.
-            - It applies appropriate type conversions and handles missing values.
-            - The resulting dictionary is suitable for further tensorization or batching.
-
-        Examples:
-            >>> import numpy as np
-            >>> import tempfile, json, os
-            >>> from omegaconf import DictConfig
-            >>> item =  {
-            ...         'dynamic': {
-            ...                 'dim1/code': np.array([5, 6, 1, 2]),
-            ...                 'dim1/numeric_value': np.array([50.0, 60.0, np.nan, np.nan]),
-            ...                 'dim0/time_delta_days': np.array([0, 0, 12, 0])
-            ...         },
-            ...         'static_values': [70.0],
-            ...         'static_indices': [2]
-            ...     }
-            >>> triplet_item = PytorchDataset.process_triplet(item)
-            >>> for each in sorted(list(triplet_item.keys())): print(each)
-            code
-            mask
-            numeric_value
-            numeric_value_mask
-            static_mask
-            time_delta_days
-            >>> for key, value in triplet_item.items(): print(key, value);
-            mask [ True  True  True  True  True]
-            static_mask [ True False False False False]
-            code tensor([2, 5, 6, 1, 2])
-            numeric_value [70. 50. 60.  0.  0.]
-            time_delta_days [ 0  0  0 12  0]
-            numeric_value_mask [ True  True  True False False]
-        """
-        dynamic_data = item["dynamic"]
-        code = dynamic_data["dim1/code"]
-        numeric_value = dynamic_data["dim1/numeric_value"]
-        time_delta_days = dynamic_data["dim0/time_delta_days"]
-
-        static_mask = np.zeros(len(code), dtype=bool)
-        if do_prepend_static_data:
-            static_values = np.asarray(item["static_values"], dtype=np.float32)
-            static_indices = np.asarray(item["static_indices"], dtype=np.int32)
-            code = np.concatenate([static_indices, code], dtype=np.int32, casting="unsafe")
-            numeric_value = np.concatenate([static_values, numeric_value])
-            static_mask = np.zeros(len(code), dtype=bool)
-            static_mask[: len(static_values)] = True
-            time_delta_days = np.concatenate(
-                [np.zeros(len(static_values), dtype=time_delta_days.dtype), time_delta_days]
-            )
-
-        numeric_value_mask = ~np.isnan(numeric_value)
-        # Replace NaNs with 0s
-        np.nan_to_num(numeric_value, nan=0, copy=False)
-        np.nan_to_num(time_delta_days, nan=0, copy=False)
-
-        mask = np.ones(len(code), dtype=bool)
-        if not len(mask) == len(code) == len(numeric_value) == len(time_delta_days):
-            raise ValueError(
-                f"Shape mismatch: {code.shape} vs {mask.shape} vs "
-                f"{numeric_value.shape} vs {time_delta_days.shape}"
-            )
-
-        output = dict(
-            mask=mask,
-            static_mask=static_mask,
-            code=torch.as_tensor(code, dtype=torch.int64),
-            numeric_value=numeric_value,
-            time_delta_days=time_delta_days,
-            numeric_value_mask=numeric_value_mask,
-        )
-        return output
-
-    @classmethod
-    def collate_triplet(cls, batch: list[dict], do_prepend_static_data=True) -> dict:
-        """Collate a batch of triplet format data into a unified batch dictionary.
-
-        This method combines multiple data points in triplet format (times, codes, values)
-        into a single batch, applying necessary padding and tensorization.
-
-        Args:
-            batch (list[dict]): A list of dictionaries, each representing a single data point.
-            do_prepend_static_data (bool, optional): Whether to prepend static data to the
-                                                     dynamic data. Defaults to True.
-
-        Returns:
-            dict: A dictionary containing the collated batch data, including:
-                - mask: Tensor indicating valid data points across the batch.
-                - static_mask: Tensor indicating static data points.
-                - code: Tensor of concatenated static and dynamic codes.
-                - numeric_value: Tensor of concatenated static and dynamic numerical values.
-                - time_delta_days: Tensor of time deltas between events.
-                - Additional task-specific labels if present in the input data.
-
-        Notes:
-            - This method handles padding to ensure uniform sequence lengths within the batch.
-            - It converts all data to PyTorch tensors.
-            - The method is flexible to handle additional task-specific data present in the input.
-
-        Examples:
-            >>> import torch
-            >>> import numpy as np
-            >>> batch = [
-            ...     {
-            ...         'dynamic': {
-            ...              'dim1/code': np.array([1]),
-            ...              'dim1/numeric_value': np.array([10.0]),
-            ...              'dim0/time_delta_days': np.array([0])},
-            ...         'static_values': [20.0],
-            ...         'static_indices': [0],
-            ...         'label': 0,
-            ...     },
-            ...     {
-            ...         'dynamic':{
-            ...              'dim1/code': np.array([5, 6, 1, 2]),
-            ...              'dim1/numeric_value': np.array([50.0, 60.0, 0, 0]),
-            ...              'dim0/time_delta_days': np.array([0, 0, 12, 0])},
-            ...         'static_values': [70.0],
-            ...         'static_indices': [2],
-            ...         'label': 1,
-            ...         },
-            ... ]
-            >>> collated_batch = PytorchDataset.collate_triplet(batch)
-            >>> from pprint import pprint
-            >>> pprint(collated_batch)
-            {'code': tensor([[0, 1, 0, 0, 0],
-                    [2, 5, 6, 1, 2]]),
-             'label': tensor([0., 1.]),
-             'mask': tensor([[ True,  True, False, False, False],
-                    [ True,  True,  True,  True,  True]]),
-             'numeric_value': tensor([[20., 10.,  0.,  0.,  0.],
-                    [70., 50., 60.,  0.,  0.]], dtype=torch.float64),
-             'numeric_value_mask': tensor([[ True,  True, False, False, False],
-                    [ True,  True,  True,  True,  True]]),
-             'static_mask': tensor([[ True, False, False, False, False],
-                    [ True, False, False, False, False]]),
-             'time_delta_days': tensor([[ 0,  0,  0,  0,  0],
-                    [ 0,  0,  0, 12,  0]])}
-        """
-        processed_batch = [cls.process_triplet(item, do_prepend_static_data) for item in batch]
-        tensorized_batch = {
-            k: torch.nn.utils.rnn.pad_sequence(
-                [torch.as_tensor(x[k]) for x in processed_batch],
-                batch_first=True,
-                padding_value=0,
-            )
-            for k in processed_batch[0].keys()
-        }
-
-        # Add task labels to batch
-        for k in batch[0].keys():
-            if k not in ("dynamic", "static_values", "static_indices"):
-                tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
-        return tensorized_batch
-
-    @classmethod
-    def process_text_code(cls, item: dict, tokenized_codes: dict, do_prepend_static_data=True) -> dict:
-        """Process a single data point for text-code format.
-
-        This method takes a dictionary containing dynamic and static data and processes
-        it into a format suitable for text-code based models, including tokenization of codes.
-
-        Args:
-            item (dict): A dictionary containing 'dynamic' and 'static' data.
-            tokenized_codes (dict): A dictionary mapping codes to their tokenized representations.
-            do_prepend_static_data (bool, optional): Whether to prepend static data
-                                                     to the dynamic data. Defaults to True.
-
-        Returns:
-            dict: A processed dictionary containing:
-                - mask: Boolean mask indicating valid data points.
-                - static_mask: Boolean mask indicating static data points.
-                - code: Original codes (not tokenized).
-                - code_tokens: Tokenized representations of codes.
-                - code_mask: Mask for tokenized code sequences.
-                - numeric_value: Concatenated static and dynamic numerical values.
-                - time_delta_days: Time deltas between events.
-                - numeric_value_mask: Boolean mask for valid numeric values.
-
-        Notes:
-            - This method is specifically designed for models that use text representations of codes.
-            - It integrates tokenization information with the original data structure.
-            - The resulting dictionary is suitable for further tensorization or batching in text-code models.
-
-        Examples:
-            >>> import numpy as np
-            >>> import tempfile, json, os
-            >>> from torch import Tensor as tensor
-            >>> from omegaconf import DictConfig
-            >>> item =  {
-            ...         'dynamic': {
-            ...                 'dim1/code': np.array([5, 6, 1, 2]),
-            ...                 'dim1/numeric_value': np.array([50.0, 60.0, np.nan, np.nan]),
-            ...                 'dim0/time_delta_days': np.array([0, 0, 12, 0])
-            ...         },
-            ...         'static_values': [70.0],
-            ...         'static_indices': [2]
-            ...     }
-            >>> tokenized_metadata = {
-            ...     2: (tensor([1037, 2518,    0,    0]), tensor([1, 1, 0, 0])),
-            ...     5: (tensor([2138,    0,    0,    0]), tensor([1, 0, 0, 0])),
-            ...     6: (tensor([1039,    0,    0,    0]), tensor([1, 0, 0, 0])),
-            ...     1: (tensor([2093, 1999, 1037, 5216]), tensor([1, 1, 1, 1]))}
-            >>> text_code_item = PytorchDataset.process_text_code(item, tokenized_metadata)
-            >>> for each in sorted(list(text_code_item.keys())): print(each)
-            code
-            code_mask
-            code_tokens
-            mask
-            numeric_value
-            numeric_value_mask
-            static_mask
-            time_delta_days
-            >>> for key, value in text_code_item.items(): print(key, value);
-            mask [ True  True  True  True  True]
-            static_mask [ True False False False False]
-            code [2 5 6 1 2]
-            code_tokens [[1037. 2518.    0.    0.]
-             [2138.    0.    0.    0.]
-             [1039.    0.    0.    0.]
-             [2093. 1999. 1037. 5216.]
-             [1037. 2518.    0.    0.]]
-            code_mask [[1. 1. 0. 0.]
-             [1. 0. 0. 0.]
-             [1. 0. 0. 0.]
-             [1. 1. 1. 1.]
-             [1. 1. 0. 0.]]
-            numeric_value [70. 50. 60.  0.  0.]
-            time_delta_days [ 0  0  0 12  0]
-            numeric_value_mask [ True  True  True False False]
-        """
-        dynamic_data = item["dynamic"]
-        code = dynamic_data["dim1/code"]
-        numeric_value = dynamic_data["dim1/numeric_value"]
-        time_delta_days = dynamic_data["dim0/time_delta_days"]
-
-        static_mask = np.zeros(len(code), dtype=bool)
-        if do_prepend_static_data:
-            static_values = np.asarray(item["static_values"], dtype=np.float32)
-            static_indices = np.asarray(item["static_indices"], dtype=np.int32)
-            code = np.concatenate([static_indices, code], dtype=np.int32, casting="unsafe")
-            numeric_value = np.concatenate([static_values, numeric_value])
-            static_mask = np.zeros(len(code), dtype=bool)
-            static_mask[: len(static_values)] = True
-            time_delta_days = np.concatenate(
-                [np.zeros(len(static_values), dtype=time_delta_days.dtype), time_delta_days]
-            )
-
-        numeric_value_mask = ~np.isnan(numeric_value)
-        # Replace NaNs with 0s
-        np.nan_to_num(numeric_value, nan=0, copy=False)
-        np.nan_to_num(time_delta_days, nan=0, copy=False)
-
-        mask = np.ones(len(time_delta_days), dtype=bool)
-
-        tokens = [tokenized_codes[c] for c in code]
-        code_tokens, code_mask = zip(*tokens)
-        code_tokens = np.array(code_tokens)
-        code_mask = np.array(code_mask)
-
-        if not mask.shape == code.shape:
-            raise ValueError(f"Code and mask shape mismatch: {code.shape} vs {mask.shape}")
-
-        output = dict(
-            mask=mask,
-            static_mask=static_mask,
-            code=code,
-            code_tokens=code_tokens,
-            code_mask=code_mask,
-            numeric_value=numeric_value,
-            time_delta_days=time_delta_days,
-            numeric_value_mask=numeric_value_mask,
-        )
-        return output
-
-    @classmethod
-    def collate_text_code(cls, tokenized_codes: dict, batch: list[dict], prepend_static_data) -> dict:
-        """Collate a batch of text-code format data into a unified batch dictionary.
-
-        This method combines multiple data points in text-code format into a single batch, applying necessary
-        padding, tensorization, and handling of tokenized code representations.
-
-        Args:     tokenized_codes (dict): A dictionary mapping codes to their tokenized representations. batch
-        (list[dict]): A list of dictionaries, each representing a single data point. prepend_static_data
-        (bool): Whether to prepend static data to the dynamic data.
-
-        Returns:     dict: A dictionary containing the collated batch data, including:         - mask: Tensor
-        indicating valid data points across the batch.         - static_mask: Tensor indicating static data
-        points.         - code: Tensor of original codes.         - code_tokens: Tensor of tokenized code
-        representations.         - code_mask: Tensor mask for tokenized code sequences.         -
-        numeric_value: Tensor of numerical values.         - time_delta_days: Tensor of time deltas between
-        events.         - Additional task-specific labels if present in the input data.
-
-        Notes:     - This method is specifically designed for models that use text representations of codes. -
-        It handles padding to ensure uniform sequence lengths within the batch.     - All data is converted to
-        PyTorch tensors.     - The method is flexible to handle additional task-specific data present in the
-        input.
-        """
-        processed_batch = [
-            cls.process_text_code(item, tokenized_codes, prepend_static_data) for item in batch
-        ]
-        tensorized_batch = {
-            k: torch.nn.utils.rnn.pad_sequence(
-                [torch.as_tensor(x[k]) for x in processed_batch],
-                batch_first=True,
-                padding_value=0,
-            )
-            for k in processed_batch[0].keys()
-        }
-        for k in batch[0].keys():
-            if k not in ("dynamic", "static_values", "static_indices"):
-                tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
-
-        return tensorized_batch
-
-    @classmethod
-    def tokenize_metadata(cls, tokenizer, code_metadata, padding=True, special_tokens={}) -> dict:
-        """Tokenize metadata using the provided tokenizer.
-
-        This class method applies tokenization to the metadata, typically used for
-        processing code descriptions or other textual metadata in the dataset.
-
-        Args:
-            tokenizer: The tokenizer object to use for tokenization.
-            code_metadata (pl.LazyFrame): A LazyFrame containing the metadata to tokenize.
-            padding (bool, optional): Whether to apply padding to the tokenized outputs.
-                                      Defaults to True.
-            special_tokens (dict, optional): A dictionary of special tokens to include
-                                             in the tokenization process. Defaults to an empty dict.
-
-        Returns:
-            dict: A dictionary mapping vocabulary indices to tuples of (tokenized_output, attention_mask).
-
-        Notes:
-            - The method preprocesses the metadata by replacing '//' and '_' with spaces.
-            - Special tokens, if provided, are tokenized along with the metadata.
-            - The output dictionary uses the 'code/vocab_index' as keys.
-            - This method is crucial for preparing textual data for use in models that require
-                tokenized input.
-
-        Examples:
-        >>> from transformers import AutoTokenizer
-        >>> import polars as pl
-        >>> tokenizer = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
-        >>> code_metadata = pl.LazyFrame({
-        ...     "code": ["A//thing", "Because", "C", "three//in_a//row"],
-        ...     "code/vocab_index": [2, 5, 6, 1]
-        ...     })
-        >>> tokenized_metadata = PytorchDataset.tokenize_metadata(tokenizer, code_metadata)
-        >>> for each in tokenized_metadata.items(): print(each)
-        (2, ([170, 1645, 0, 0], [1, 1, 0, 0]))
-        (5, ([1272, 0, 0, 0], [1, 0, 0, 0]))
-        (6, ([172, 0, 0, 0], [1, 0, 0, 0]))
-        (1, ([1210, 1107, 170, 5105], [1, 1, 1, 1]))
-        """
-        code_metadata = code_metadata.with_columns(
-            pl.col("code").fill_null("").str.replace_all("//", " ").str.replace_all("_", " ")
-        )
-        special_token_keys = list(special_tokens.keys())
-        special_token_values = [special_tokens[k] for k in special_token_keys]
-        tokens = tokenizer(
-            code_metadata.select("code").collect().to_series().to_list() + special_token_values,
-            padding=padding,
-            return_token_type_ids=False,
-            add_special_tokens=False,
-            truncation=True,
-        )
-        token_key = list(tokens.keys())[0]
-        mask_key = list(tokens.keys())[1]
-
-        token_dict = dict(
-            zip(
-                code_metadata.select("code/vocab_index").collect().to_series().to_list() + special_token_keys,
-                zip(tokens[token_key], tokens[mask_key]),
-            )
-        )
-        return token_dict
-
-    @TimeableMixin.TimeAs
-    def collate(self, batch: list[dict]) -> dict:
-        """Combine a batch of data points into a single, tensorized batch.
-
-        This method serves as the main collation function, handling different collation strategies based on
-        the dataset configuration. It delegates to specific collation methods depending on the collate_type
-        specified in the configuration.
-
-        Args:     batch (list[dict]): A list of dictionaries, each representing a single data point as
-        returned by the __getitem__ method.
-
-        Returns:     dict: A dictionary containing the collated batch data. The exact structure depends on the
-        collation strategy used.
-
-        Raises:     NotImplementedError: If an unsupported collate type is specified in the configuration.
-
-        Notes:     - The method supports various collation strategies including event_stream,       triplet,
-        triplet_prompt, eic, and text_code.     - Each collation strategy is optimized for different model
-        architectures and data representations.     - The collated output is fully tensorized and padded,
-        ready for input into a PyTorch model.
-        """
-        collate_type = self.config.collate_type
-        if collate_type == CollateType.event_stream:
-            return self.collate_event_stream(batch)
-        elif collate_type == CollateType.triplet_prompt:
-            return self.collate_triplet(batch)
-        elif collate_type == CollateType.eic:
-            return self.collate_triplet(batch, self.config.do_prepend_static_data)
-        elif collate_type == CollateType.triplet:
-            return self.collate_triplet(batch, self.config.do_prepend_static_data)
-        elif collate_type == CollateType.text_code:
-            return self.collate_text_code(self.tokenized_codes, batch, self.config.do_prepend_static_data)
-        else:
-            raise NotImplementedError(f"Unsupported collate type {collate_type}!")

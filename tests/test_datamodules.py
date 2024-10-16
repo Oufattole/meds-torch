@@ -40,26 +40,18 @@ def test_pytorch_dataset(meds_dir, collate_type):
     pyd = PytorchDataset(cfg.data, split="train")
     assert not pyd.has_task
     item = pyd[0]
-    assert item.keys() == {"static_indices", "static_values", "dynamic"}
+    assert item.keys() == {"static_code", "static_numeric_value", "dynamic", "static_mask"}
     batch = pyd.collate([pyd[i] for i in range(2)])
     if collate_type == "event_stream":
         assert batch.keys() == {
             "event_mask",
             "dynamic_values_mask",
             "time_delta_days",
-            "dynamic_indices",
-            "dynamic_values",
-            "static_indices",
-            "static_values",
-        }
-    elif collate_type == "triplet":
-        assert batch.keys() == {
-            "mask",
+            "dynamic_code",
+            "dynamic_numeric_value",
+            "static_code",
+            "static_numeric_value",
             "static_mask",
-            "code",
-            "numeric_value",
-            "time_delta_days",
-            "numeric_value_mask",
         }
     elif collate_type == "text_code":
         assert set(batch.keys()) == {
@@ -72,26 +64,16 @@ def test_pytorch_dataset(meds_dir, collate_type):
             "time_delta_days",
             "numeric_value_mask",
         }
-    elif collate_type == "triplet_prompt":
-        assert batch.keys() == {
-            "mask",
-            "static_mask",
-            "code",
-            "numeric_value",
-            "time_delta_days",
-            "numeric_value_mask",
-        }
-    elif collate_type == "eic":
-        assert batch.keys() == {
-            "mask",
-            "static_mask",
-            "code",
-            "numeric_value",
-            "time_delta_days",
-            "numeric_value_mask",
-        }
     else:
-        raise NotImplementedError(f"{collate_type} not implemented")
+        assert batch.keys() == {
+            "dynamic_values_mask",
+            "time_delta_days",
+            "dynamic_code",
+            "dynamic_numeric_value",
+            "static_code",
+            "static_numeric_value",
+            "static_mask",
+        }
 
 
 @pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt", "text_code", "eic"])
@@ -106,7 +88,7 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     assert len(pyd) == 70
     assert pyd.has_task
     item = pyd[0]
-    assert item.keys() == {"static_indices", "static_values", "dynamic", "supervised_task"}
+    assert item.keys() == {"static_code", "static_numeric_value", "dynamic", "supervised_task"}
     task_df = pl.read_parquet(meds_dir / "tasks/supervised_task.parquet")
     code_index_df = pl.read_parquet(meds_dir / "triplet_tensors/metadata/codes.parquet")[
         "code", "code/vocab_index"
@@ -152,8 +134,8 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             "time_delta_days",
             "dynamic_indices",
             "dynamic_values",
-            "static_indices",
-            "static_values",
+            "static_code",
+            "static_numeric_value",
             SUPERVISED_TASK_NAME,
         }
     elif collate_type in ["triplet", "triplet_prompt"]:
@@ -215,8 +197,8 @@ def test_contrastive_windows(meds_dir, subject_level_sampling, collate_type):
     pyd = MultiWindowPytorchDataset(cfg.data, split="train")
     item = pyd[0]
     assert item.keys() == {"pre", "post"}
-    assert item["pre"].keys() == {"static_indices", "static_values", "dynamic"}
-    assert item["post"].keys() == {"static_indices", "static_values", "dynamic"}
+    assert item["pre"].keys() == {"static_code", "static_numeric_value", "dynamic"}
+    assert item["post"].keys() == {"static_code", "static_numeric_value", "dynamic"}
 
     batch = pyd.collate([pyd[i] for i in range(2)])
     assert batch.keys() == {"pre", "post"}
@@ -279,7 +261,7 @@ def test_random_windows_pytorch_dataset(meds_dir, collate_type):
     item = rwd[0]
     assert set(item.keys()) == {"window_0"}
     window = item["window_0"]
-    assert set(window.keys()) == {"static_indices", "static_values", "dynamic"}
+    assert set(window.keys()) == {"static_code", "static_numeric_value", "dynamic"}
 
     batch = rwd.collate([rwd[i] for i in range(2)])
     assert set(batch.keys()) == {"window_0"}
@@ -292,8 +274,8 @@ def test_random_windows_pytorch_dataset(meds_dir, collate_type):
             "time_delta_days",
             "dynamic_indices",
             "dynamic_values",
-            "static_indices",
-            "static_values",
+            "static_code",
+            "static_numeric_value",
         }
     elif collate_type in ["triplet", "triplet_prompt", "eic"]:
         assert set(window.keys()) == {
