@@ -852,8 +852,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                     f"Measurement sequence length {seq_len} is less than event sequence length"
                     f" {event_seq_len}!"
                 )
-            tensors["dim1/numeric_value"] = np.concatenate(tensors["dim1/numeric_value"][st:end], axis=0)
-            tensors["dim1/code"] = np.concatenate(tensors["dim1/code"][st:end], axis=0)
+            tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
+            tensors["dim1/code"] = tensors["dim1/code"][st:end]
             seq_len = tensors["dim1/code"].shape[0]
             tensors["dim0/time_delta_days"] = subpad_vectors(
                 tensors["dim0/time_delta_days"][st:end], tensors["dim1/bounds"][st:end]
