@@ -127,6 +127,7 @@ def main(cfg: DictConfig) -> float | None:
     :param cfg: DictConfig configuration composed by Hydra.
     :return: Optional[float] with optimized metric value.
     """
+    os.environ["RAY_memory_monitor_refresh_ms"] = "0"
     # apply extra utilities
     os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
     extras(cfg)
@@ -196,12 +197,15 @@ def main(cfg: DictConfig) -> float | None:
 
     if cfg.get("test"):
         logger.info("Computing Test Results")
-        datamodule = hydra.utils.instantiate(cfg.data)
         test_results = []
         with open_dict(cfg):
             del cfg.trainer.strategy
+            del cfg.callbacks
+            cfg.trainer.devices = cfg.test_devices
+        datamodule = hydra.utils.instantiate(cfg.data)
         for ckpt_path in summary_df["best_checkpoint_path"].to_list():
-            cfg.ckpt_path = ckpt_path
+            with open_dict(cfg):
+                cfg.ckpt_path = ckpt_path
             result, _ = evaluate(cfg, datamodule=datamodule)
             test_results.append(result)
         results = {key: [result[key] for result in test_results] for key in test_results[0].keys()}
