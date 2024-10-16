@@ -1,7 +1,5 @@
-import json
-import os
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -17,7 +15,6 @@ from nested_ragged_tensors.ragged_numpy import (
     JointNestedRaggedTensorDict,
 )
 from omegaconf import DictConfig
-from transformers import AutoTokenizer
 
 IDX_COL = "_row_index"
 
@@ -25,41 +22,8 @@ IDX_COL = "_row_index"
 class CollateType(StrEnum):
     event_stream = "event_stream"
     triplet = "triplet"
-    text_code = "text_code"
     triplet_prompt = "triplet_prompt"
     eic = "eic"
-
-
-def generate_subject_split_dict(meds_dir):
-    """Generate a dictionary mapping split names to lists of subject IDs.
-
-    This function scans through the directory structure of a MEDS dataset, reading Parquet files to extract
-    unique subject IDs for each split.
-
-    Args:     meds_dir (str): Path to the root directory of the MEDS dataset.
-
-    Returns:     dict: A dictionary where keys are split names (e.g., 'train/shard0')           and values are
-    lists of subject IDs belonging to that split.
-
-    Raises:     FileNotFoundError: If the specified directory does not exist.
-
-    Notes:     - The function expects a directory structure where split directories       contain Parquet
-    files with subject data.     - It logs a warning if a specified path is not a directory.
-    """
-    subject_split_dict = {}
-
-    for split_dir in os.listdir(meds_dir):
-        split_path = Path(meds_dir) / split_dir
-        if split_path.is_dir():
-            for shard_file in split_path.glob("*.parquet"):
-                split_name = f"{split_dir}/{shard_file.stem}"
-                df = pl.read_parquet(shard_file)
-                subject_ids = df["subject_id"].unique().to_list()
-                subject_split_dict[split_name] = subject_ids
-        else:
-            logger.warning(f"Directory {split_path} does not exist or is not a directory.")
-
-    return subject_split_dict
 
 
 def subpad_vectors(a: np.ndarray, b: np.ndarray):
@@ -88,71 +52,6 @@ def subpad_vectors(a: np.ndarray, b: np.ndarray):
     return result
 
 
-def count_or_proportion(N: int | pl.Expr | None, cnt_or_prop: int | float) -> int:
-    """Returns `cnt_or_prop` if it is an integer or `int(N*cnt_or_prop)` if it is a float.
-
-    Resolves cutoff variables that can either be passed as integer counts or fractions of a whole. E.g., the
-    vocabulary should contain only elements that occur with count or proportion at least X, where X might be
-    20 times, or 1%.
-
-    Arguments:
-        N: The total number of elements in the whole. Only used if `cnt_or_prop` is a proportion (float).
-        cnt_or_prop: The cutoff value, either as an integer count or a proportion of the whole.
-
-    Returns:
-        The cutoff value as an integer count of the whole.
-
-    Raises:
-        TypeError: If `cnt_or_prop` is not an integer or a float or if `N` is needed and is not an integer or
-            a polars Expression.
-        ValueError: If `cnt_or_prop` is not a positive integer or a float between 0 and 1.
-
-    Examples:
-        >>> count_or_proportion(100, 0.1)
-        10
-        >>> count_or_proportion(None, 11)
-        11
-        >>> count_or_proportion(100, 0.116)
-        12
-        >>> count_or_proportion(None, 0)
-        Traceback (most recent call last):
-            ...
-        ValueError: 0 must be positive if it is an integer
-        >>> count_or_proportion(None, 1.3)
-        Traceback (most recent call last):
-            ...
-        ValueError: 1.3 must be between 0 and 1 if it is a float
-        >>> count_or_proportion(None, "a")
-        Traceback (most recent call last):
-            ...
-        TypeError: a must be a positive integer or a float between 0 or 1
-        >>> count_or_proportion("a", 0.2)
-        Traceback (most recent call last):
-            ...
-        TypeError: a must be an integer or a polars.Expr when cnt_or_prop is a float!
-    """
-
-    match cnt_or_prop:
-        case int() if 0 < cnt_or_prop:
-            return cnt_or_prop
-        case int():
-            raise ValueError(f"{cnt_or_prop} must be positive if it is an integer")
-        case float() if 0 < cnt_or_prop < 1:
-            pass
-        case float():
-            raise ValueError(f"{cnt_or_prop} must be between 0 and 1 if it is a float")
-        case _:
-            raise TypeError(f"{cnt_or_prop} must be a positive integer or a float between 0 or 1")
-
-    match N:
-        case int():
-            return int(round(cnt_or_prop * N))
-        case pl.Expr():
-            return (N * cnt_or_prop).round(0).cast(int)
-        case _:
-            raise TypeError(f"{N} must be an integer or a polars.Expr when cnt_or_prop is a float!")
-
-
 class SubsequenceSamplingStrategy(StrEnum):
     """An enumeration of the possible subsequence sampling strategies for the dataset.
 
@@ -171,42 +70,6 @@ class SeqPaddingSide(StrEnum):
 
     LEFT = "left"
     RIGHT = "right"
-
-
-def to_int_index(col: pl.Expr) -> pl.Expr:
-    """Returns an integer index of the unique elements seen in this column.
-
-    The returned index is into a vocabulary sorted lexographically.
-
-    Args:
-        col: The column containing the data to be converted into integer indices.
-
-    Examples:
-        >>> import polars as pl
-        >>> X = pl.DataFrame({
-        ...     'c': ['foo', 'bar', 'foo', 'bar', 'baz', None, 'bar', 'aba'],
-        ...     'd': [1, 2, 3, 4, 5, 6, 7, 8]
-        ... })
-        >>> X.with_columns(to_int_index(pl.col('c')).alias("c_index"))
-        shape: (8, 3)
-        ┌──────┬─────┬─────────┐
-        │ c    ┆ d   ┆ c_index │
-        │ ---  ┆ --- ┆ ---     │
-        │ str  ┆ i64 ┆ u32     │
-        ╞══════╪═════╪═════════╡
-        │ foo  ┆ 1   ┆ 3       │
-        │ bar  ┆ 2   ┆ 1       │
-        │ foo  ┆ 3   ┆ 3       │
-        │ bar  ┆ 4   ┆ 1       │
-        │ baz  ┆ 5   ┆ 2       │
-        │ null ┆ 6   ┆ null    │
-        │ bar  ┆ 7   ┆ 1       │
-        │ aba  ┆ 8   ┆ 0       │
-        └──────┴─────┴─────────┘
-    """
-
-    indices = col.drop_nulls().unique().sort().search_sorted(col, side="left")
-    return pl.when(col.is_null()).then(pl.lit(None)).otherwise(indices).alias(col.meta.output_name())
 
 
 def merge_task_with_static(task_df: pl.DataFrame, static_dfs: dict[str, pl.DataFrame], tasks: list[str]):
@@ -353,8 +216,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
     various types of medical events, static patient information, and task-specific labels. It provides
     functionality for loading, processing, and collating data for use in PyTorch models.
 
-    Key Features: - Handles different collation strategies (event stream, triplet, text-code, etc.) - Supports
-    task-specific data handling for binary classification - Implements custom sampling strategies and sequence
+    Key Features: - Handles different collation strategies (event stream, triplet, etc.) - Supports task-
+    specific data handling for binary classification - Implements custom sampling strategies and sequence
     length constraints
 
     Args:     cfg (DictConfig): Configuration options for the dataset.     split (str): The data split to use
@@ -365,51 +228,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
     DataFrames for each data shard.     subj_indices (dict): Mapping of subject IDs to their indices in the
     dataset.     subj_seq_bounds (dict): Sequence bounds (start, end) for each subject.     index (list): List
     of (subject_id, start, end) tuples for data access.     labels (dict): Task-specific labels for each data
-    point.     tasks (list): List of task names.     task_types (dict): Mapping of task names to their types
-    (classification, regression, etc.).     task_vocabs (dict): Vocabularies for classification tasks.
-    tokenized_codes (dict): Tokenized representations of event codes (for text-code collation).
+    point.     tasks (list): List of task names.
 
     Methods:     __len__(): Returns the number of items in the dataset.     __getitem__(idx): Retrieves a
     single data point.     collate(batch): Collates a batch of data points based on the specified collation
     strategy.
     """
-
-    TYPE_CHECKERS = {
-        "multi_class_classification": [
-            (
-                {pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64, pl.Int8, pl.Int16, pl.Int32, pl.Int64},
-                None,
-            ),
-            ({pl.Categorical(ordering="physical"), pl.Categorical(ordering="lexical")}, to_int_index),
-            ({pl.Utf8}, to_int_index),
-        ],
-        "binary_classification": [({pl.Boolean}, lambda Y: Y.cast(pl.Float32))],
-        "regression": [({pl.Float32, pl.Float64}, None)],
-    }
-    """Type checker and conversion parameters for labeled datasets."""
-
-    @classmethod
-    def normalize_task(cls, col: pl.Expr, dtype: pl.DataType) -> tuple[str, pl.Expr]:
-        """Normalize task labels to a common format based on their data type.
-
-        This method determines the appropriate task type (e.g., multi-class classification, binary
-        classification, regression) based on the data type of the label column and applies any necessary
-        transformations to normalize the data.
-
-        Args:     col (pl.Expr): The polars Expression containing the task labels.     dtype (pl.DataType):
-        The polars data type of the task labels.
-
-        Returns:     tuple: A tuple containing two elements:         - str: The determined task type (e.g.,
-        'multi_class_classification', 'binary_classification', 'regression').         - pl.Expr: The
-        normalized column expression.
-
-        Raises:     TypeError: If the task labels are not of a supported type.
-        """
-        for task_type, checkers in cls.TYPE_CHECKERS.items():
-            for valid_dtypes, normalize_fn in checkers:
-                if dtype in valid_dtypes:
-                    return task_type, (col if normalize_fn is None else normalize_fn(col))
-        raise TypeError(f"Can't process label of {dtype} type!")
 
     def __init__(self, cfg: DictConfig, split: str):
         super().__init__()
@@ -420,51 +244,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         logger.info("Scanning code metadata")
         self.code_metadata = pl.scan_parquet(self.config.code_metadata_fp)
 
-        logger.info("Reading splits & subject shards")
-        self.read_shards()
-
-        logger.info("Reading subject descriptors")
+        logger.info("Reading subject schema and static data")
         self.read_subject_descriptors()
-
-        if self.config.min_seq_len is not None and self.config.min_seq_len > 1:
-            logger.info(f"Restricting to subjects with at least {self.config.min_seq_len} events")
-            self.filter_to_min_seq_len()
-
-        if self.config.train_subset_size not in (None, "FULL") and self.split == "train":
-            logger.info(f"Filtering training subset size to {self.config.train_subset_size}")
-            self.filter_to_subset()
-
-        self.set_inter_event_time_stats()
-
-        # Initialize tokenizer here
-        self.init_tokenizer()
-
-    def init_tokenizer(self):
-        if self.config.collate_type == CollateType.text_code:
-            if not hasattr(self, "tokenized_codes"):
-                # Disable parallelism for tokenization as it will cause issues when num_workers > 0 in the
-                # pytorch dataloader
-                os.environ["TOKENIZERS_PARALLELISM"] = "false"
-                tokenizer = AutoTokenizer.from_pretrained(
-                    self.config.tokenizer, model_max_length=self.config.text_max_seq_len
-                )
-                self.tokenized_codes = self.tokenize_metadata(
-                    tokenizer, self.code_metadata, special_tokens={self.config.EOS_TOKEN_ID: "[CLS]"}
-                )
-
-    def read_shards(self):
-        """Reads the split-specific subject shards from the MEDS dataset.
-
-        This method scans the specified MEDS cohort directory for Parquet files, organizes them by split, and
-        creates mappings between subjects and their respective shards.
-        """
-        all_shards = generate_subject_split_dict(Path(self.config.meds_cohort_dir) / "data")
-        self.shards = {sp: subjs for sp, subjs in all_shards.items() if sp.startswith(f"{self.split}")}
-        self.subj_map = {subj: sp for sp, subjs in self.shards.items() for subj in subjs}
-        if not self.shards:
-            logger.warning(
-                f"No shards found for split {self.split}. Check the directory structure and file names."
-            )
 
     def read_subject_descriptors(self):
         """Read subject schemas and static data from the dataset.
@@ -476,8 +257,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         DataFrames for each shard. - self.subj_indices: Mapping of subject IDs to their indices. -
         self.subj_seq_bounds: Dictionary of sequence bounds for each subject. - self.index: List of
         (subject_id, start, end) tuples for data access. - self.labels: Dictionary of task labels (if tasks
-        are specified). - self.tasks: List of task names. - self.task_types: Dictionary of task types. -
-        self.task_vocabs: Dictionary of task vocabularies.
+        are specified). - self.tasks: List of task names.
 
         If tasks are specified in the configuration, this method also processes the task labels and integrates
         them with the static data.
@@ -485,15 +265,28 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         Raises:     ValueError: If duplicate subjects are found across shards or if                 required
         task information is missing.     FileNotFoundError: If specified task files are not found.
         """
+
+        schema_root = Path(self.config.schema_files_root)
+
         self.static_dfs = {}
         self.subj_indices = {}
         self.subj_seq_bounds = {}
+        self.subj_map = {}
 
-        for shard in self.shards.keys():
-            static_fp = Path(self.config.schema_files_root) / f"{shard}.parquet"
+        schema_files = list(schema_root.glob(f"{self.split}/*.parquet"))
+        if not schema_files:
+            raise FileNotFoundError(
+                f"No schema files found in {schema_root}! If your data is not sharded by split, this error "
+                "may occur because this codebase does not handle non-split sharded data. See Issue #79 for "
+                "tracking this issue."
+            )
+
+        for schema_fp in schema_files:
+            shard = str(schema_fp.relative_to(schema_root).with_suffix(""))
+
             df = (
                 pl.read_parquet(
-                    static_fp,
+                    schema_fp,
                     columns=[
                         "subject_id",
                         "start_time",
@@ -512,6 +305,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
             self.static_dfs[shard] = df
             subject_ids = df["subject_id"]
+            self.subj_map.update({subj: shard for subj in subject_ids})
+
             n_events = df.select(pl.col("time").list.len().alias("n_events")).get_column("n_events")
             for i, (subj, n_events_count) in enumerate(zip(subject_ids, n_events)):
                 if subj in self.subj_indices or subj in self.subj_seq_bounds:
@@ -528,8 +323,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                 logger.info(f"If the task file is not found at {task_df_fp}")
                 task_df_fp = task_df_fp.with_suffix("") / "**/*.parquet"
                 logger.info(f"Searching for task parquets over the glob {task_df_fp}")
-
-            task_info_fp = Path(self.config.task_info_path)
 
             logger.info(f"Reading task constraints for {self.config.task_name} from {task_df_fp}")
             task_df = pl.read_parquet(task_df_fp)
@@ -548,20 +341,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                 self.tasks = sorted(
                     [c for c in task_df.columns if c not in ["subject_id", "start_time", "end_time"]]
                 )
-
-            task_info = self.get_task_info(task_df)
-
-            if task_info_fp.is_file():
-                loaded_task_info = json.loads(task_info_fp.read_text())
-                if loaded_task_info != task_info:
-                    raise ValueError(
-                        f"Task info differs from on disk!\nDisk:\n{loaded_task_info}\n"
-                        f"Local:\n{task_info}\nSplit: {self.split}"
-                    )
-                logger.info(f"Re-built existing {task_info_fp} and it matches.")
-            else:
-                task_info_fp.parent.mkdir(exist_ok=True, parents=True)
-                task_info_fp.write_text(json.dumps(task_info))
 
             idx_col = "_row_index"
             while idx_col in task_df.columns:
@@ -582,177 +361,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             self.index = [(subj, *bounds) for subj, bounds in self.subj_seq_bounds.items()]
             self.labels = {}
             self.tasks = None
-            self.task_types = None
-            self.task_vocabs = None
-
-    def get_task_info(self, task_df: pl.DataFrame):
-        """Extract and process task information from the task DataFrame.
-
-        This method analyzes the task DataFrame to determine the type of each task (e.g., binary
-        classification, multi-class classification) and creates appropriate vocabularies for classification
-        tasks.
-
-        Args:     task_df (pl.DataFrame): DataFrame containing task labels and related information.
-
-        Returns:     dict: A dictionary containing processed task information:         - 'tasks': List of task
-        names.         - 'vocabs': Dictionary mapping task names to their vocabularies.         - 'types':
-        Dictionary mapping task names to their types.
-
-        Raises:     NotImplementedError: If an unsupported task type is encountered.
-        """
-        self.task_types = {}
-        self.task_vocabs = {}
-
-        normalized_cols = []
-        for t in self.tasks:
-            task_type, normalized_vals = self.normalize_task(col=pl.col(t), dtype=task_df.schema[t])
-            self.task_types[t] = task_type
-            normalized_cols.append(normalized_vals.alias(t))
-
-        task_df = task_df.with_columns(normalized_cols)
-
-        for t in self.tasks:
-            match self.task_types[t]:
-                case "binary_classification":
-                    self.task_vocabs[t] = [False, True]
-                case "multi_class_classification":
-                    self.task_vocabs[t] = list(range(task_df.select(pl.col(t).max()).item() + 1))
-                case _:
-                    raise NotImplementedError(f"Task type {self.task_types[t]} not implemented!")
-
-        return {"tasks": sorted(self.tasks), "vocabs": self.task_vocabs, "types": self.task_types}
-
-    def filter_to_min_seq_len(self):
-        """Filter the dataset to include only subjects with at least the minimum sequence length.
-
-        This method removes data points where the sequence length is less than the specified minimum sequence
-        length (self.config.min_seq_len). It updates the dataset's index and labels accordingly.
-
-        Notes:     - This method modifies the self.index and self.labels attributes in-place.     - It logs
-        information about the number of data points and subjects before       and after filtering.     - If
-        tasks are specified, it warns that filtering may affect model comparability.
-
-        Raises:     AttributeError: If self.config.min_seq_len is not set.
-
-        Side effects:     - Reduces the size of self.index and self.labels.     - Logs information about the
-        filtering process.
-        """
-        if self.has_task:
-            logger.warning(
-                f"Filtering task {self.config.task_name} to min_seq_len {self.config.min_seq_len}. "
-                "This may result in incomparable model results against runs with different constraints!"
-            )
-
-        orig_len = len(self)
-        orig_n_subjects = len(set(self.subject_ids))
-        valid_indices = [
-            i for i, (subj, start, end) in enumerate(self.index) if end - start >= self.config.min_seq_len
-        ]
-        self.index = [self.index[i] for i in valid_indices]
-        self.labels = {t: [t_labels[i] for i in valid_indices] for t, t_labels in self.labels.items()}
-        new_len = len(self)
-        new_n_subjects = len(set(self.subject_ids))
-        logger.info(
-            f"Filtered data due to sequence length constraint (>= {self.config.min_seq_len}) from "
-            f"{orig_len} to {new_len} rows and {orig_n_subjects} to {new_n_subjects} subjects."
-        )
-
-    def filter_to_subset(self):
-        """Filter the dataset to include only a subset of subjects for the training split.
-
-        This method randomly selects a subset of subjects based on the self.config.train_subset_size
-        parameter. It's typically used to create smaller training sets for experimentation or debugging
-        purposes.
-
-        The method only applies to the training split ('train') and uses a random number generator seeded with
-        self.config.train_subset_seed for reproducibility.
-
-        Notes:     - This method modifies the self.index and self.labels attributes in-place.     - It logs
-        information about the number of data points and subjects before       and after filtering.     - The
-        subset size can be specified as an integer (exact number of subjects)       or a float (proportion of
-        total subjects).
-
-        Raises:     ValueError: If self.config.train_subset_size is not properly set.
-
-        Side effects:     - Reduces the size of self.index and self.labels for the training split.     - Logs
-        information about the subset selection process.
-        """
-
-        orig_len = len(self)
-        orig_n_subjects = len(set(self.subject_ids))
-        rng = np.random.default_rng(self.config.train_subset_seed)
-        subset_subjects = rng.choice(
-            list(set(self.subject_ids)),
-            size=count_or_proportion(orig_n_subjects, self.config.train_subset_size),
-            replace=False,
-        )
-        valid_indices = [i for i, (subj, start, end) in enumerate(self.index) if subj in subset_subjects]
-        self.index = [self.index[i] for i in valid_indices]
-        self.labels = {t: [t_labels[i] for i in valid_indices] for t, t_labels in self.labels.items()}
-        new_len = len(self)
-        new_n_subjects = len(set(self.subject_ids))
-        logger.info(
-            f"Filtered data to subset of {self.config.train_subset_size} subjects from "
-            f"{orig_len} to {new_len} rows and {orig_n_subjects} to {new_n_subjects} subjects."
-        )
-
-    def set_inter_event_time_stats(self):
-        """Calculate and set inter-event time statistics for the dataset.
-
-        This method computes statistics related to the time differences between consecutive events in the
-        dataset. It calculates the minimum, mean (log), and standard deviation (log) of inter-event times.
-
-        The computed statistics are stored as instance attributes: - self.mean_log_inter_event_time_min: Mean
-        of log inter-event times - self.std_log_inter_event_time_min: Standard deviation of log inter-event
-        times
-
-        Raises:     ValueError: If the dataset is empty (no static DataFrames).
-
-        Side effects:     - Sets the above-mentioned instance attributes.     - Logs warnings if any non-
-        positive inter-event times are found.     - Removes subjects with invalid (non-positive) inter-event
-        times from the dataset.
-
-        TODO: allow use of inter-event time statistics for normalizing time-deltas
-        """
-        if len(self.static_dfs) == 0:
-            raise ValueError(
-                f"The {self.split} dataset is empty, there should be at least one static dataframe."
-            )
-        data_for_stats = pl.concat([x.lazy() for x in self.static_dfs.values()])
-        stats = (
-            data_for_stats.select(
-                pl.col("time").list.diff().explode().drop_nulls().drop_nans().alias("inter_event_time")
-            )
-            .select(
-                pl.col("inter_event_time").min().alias("min"),
-                pl.col("inter_event_time").log().mean().alias("mean_log"),
-                pl.col("inter_event_time").log().std().alias("std_log"),
-            )
-            .collect()
-        )
-
-        if stats["min"].item() <= timedelta(0):
-            bad_inter_event_times = data_for_stats.filter(
-                pl.col("time").list.diff().list.min() <= 0
-            ).collect()
-            bad_subject_ids = set(bad_inter_event_times["subject_id"].to_list())
-            warning_strs = [
-                f"Observed inter-event times <= 0 for {len(bad_inter_event_times)} subjects!",
-                f"Bad Subject IDs: {', '.join(str(x) for x in bad_subject_ids)}",
-                f"Global min: {stats['min'].item()}",
-            ]
-            if self.config.meds_dir is not None:
-                fp = Path(self.config.meds_dir) / f"malformed_data_{self.split}.parquet"
-                bad_inter_event_times.write_parquet(fp)
-                warning_strs.append(f"Wrote malformed data records to {fp}")
-            warning_strs.append("Removing malformed subjects")
-
-            logger.warning("\n".join(warning_strs))
-
-            self.index = [x for x in self.index if x[0] not in bad_subject_ids]
-
-        self.mean_log_inter_event_time_min = stats["mean_log"].item()
-        self.std_log_inter_event_time_min = stats["std_log"].item()
 
     @property
     def subject_ids(self) -> list[int]:
@@ -892,10 +500,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         if end - st > self.config.max_seq_len:
             raise ValueError(f"Sequence length {end - st} exceeds max_seq_len {self.config.max_seq_len}!")
-        if self.config.min_seq_len and (end - st < self.config.min_seq_len):
-            raise ValueError(
-                f"Sequence length {end - st} is less than min_seq_len {self.config.min_seq_len}!"
-            )
 
         if end == st:
             raise ValueError(f"Sequence length {end - st} is 0!")
@@ -946,7 +550,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         return out
 
-    @SeedableMixin.WithSeed
     @TimeableMixin.TimeAs
     def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
         """Returns a Returns a dictionary corresponding to a single subject's data.
@@ -966,7 +569,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         if "dynamic" not in out:
             raise ValueError(f"Failed to load dynamic data for subject {subject_id} at idx {idx}!")
-        return out
         return out
 
     @TimeableMixin.TimeAs
@@ -1021,15 +623,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         out_labels = {}
         for task in self.tasks:
-            match self.task_types[task]:
-                case "multi_class_classification":
-                    out_labels[task] = collated[task].long()
-                case "binary_classification":
-                    out_labels[task] = collated[task].float()
-                case "regression":
-                    out_labels[task] = collated[task].float()
-                case _:
-                    raise TypeError(f"Don't know how to tensorify task of type {self.task_types[task]}!")
+            out_labels[task] = collated[task].float()
 
         # add task labels
         for k in batch[0].keys():
@@ -1247,229 +841,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                 tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
         return tensorized_batch
 
-    @classmethod
-    def process_text_code(cls, item: dict, tokenized_codes: dict, do_prepend_static_data=True) -> dict:
-        """Process a single data point for text-code format.
-
-        This method takes a dictionary containing dynamic and static data and processes
-        it into a format suitable for text-code based models, including tokenization of codes.
-
-        Args:
-            item (dict): A dictionary containing 'dynamic' and 'static' data.
-            tokenized_codes (dict): A dictionary mapping codes to their tokenized representations.
-            do_prepend_static_data (bool, optional): Whether to prepend static data
-                                                     to the dynamic data. Defaults to True.
-
-        Returns:
-            dict: A processed dictionary containing:
-                - mask: Boolean mask indicating valid data points.
-                - static_mask: Boolean mask indicating static data points.
-                - code: Original codes (not tokenized).
-                - code_tokens: Tokenized representations of codes.
-                - code_mask: Mask for tokenized code sequences.
-                - numeric_value: Concatenated static and dynamic numerical values.
-                - time_delta_days: Time deltas between events.
-                - numeric_value_mask: Boolean mask for valid numeric values.
-
-        Notes:
-            - This method is specifically designed for models that use text representations of codes.
-            - It integrates tokenization information with the original data structure.
-            - The resulting dictionary is suitable for further tensorization or batching in text-code models.
-
-        Examples:
-            >>> import numpy as np
-            >>> import tempfile, json, os
-            >>> from torch import Tensor as tensor
-            >>> from omegaconf import DictConfig
-            >>> item =  {
-            ...         'dynamic': {
-            ...                 'dim1/code': np.array([5, 6, 1, 2]),
-            ...                 'dim1/numeric_value': np.array([50.0, 60.0, np.nan, np.nan]),
-            ...                 'dim0/time_delta_days': np.array([0, 0, 12, 0])
-            ...         },
-            ...         'static_values': [70.0],
-            ...         'static_indices': [2]
-            ...     }
-            >>> tokenized_metadata = {
-            ...     2: (tensor([1037, 2518,    0,    0]), tensor([1, 1, 0, 0])),
-            ...     5: (tensor([2138,    0,    0,    0]), tensor([1, 0, 0, 0])),
-            ...     6: (tensor([1039,    0,    0,    0]), tensor([1, 0, 0, 0])),
-            ...     1: (tensor([2093, 1999, 1037, 5216]), tensor([1, 1, 1, 1]))}
-            >>> text_code_item = PytorchDataset.process_text_code(item, tokenized_metadata)
-            >>> for each in sorted(list(text_code_item.keys())): print(each)
-            code
-            code_mask
-            code_tokens
-            mask
-            numeric_value
-            numeric_value_mask
-            static_mask
-            time_delta_days
-            >>> for key, value in text_code_item.items(): print(key, value);
-            mask [ True  True  True  True  True]
-            static_mask [ True False False False False]
-            code [2 5 6 1 2]
-            code_tokens [[1037. 2518.    0.    0.]
-             [2138.    0.    0.    0.]
-             [1039.    0.    0.    0.]
-             [2093. 1999. 1037. 5216.]
-             [1037. 2518.    0.    0.]]
-            code_mask [[1. 1. 0. 0.]
-             [1. 0. 0. 0.]
-             [1. 0. 0. 0.]
-             [1. 1. 1. 1.]
-             [1. 1. 0. 0.]]
-            numeric_value [70. 50. 60.  0.  0.]
-            time_delta_days [ 0  0  0 12  0]
-            numeric_value_mask [ True  True  True False False]
-        """
-        dynamic_data = item["dynamic"]
-        code = dynamic_data["dim1/code"]
-        numeric_value = dynamic_data["dim1/numeric_value"]
-        time_delta_days = dynamic_data["dim0/time_delta_days"]
-
-        static_mask = np.zeros(len(code), dtype=bool)
-        if do_prepend_static_data:
-            static_values = np.asarray(item["static_values"], dtype=np.float32)
-            static_indices = np.asarray(item["static_indices"], dtype=np.int32)
-            code = np.concatenate([static_indices, code], dtype=np.int32, casting="unsafe")
-            numeric_value = np.concatenate([static_values, numeric_value])
-            static_mask = np.zeros(len(code), dtype=bool)
-            static_mask[: len(static_values)] = True
-            time_delta_days = np.concatenate(
-                [np.zeros(len(static_values), dtype=time_delta_days.dtype), time_delta_days]
-            )
-
-        numeric_value_mask = ~np.isnan(numeric_value)
-        # Replace NaNs with 0s
-        np.nan_to_num(numeric_value, nan=0, copy=False)
-        np.nan_to_num(time_delta_days, nan=0, copy=False)
-
-        mask = np.ones(len(time_delta_days), dtype=bool)
-
-        tokens = [tokenized_codes[c] for c in code]
-        code_tokens, code_mask = zip(*tokens)
-        code_tokens = np.array(code_tokens)
-        code_mask = np.array(code_mask)
-
-        if not mask.shape == code.shape:
-            raise ValueError(f"Code and mask shape mismatch: {code.shape} vs {mask.shape}")
-
-        output = dict(
-            mask=mask,
-            static_mask=static_mask,
-            code=code,
-            code_tokens=code_tokens,
-            code_mask=code_mask,
-            numeric_value=numeric_value,
-            time_delta_days=time_delta_days,
-            numeric_value_mask=numeric_value_mask,
-        )
-        return output
-
-    @classmethod
-    def collate_text_code(cls, tokenized_codes: dict, batch: list[dict], prepend_static_data) -> dict:
-        """Collate a batch of text-code format data into a unified batch dictionary.
-
-        This method combines multiple data points in text-code format into a single batch, applying necessary
-        padding, tensorization, and handling of tokenized code representations.
-
-        Args:     tokenized_codes (dict): A dictionary mapping codes to their tokenized representations. batch
-        (list[dict]): A list of dictionaries, each representing a single data point. prepend_static_data
-        (bool): Whether to prepend static data to the dynamic data.
-
-        Returns:     dict: A dictionary containing the collated batch data, including:         - mask: Tensor
-        indicating valid data points across the batch.         - static_mask: Tensor indicating static data
-        points.         - code: Tensor of original codes.         - code_tokens: Tensor of tokenized code
-        representations.         - code_mask: Tensor mask for tokenized code sequences.         -
-        numeric_value: Tensor of numerical values.         - time_delta_days: Tensor of time deltas between
-        events.         - Additional task-specific labels if present in the input data.
-
-        Notes:     - This method is specifically designed for models that use text representations of codes. -
-        It handles padding to ensure uniform sequence lengths within the batch.     - All data is converted to
-        PyTorch tensors.     - The method is flexible to handle additional task-specific data present in the
-        input.
-        """
-        processed_batch = [
-            cls.process_text_code(item, tokenized_codes, prepend_static_data) for item in batch
-        ]
-        tensorized_batch = {
-            k: torch.nn.utils.rnn.pad_sequence(
-                [torch.as_tensor(x[k]) for x in processed_batch],
-                batch_first=True,
-                padding_value=0,
-            )
-            for k in processed_batch[0].keys()
-        }
-        for k in batch[0].keys():
-            if k not in ("dynamic", "static_values", "static_indices"):
-                tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
-
-        return tensorized_batch
-
-    @classmethod
-    def tokenize_metadata(cls, tokenizer, code_metadata, padding=True, special_tokens={}) -> dict:
-        """Tokenize metadata using the provided tokenizer.
-
-        This class method applies tokenization to the metadata, typically used for
-        processing code descriptions or other textual metadata in the dataset.
-
-        Args:
-            tokenizer: The tokenizer object to use for tokenization.
-            code_metadata (pl.LazyFrame): A LazyFrame containing the metadata to tokenize.
-            padding (bool, optional): Whether to apply padding to the tokenized outputs.
-                                      Defaults to True.
-            special_tokens (dict, optional): A dictionary of special tokens to include
-                                             in the tokenization process. Defaults to an empty dict.
-
-        Returns:
-            dict: A dictionary mapping vocabulary indices to tuples of (tokenized_output, attention_mask).
-
-        Notes:
-            - The method preprocesses the metadata by replacing '//' and '_' with spaces.
-            - Special tokens, if provided, are tokenized along with the metadata.
-            - The output dictionary uses the 'code/vocab_index' as keys.
-            - This method is crucial for preparing textual data for use in models that require
-                tokenized input.
-
-        Examples:
-        >>> from transformers import AutoTokenizer
-        >>> import polars as pl
-        >>> tokenizer = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
-        >>> code_metadata = pl.LazyFrame({
-        ...     "code": ["A//thing", "Because", "C", "three//in_a//row"],
-        ...     "code/vocab_index": [2, 5, 6, 1]
-        ...     })
-        >>> tokenized_metadata = PytorchDataset.tokenize_metadata(tokenizer, code_metadata)
-        >>> for each in tokenized_metadata.items(): print(each)
-        (2, ([170, 1645, 0, 0], [1, 1, 0, 0]))
-        (5, ([1272, 0, 0, 0], [1, 0, 0, 0]))
-        (6, ([172, 0, 0, 0], [1, 0, 0, 0]))
-        (1, ([1210, 1107, 170, 5105], [1, 1, 1, 1]))
-        """
-        code_metadata = code_metadata.with_columns(
-            pl.col("code").fill_null("").str.replace_all("//", " ").str.replace_all("_", " ")
-        )
-        special_token_keys = list(special_tokens.keys())
-        special_token_values = [special_tokens[k] for k in special_token_keys]
-        tokens = tokenizer(
-            code_metadata.select("code").collect().to_series().to_list() + special_token_values,
-            padding=padding,
-            return_token_type_ids=False,
-            add_special_tokens=False,
-            truncation=True,
-        )
-        token_key = list(tokens.keys())[0]
-        mask_key = list(tokens.keys())[1]
-
-        token_dict = dict(
-            zip(
-                code_metadata.select("code/vocab_index").collect().to_series().to_list() + special_token_keys,
-                zip(tokens[token_key], tokens[mask_key]),
-            )
-        )
-        return token_dict
-
     @TimeableMixin.TimeAs
     def collate(self, batch: list[dict]) -> dict:
         """Combine a batch of data points into a single, tensorized batch.
@@ -1487,9 +858,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         Raises:     NotImplementedError: If an unsupported collate type is specified in the configuration.
 
         Notes:     - The method supports various collation strategies including event_stream,       triplet,
-        triplet_prompt, eic, and text_code.     - Each collation strategy is optimized for different model
-        architectures and data representations.     - The collated output is fully tensorized and padded,
-        ready for input into a PyTorch model.
+        triplet_prompt, eic.     - Each collation strategy is optimized for different model architectures and
+        data representations.     - The collated output is fully tensorized and padded, ready for input into a
+        PyTorch model.
         """
         collate_type = self.config.collate_type
         if collate_type == CollateType.event_stream:
@@ -1500,7 +871,5 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             return self.collate_triplet(batch, self.config.do_prepend_static_data)
         elif collate_type == CollateType.triplet:
             return self.collate_triplet(batch, self.config.do_prepend_static_data)
-        elif collate_type == CollateType.text_code:
-            return self.collate_text_code(self.tokenized_codes, batch, self.config.do_prepend_static_data)
         else:
             raise NotImplementedError(f"Unsupported collate type {collate_type}!")
