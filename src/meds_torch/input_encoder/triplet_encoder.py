@@ -64,10 +64,10 @@ class TripletEncoder(nn.Module, Module):
 
     def get_embedding(self, batch):
         static_mask = batch["static_mask"]
-        code = batch["code"]
-        numeric_value = batch["numeric_value"]
+        code = batch["dynamic_code"]
+        numeric_value = batch["dynamic_numeric_value"]
         time_delta_days = batch["time_delta_days"]
-        numeric_value_mask = batch["numeric_value_mask"]
+        numeric_value_mask = batch["dynamic_values_mask"]
         # Embed times and mask static value times
         time_emb = self.embed_func(self.date_embedder, time_delta_days) * ~static_mask.unsqueeze(dim=1)
         # Embed codes

@@ -17,8 +17,8 @@ class EicEncoder(nn.Module, Module):
     def forward(self, batch):
         batch[INPUT_ENCODER_MASK_KEY] = batch["mask"]
         if self.cfg.model_type == "eic_lstm":
-            embedded_codes = self.code_embedder(batch["code"])
+            embedded_codes = self.code_embedder(batch["dynamic_code"])
             batch[INPUT_ENCODER_TOKENS_KEY] = embedded_codes
         else:
-            batch[INPUT_ENCODER_TOKENS_KEY] = batch["code"]
+            batch[INPUT_ENCODER_TOKENS_KEY] = batch["dynamic_code"]
         return batch
