@@ -130,6 +130,7 @@ def main(cfg: DictConfig) -> float | None:
     os.environ["RAY_memory_monitor_refresh_ms"] = "0"
     # apply extra utilities
     os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
+    OmegaConf.save(config=cfg, f=Path(cfg.paths.time_output_dir) / "hydra_config.yaml")
     extras(cfg)
 
     if cfg.best_config_path:
