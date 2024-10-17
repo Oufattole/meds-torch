@@ -294,7 +294,6 @@ class EveryQueryDataset(PytorchDataset):
         return offset
 
     def tally_answer(self, future_dynamic, query):
-        # can use timestamps here too
         time_delta = future_dynamic.tensors["dim0/time_delta_days"] * 1440
         if np.isnan(time_delta[0]):
             time_delta[0] = 0
@@ -306,22 +305,14 @@ class EveryQueryDataset(PytorchDataset):
         if end_time >= times[-1]:
             end_idx = None
         else:
-            end_idx = np.min(
-                np.argwhere((times) > end_time)
-            )  # correct # np.searchsorted, times list is sorted
+            end_idx = np.min(np.argwhere((times) > end_time))
+            # end_idx is the first index you can't use
+            # can use np.searchsorted, times list is sorted
             assert start_idx <= end_idx
 
-        # add docs to explain how this end_idx is different from record_end_idx
-
-        # end_idx is the first index you can't use
         if start_idx == end_idx:
-            if start_idx == 0:
-                # query is short, comes before first measurement, and has no data
-                return 0
-            else:
-                # one event only
-                # check again that you should have no data here
-                return 0
+            # query is short and fits between two measurements, ie. has no data
+            return 0
         else:
             future_dynamic = future_dynamic[start_idx:end_idx]
 
@@ -335,7 +326,7 @@ class EveryQueryDataset(PytorchDataset):
                     if query["has_value"] and query["use_value"]:
                         x = future_dynamic["dim1/numeric_value"][i][j]
                         if x is None:
-                            continue  # todo: is None used for outlier removal?
+                            continue  # is None used for outlier removal?
                         if (x >= query["range_lower"]) and (x <= query["range_upper"]):
                             count += 1
                     else:
@@ -343,7 +334,7 @@ class EveryQueryDataset(PytorchDataset):
 
         return count
 
-    def get_record_times(self, subject_id):
+    def get_subject_times(self, subject_id):
         """
         alternative option to compute times
         time_delta = dynamic["dim0/time_delta_days"] * 1440
@@ -357,8 +348,9 @@ class EveryQueryDataset(PytorchDataset):
         times = static_row["time"].to_numpy()[0].astype("datetime64[m]")
         return times
 
-    def get_future_duration(self, times, context_end_idx, record_end_idx):
+    def get_future_duration(self, subject_id, context_end_idx, record_end_idx):
         assert context_end_idx <= record_end_idx
+        times = self.get_subject_times(subject_id)
         # should be the timestamp at which the context ends (and not the timestamp of the next event)
         context_end_time = times[context_end_idx - 1]
         # should be the last timestamp included in the record
@@ -374,10 +366,9 @@ class EveryQueryDataset(PytorchDataset):
 
         subj_dynamic, subject_id, record_start_idx, record_end_idx = super().load_subject_dynamic_data(idx)
 
-        times = self.get_record_times(subject_id)
-
-        future_duration = self.get_future_duration(times, context["end_idx"], record_end_idx)
+        future_duration = self.get_future_duration(subject_id, context["end_idx"], record_end_idx)
         future, is_censored = self.sample_future(max_valid_duration=future_duration)
+
         event = self.sample_event()
         query = future | event
 
