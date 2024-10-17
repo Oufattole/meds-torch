@@ -1,4 +1,3 @@
-from collections import defaultdict
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -20,7 +19,6 @@ IDX_COL = "_row_index"
 
 
 class CollateType(StrEnum):
-    event_stream = "event_stream"
     triplet = "triplet"
     triplet_prompt = "triplet_prompt"
     eic = "eic"
@@ -433,8 +431,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         shapes.
 
         Notes:     - This method applies sequence length constraints and sampling strategies       as
-        specified in the dataset configuration.     - It handles different collate types (event_stream,
-        triplet, etc.) differently.     - The method is decorated with @SeedableMixin.WithSeed to ensure
+        specified in the dataset configuration.     - It handles different collate types (triplet, etc.)
+        differently.     - The method is decorated with @SeedableMixin.WithSeed to ensure
         reproducibility.
         """
         shard = self.subj_map[subject_id]
@@ -447,25 +445,22 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         }
 
         # TODO: remove this and handle flattening in the NRT class
-        if self.config.collate_type == CollateType.event_stream:
-            seq_len = end - st
-        if self.config.collate_type != CollateType.event_stream:
-            event_seq_len = end - st
-            tensors = subject_dynamic_data.tensors
-            seq_len = sum([array.size for array in tensors["dim1/code"][st:end]])
-            if not seq_len >= event_seq_len:
-                raise ValueError(
-                    f"Measurement sequence length {seq_len} is less than event sequence length"
-                    f" {event_seq_len}!"
-                )
-            tensors["dim1/numeric_value"] = np.concatenate(tensors["dim1/numeric_value"][st:end], axis=0)
-            tensors["dim1/code"] = np.concatenate(tensors["dim1/code"][st:end], axis=0)
-            seq_len = tensors["dim1/code"].shape[0]
-            tensors["dim0/time_delta_days"] = subpad_vectors(
-                tensors["dim0/time_delta_days"][st:end], tensors["dim1/bounds"][st:end]
+        event_seq_len = end - st
+        tensors = subject_dynamic_data.tensors
+        seq_len = sum([array.size for array in tensors["dim1/code"][st:end]])
+        if not seq_len >= event_seq_len:
+            raise ValueError(
+                f"Measurement sequence length {seq_len} is less than event sequence length"
+                f" {event_seq_len}!"
             )
-            st = 0
-            end = st + seq_len
+        tensors["dim1/numeric_value"] = np.concatenate(tensors["dim1/numeric_value"][st:end], axis=0)
+        tensors["dim1/code"] = np.concatenate(tensors["dim1/code"][st:end], axis=0)
+        seq_len = tensors["dim1/code"].shape[0]
+        tensors["dim0/time_delta_days"] = subpad_vectors(
+            tensors["dim0/time_delta_days"][st:end], tensors["dim1/bounds"][st:end]
+        )
+        st = 0
+        end = st + seq_len
 
         if seq_len > self.config.max_seq_len:
             match self.config.subsequence_sampling_strategy:
@@ -487,13 +482,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             out["start_idx"] = st
             out["end_idx"] = end
 
-        if self.config.collate_type == CollateType.event_stream:
-            out["dynamic"] = subject_dynamic_data[st:end]
-        else:
-            tensors["dim1/code"] = tensors["dim1/code"][st:end]
-            tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
-            tensors["dim0/time_delta_days"] = tensors["dim0/time_delta_days"][st:end]
-            out["dynamic"] = tensors
+        tensors["dim1/code"] = tensors["dim1/code"][st:end]
+        tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
+        tensors["dim0/time_delta_days"] = tensors["dim0/time_delta_days"][st:end]
+        out["dynamic"] = tensors
 
         if self.config.do_include_start_time_min:
             out["start_time"] = static_row["time"].item().to_list()[st]
@@ -505,40 +497,23 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             raise ValueError(f"Sequence length {end - st} is 0!")
 
         if self.config.postpend_eos_token:
-            if self.config.collate_type == CollateType.event_stream:
-                # Append EOS token to the end of the sequence
-                eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["dim1/code"].dtype)
-                out["dynamic"]["dim1/code"] = np.append(out["dynamic"]["dim1/code"], eos_token)
+            eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["dim1/code"].dtype)
+            out["dynamic"]["dim1/code"] = np.append(out["dynamic"]["dim1/code"], eos_token)
 
-                # Extend other relevant arrays
-                numeric_dtype = out["dynamic"]["dim1/numeric_value"].dtype
-                time_dtype = out["dynamic"]["dim0/time_delta_days"].dtype
-                out["dynamic"]["dim1/numeric_value"] = np.append(
-                    out["dynamic"]["dim1/numeric_value"], np.array([0], dtype=numeric_dtype)
-                )
-                out["dynamic"]["dim0/time_delta_days"] = np.append(
-                    out["dynamic"]["dim0/time_delta_days"], np.array([0], dtype=time_dtype)
-                )
-
-            else:
-                # For other collate types
-                eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["dim1/code"].dtype)
-                out["dynamic"]["dim1/code"] = np.append(out["dynamic"]["dim1/code"], eos_token)
-
-                numeric_dtype = out["dynamic"]["dim1/numeric_value"].dtype
-                time_dtype = out["dynamic"]["dim0/time_delta_days"].dtype
-                out["dynamic"]["dim1/numeric_value"] = np.append(
-                    out["dynamic"]["dim1/numeric_value"], np.array([0], dtype=numeric_dtype)
-                )
-                out["dynamic"]["dim0/time_delta_days"] = np.append(
-                    out["dynamic"]["dim0/time_delta_days"], np.array([0], dtype=time_dtype)
-                )
+            numeric_dtype = out["dynamic"]["dim1/numeric_value"].dtype
+            time_dtype = out["dynamic"]["dim0/time_delta_days"].dtype
+            out["dynamic"]["dim1/numeric_value"] = np.append(
+                out["dynamic"]["dim1/numeric_value"], np.array([0], dtype=numeric_dtype)
+            )
+            out["dynamic"]["dim0/time_delta_days"] = np.append(
+                out["dynamic"]["dim0/time_delta_days"], np.array([0], dtype=time_dtype)
+            )
 
         # Update end_idx if it's included
         if self.config.do_include_subsequence_indices:
             out["end_idx"] = end
 
-        if self.config.collate_type != CollateType.event_stream and not (
+        if not (
             len(out["dynamic"]["dim1/code"])
             == len(out["dynamic"]["dim1/numeric_value"])
             == len(out["dynamic"]["dim0/time_delta_days"])
@@ -629,39 +604,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         for k in batch[0].keys():
             if k not in ("dynamic", "static_values", "static_indices"):
                 out_batch[k] = torch.Tensor([item[k] for item in batch])
-
-        return out_batch
-
-    def collate_event_stream(self, batch: list[dict]) -> dict:
-        """Combines the ragged dictionaries produced by `__getitem__` into a tensorized batch.
-
-        This function handles conversion of arrays to tensors and padding of elements within the batch across
-        static data elements, sequence events, and dynamic data elements.
-
-        Args:     batch: A list of `__getitem__` format output dictionaries.
-
-        Returns:     A fully collated, tensorized, and padded batch.
-        """
-
-        out_batch = self.__dynamic_only_collate(batch)
-
-        max_n_static = max(len(x["static_indices"]) for x in batch)
-        static_padded_fields = defaultdict(list)
-        for e in batch:
-            n_static = len(e["static_indices"])
-            static_delta = max_n_static - n_static
-            for k in ("static_indices", "static_values"):
-                if static_delta > 0:
-                    static_padded_fields[k].append(
-                        torch.nn.functional.pad(
-                            torch.tensor(e[k], dtype=torch.long), (0, static_delta), value=0
-                        )
-                    )
-                else:
-                    static_padded_fields[k].append(torch.tensor(e[k], dtype=torch.long))
-
-        for k, v in static_padded_fields.items():
-            out_batch[k] = torch.cat([T.unsqueeze(0) for T in v], dim=0)
 
         return out_batch
 
@@ -857,15 +799,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         Raises:     NotImplementedError: If an unsupported collate type is specified in the configuration.
 
-        Notes:     - The method supports various collation strategies including event_stream,       triplet,
-        triplet_prompt, eic.     - Each collation strategy is optimized for different model architectures and
-        data representations.     - The collated output is fully tensorized and padded, ready for input into a
-        PyTorch model.
+        Notes:     - The method supports various collation strategies including triplet, triplet_prompt, eic.
+        - Each collation strategy is optimized for different model architectures and data representations.
+          - The collated output is fully tensorized and padded, ready for input into a PyTorch model.
         """
         collate_type = self.config.collate_type
-        if collate_type == CollateType.event_stream:
-            return self.collate_event_stream(batch)
-        elif collate_type == CollateType.triplet_prompt:
+        if collate_type == CollateType.triplet_prompt:
             return self.collate_triplet(batch)
         elif collate_type == CollateType.eic:
             return self.collate_triplet(batch, self.config.do_prepend_static_data)
