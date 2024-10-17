@@ -119,7 +119,7 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
                 task_df.filter(pl.col("subject_id").eq(subject_id))[SUPERVISED_TASK_NAME].item()
                 == subject_data[SUPERVISED_TASK_NAME]
             )
-            assert subject_data[SUPERVISED_TASK_NAME] == pyd.labels[SUPERVISED_TASK_NAME][index]
+            assert subject_data[SUPERVISED_TASK_NAME] == pyd.labels[index]
             # Check the supervised task matches the target indices
             data_label = bool(
                 functools.reduce(
