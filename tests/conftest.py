@@ -15,7 +15,7 @@ from .helpers.package_available import _DO_LOG
 
 setup_resolvers()
 
-SUPERVISED_TASK_NAME = "supervised_task"
+SUPERVISED_TASK_NAME = "boolean_value"
 
 
 @pytest.fixture(scope="package")

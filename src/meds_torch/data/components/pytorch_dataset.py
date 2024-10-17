@@ -16,6 +16,7 @@ from nested_ragged_tensors.ragged_numpy import (
 from omegaconf import DictConfig
 
 IDX_COL = "_row_index"
+BINARY_LABEL_COL = "boolean_value"
 
 
 class CollateType(StrEnum):
@@ -244,7 +245,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         DataFrames for each shard. - self.subj_indices: Mapping of subject IDs to their indices. -
         self.subj_seq_bounds: Dictionary of sequence bounds for each subject. - self.index: List of
         (subject_id, start, end) tuples for data access. - self.labels: Dictionary of task labels (if tasks
-        are specified). - self.tasks: List of task names.
+        are specified).
 
         If tasks are specified in the configuration, this method also processes the task labels and integrates
         them with the static data.
@@ -312,19 +313,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             logger.info(f"Reading task constraints for {self.config.task_name} from {task_df_fp}")
             task_df = pl.read_parquet(task_df_fp)
 
-            if "boolean_value" in task_df.columns:
-                task_df = task_df.with_columns(pl.col("boolean_value").alias(self.config.task_name))
-                self.tasks = [self.config.task_name]
-            else:
-                self.tasks = sorted(
-                    [c for c in task_df.columns if c not in ["subject_id", "prediction_time"]]
-                )
-
             idx_col = "_row_index"
             while idx_col in task_df.columns:
                 idx_col = f"_{idx_col}"
 
-            task_df_joint = merge_task_with_static(task_df, self.static_dfs, self.tasks)
+            task_df_joint = merge_task_with_static(task_df, self.static_dfs, [BINARY_LABEL_COL])
             # Filter out subjects that are not in the split
             split_subjects = set(
                 pl.concat(self.static_dfs.values())
@@ -334,12 +327,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             )
             task_df_joint = task_df_joint.filter(pl.col("subject_id").is_in(split_subjects))
             # Convert dates to indexes in the nested ragged tensor, (for fast indexing of data)
-            subjs_and_ends, self.labels = get_task_indices_and_labels(task_df_joint, self.tasks)
+            subjs_and_ends, self.labels = get_task_indices_and_labels(task_df_joint, [BINARY_LABEL_COL])
             self.index = [(subj, 0, end) for subj, end in subjs_and_ends]
         else:
             self.index = [(subj, *bounds) for subj, bounds in self.subj_seq_bounds.items()]
             self.labels = {}
-            self.tasks = None
 
     @property
     def subject_ids(self) -> list[int]:

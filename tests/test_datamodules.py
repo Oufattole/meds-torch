@@ -94,8 +94,8 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     assert len(pyd) == 70
     assert pyd.has_task
     item = pyd[0]
-    assert item.keys() == {"static_indices", "static_values", "dynamic", "supervised_task"}
-    task_df = pl.read_parquet(meds_dir / "tasks/supervised_task.parquet")
+    assert item.keys() == {"static_indices", "static_values", "dynamic", "boolean_value"}
+    task_df = pl.read_parquet(meds_dir / "tasks/boolean_value.parquet")
     code_index_df = pl.read_parquet(meds_dir / "triplet_tensors/metadata/codes.parquet")[
         "code", "code/vocab_index"
     ]
