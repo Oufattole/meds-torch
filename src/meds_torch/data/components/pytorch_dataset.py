@@ -15,7 +15,6 @@ from nested_ragged_tensors.ragged_numpy import (
 )
 from omegaconf import DictConfig
 
-IDX_COL = "_row_index"
 BINARY_LABEL_COL = "boolean_value"
 
 
@@ -72,55 +71,8 @@ class SeqPaddingSide(StrEnum):
     RIGHT = "right"
 
 
-def merge_task_with_static(task_df: pl.DataFrame, static_dfs: dict[str, pl.DataFrame]):
-    """Merges a DataFrame containing task information with multiple static DataFrames on the 'subject_id'
-    column. The function performs a sequence of operations to merge these dataframes based on subject
-    identifiers and respective timestamps.
-
-    Parameters:
-    - task_df (DataFrame): A DataFrame with columns 'subject_id', 'prediction_time', and 'label'.
-    - static_dfs (dict of DataFrames): A dictionary of DataFrames indexed by their source names,
-      each containing 'subject_id', 'static_indices', 'static_values', and "time".
-
-    Returns:
-    - DataFrame: The merged DataFrame containing data from task_df and all static_dfs.
-
-    Example:
-    >>> from datetime import datetime
-    >>> import polars as pl
-    >>> task_df = pl.DataFrame({
-    ...     "subject_id": [1, 2, 1, 3],
-    ...     "prediction_time": [
-    ...         datetime(2020, 1, 2), datetime(2020, 1, 3), datetime(2021, 1, 4), datetime(2021, 1, 5)
-    ...     ],
-    ...     "boolean_value": [False, True, True, False]
-    ... })
-    >>> static_dfs = {
-    ...     'train/0': pl.DataFrame({
-    ...         "subject_id": [1, 2],
-    ...         "start_time": [datetime(2020, 1, 1), datetime(2020, 1, 2)],
-    ...         "time": [[datetime(2020, 1, 1, 1), datetime(2020, 1, 1, 3)],
-    ...                       [datetime(2020, 1, 2), datetime(2020, 1, 1, 2, 3)]]
-    ...     })
-    ... }
-    >>> merge_task_with_static(task_df, static_dfs)
-    shape: (3, 4)
-    ┌────────────┬─────────────────────┬───────────────┬─────────────────────────────────┐
-    │ subject_id ┆ prediction_time     ┆ boolean_value ┆ time                            │
-    │ ---        ┆ ---                 ┆ ---           ┆ ---                             │
-    │ i64        ┆ datetime[μs]        ┆ bool          ┆ list[datetime[μs]]              │
-    ╞════════════╪═════════════════════╪═══════════════╪═════════════════════════════════╡
-    │ 1          ┆ 2020-01-02 00:00:00 ┆ False         ┆ [2020-01-01 01:00:00, 2020-01-… │
-    │ 2          ┆ 2020-01-03 00:00:00 ┆ True          ┆ [2020-01-02 00:00:00, 2020-01-… │
-    │ 1          ┆ 2021-01-04 00:00:00 ┆ True          ┆ [2020-01-01 01:00:00, 2020-01-… │
-    └────────────┴─────────────────────┴───────────────┴─────────────────────────────────┘
-    """
-    static_df = pl.concat(static_dfs.values()).select("subject_id", "time")
-    return task_df.join(static_df, on="subject_id", how="inner")
-
-
 def get_task_indices_and_labels(
-    task_df_joint: pl.DataFrame,
+    task_df: pl.DataFrame, static_dfs: dict[str, pl.DataFrame]
 ) -> tuple[list[tuple[int, int, int]], dict[str, list]]:
     """Processes the joint DataFrame to determine the index range for each subject's task.
 
@@ -134,21 +86,23 @@ def get_task_indices_and_labels(
     - list: list of index tuples of format (subject_id, start_idx, end_idx).
     - dict: dictionary of task names to lists of labels in the same order as the indexes.
     """
+
+    static_df = pl.concat(static_dfs.values()).select("subject_id", "time")
+
     end_idx_expr = (
         (pl.col("time").search_sorted(pl.col("prediction_time"), side="right")).last().alias("end_idx")
     )
+
     label_df = (
-        task_df_joint.with_row_index(IDX_COL)
+        task_df.join(static_df, on="subject_id", how="inner")
+        .with_row_index("_row_index")
         .explode("time")
-        .group_by(IDX_COL, "subject_id", "prediction_time", "boolean_value", maintain_order=True)
+        .group_by("_row_index", "subject_id", "prediction_time", "boolean_value", maintain_order=True)
         .agg(end_idx_expr)
     )
 
-    subject_ids = label_df["subject_id"]
-    end_indices = label_df["end_idx"]
+    indexes = list(zip(label_df["subject_id"], label_df["end_idx"]))
     labels = label_df[BINARY_LABEL_COL].to_list()
-
-    indexes = list(zip(subject_ids, end_indices))
 
     return indexes, labels
 
@@ -269,13 +223,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             logger.info(f"Reading task constraints for {self.config.task_name} from {task_df_fp}")
             task_df = pl.read_parquet(task_df_fp)
 
-            idx_col = "_row_index"
-            while idx_col in task_df.columns:
-                idx_col = f"_{idx_col}"
-
-            task_df_joint = merge_task_with_static(task_df, self.static_dfs)
-            # Convert dates to indexes in the nested ragged tensor, (for fast indexing of data)
-            subjs_and_ends, self.labels = get_task_indices_and_labels(task_df_joint)
+            subjs_and_ends, self.labels = get_task_indices_and_labels(task_df, self.static_dfs)
             self.index = [(subj, 0, end) for subj, end in subjs_and_ends]
         else:
             self.index = [(subj, *bounds) for subj, bounds in self.subj_seq_bounds.items()]
