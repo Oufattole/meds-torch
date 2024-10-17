@@ -183,7 +183,7 @@ def get_task_indices_and_labels(
     start_idx_expr = (
         (pl.col("time").search_sorted(pl.col("start_time"), side="left")).first().alias("start_idx")
     )
-    end_idx_expr = (pl.col("time").search_sorted(pl.col("end_time"), side="left")).last().alias("end_idx")
+    end_idx_expr = (pl.col("time").search_sorted(pl.col("end_time"), side="right")).last().alias("end_idx")
     task_index_df = (
         task_df_joint.explode("start_time", "end_time", *tasks)
         .explode("time")
