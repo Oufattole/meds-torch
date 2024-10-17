@@ -343,27 +343,29 @@ class EveryQueryDataset(PytorchDataset):
 
         return count
 
-    def get_future_duration(self, subject_id, context_end_idx, record_end_idx):
+    def get_record_times(self, subject_id):
         """
-        alternative option to compute future duration
-        future_dynamic = subj_dynamic[context["end_idx"] : record_end_idx].tensors
-        time_delta = future_dynamic["dim0/time_delta_days"] * 1440
+        alternative option to compute times
+        time_delta = dynamic["dim0/time_delta_days"] * 1440
         if np.isnan(time_delta[0]):
             time_delta[0] = 0
         times = np.cumsum(time_delta)
-        future_duration = times[-1]
         """
-        assert context_end_idx <= record_end_idx
         shard = self.subj_map[subject_id]
         subject_idx = self.subj_indices[subject_id]
         static_row = self.static_dfs[shard][subject_idx].to_dict()
+        times = static_row["time"].to_numpy()[0].astype("datetime64[m]")
+        return times
+
+    def get_future_duration(self, times, context_end_idx, record_end_idx):
+        assert context_end_idx <= record_end_idx
         # should be the timestamp at which the context ends (and not the timestamp of the next event)
-        context_end_time = static_row["time"].list.get(context_end_idx - 1)
-        # last time you can use, not the first time you can't use
+        context_end_time = times[context_end_idx - 1]
         # should be the last timestamp included in the record
         # not the first timestamp after the end of the record
-        record_end_time = static_row["time"].list.get(record_end_idx - 1)
-        future_duration = (record_end_time - context_end_time).dt.total_minutes().item()
+        # last time you can use, not the first time you can't use
+        record_end_time = times[record_end_idx - 1]
+        future_duration = (record_end_time - context_end_time) / np.timedelta64(1, "m")
         return future_duration
 
     @SeedableMixin.WithSeed
@@ -372,7 +374,9 @@ class EveryQueryDataset(PytorchDataset):
 
         subj_dynamic, subject_id, record_start_idx, record_end_idx = super().load_subject_dynamic_data(idx)
 
-        future_duration = self.get_future_duration(subject_id, context["end_idx"], record_end_idx)
+        times = self.get_record_times(subject_id)
+
+        future_duration = self.get_future_duration(times, context["end_idx"], record_end_idx)
         future, is_censored = self.sample_future(max_valid_duration=future_duration)
         event = self.sample_event()
         query = future | event
