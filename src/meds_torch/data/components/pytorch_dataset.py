@@ -89,9 +89,11 @@ def merge_task_with_static(task_df: pl.DataFrame, static_dfs: dict[str, pl.DataF
     >>> from datetime import datetime
     >>> import polars as pl
     >>> task_df = pl.DataFrame({
-    ...     "subject_id": [1, 2],
-    ...     "prediction_time": [datetime(2020, 1, 2), datetime(2020, 1, 3)],
-    ...     "boolean_value": [False, True]
+    ...     "subject_id": [1, 2, 1, 3],
+    ...     "prediction_time": [
+    ...         datetime(2020, 1, 2), datetime(2020, 1, 3), datetime(2021, 1, 4), datetime(2021, 1, 5)
+    ...     ],
+    ...     "boolean_value": [False, True, True, False]
     ... })
     >>> static_dfs = {
     ...     'train/0': pl.DataFrame({
@@ -101,30 +103,20 @@ def merge_task_with_static(task_df: pl.DataFrame, static_dfs: dict[str, pl.DataF
     ...                       [datetime(2020, 1, 2), datetime(2020, 1, 1, 2, 3)]]
     ...     })
     ... }
-    >>> result = merge_task_with_static(task_df, static_dfs)
-    >>> result.select(['subject_id', 'prediction_time', 'label', 'time'])
-    shape: (2, 4)
-    ┌────────────┬───────────────────────┬───────────────┬─────────────────────────────────┐
-    │ subject_id ┆ prediction_time       ┆ boolean_value ┆ time                            │
-    │ ---        ┆ ---                   ┆ ---           ┆ ---                             │
-    │ i64        ┆ list[datetime[μs]]    ┆ list[bool]    ┆ list[datetime[μs]]              │
-    ╞════════════╪═══════════════════════╪═══════════════╪═════════════════════════════════╡
-    │ 1          ┆ [2020-01-02 00:00:00] ┆ [False]       ┆ [2020-01-01 01:00:00, 2020-01-… │
-    │ 2          ┆ [2020-01-03 00:00:00] ┆ [True]        ┆ [2020-01-02 00:00:00, 2020-01-… │
-    └────────────┴───────────────────────┴───────────────┴─────────────────────────────────┘
+    >>> merge_task_with_static(task_df, static_dfs)
+    shape: (3, 4)
+    ┌────────────┬─────────────────────┬───────────────┬─────────────────────────────────┐
+    │ subject_id ┆ prediction_time     ┆ boolean_value ┆ time                            │
+    │ ---        ┆ ---                 ┆ ---           ┆ ---                             │
+    │ i64        ┆ datetime[μs]        ┆ bool          ┆ list[datetime[μs]]              │
+    ╞════════════╪═════════════════════╪═══════════════╪═════════════════════════════════╡
+    │ 1          ┆ 2020-01-02 00:00:00 ┆ False         ┆ [2020-01-01 01:00:00, 2020-01-… │
+    │ 2          ┆ 2020-01-03 00:00:00 ┆ True          ┆ [2020-01-02 00:00:00, 2020-01-… │
+    │ 1          ┆ 2021-01-04 00:00:00 ┆ True          ┆ [2020-01-01 01:00:00, 2020-01-… │
+    └────────────┴─────────────────────┴───────────────┴─────────────────────────────────┘
     """
-    task_df_joint = (
-        task_df.select("subject_id", "prediction_time", BINARY_LABEL_COL)
-        .with_row_index(IDX_COL)
-        .group_by(IDX_COL, "subject_id", maintain_order=True)
-        .agg("prediction_time", BINARY_LABEL_COL)
-        .join(
-            pl.concat(static_dfs.values()).select("subject_id", "start_time", "time"),
-            on="subject_id",
-            how="left",
-        )
-    )
-    return task_df_joint
+    static_df = pl.concat(static_dfs.values()).select("subject_id", "time")
+    return task_df.join(static_df, on="subject_id", how="inner")
 
 
 def get_task_indices_and_labels(
@@ -141,49 +133,16 @@ def get_task_indices_and_labels(
     Returns:
     - list: list of index tuples of format (subject_id, start_idx, end_idx).
     - dict: dictionary of task names to lists of labels in the same order as the indexes.
-
-    Example:
-    >>> from datetime import datetime
-    >>> df = pl.DataFrame({
-    ...     IDX_COL: [i for i in range(5)],
-    ...     "subject_id": [i for i in range(5)],
-    ...     "prediction_time": [
-    ...         [datetime(2021, 1, 2)],
-    ...         [datetime(2021, 1, 2)],
-    ...         [datetime(2021, 1, 3)],
-    ...         [datetime(2021, 1, 4)],
-    ...         [datetime(2021, 1, 4)]
-    ...     ],
-    ...     "time": [
-    ...         pl.date_range(datetime(2021, 1, 1), datetime(2021, 1, 5), "1d", eager=True)
-    ...     ]*5,
-    ...     "boolean_value": [[False], [False], [False], [True], [True]],
-    ... })
-    >>> indexes, labels = get_task_indices_and_labels(df)
-    >>> indexes
-    [(0, 0, 1), (1, 0, 1), (2, 0, 2), (3, 1, 3), (4, 2, 3)]
-    >>> labels
-    [False, False, False, True, True]
     """
     end_idx_expr = (
         (pl.col("time").search_sorted(pl.col("prediction_time"), side="right")).last().alias("end_idx")
     )
-    task_index_df = (
-        task_df_joint.explode("prediction_time", BINARY_LABEL_COL)
+    label_df = (
+        task_df_joint.with_row_index(IDX_COL)
         .explode("time")
-        .group_by(IDX_COL, "subject_id", "prediction_time", maintain_order=True)
+        .group_by(IDX_COL, "subject_id", "prediction_time", "boolean_value", maintain_order=True)
         .agg(end_idx_expr)
     )
-
-    label_df = task_index_df.join(task_df_joint[IDX_COL, BINARY_LABEL_COL], how="left", on=IDX_COL).sort(
-        IDX_COL
-    )
-    label_df = label_df.explode(BINARY_LABEL_COL)
-    if not label_df.shape[0] == task_index_df.shape[0]:
-        raise ValueError(
-            "There are multiple labels for a single task index!"
-            f"There are {label_df.shape[0]} labels for {task_index_df.shape[0]} task indexes."
-        )
 
     subject_ids = label_df["subject_id"]
     end_indices = label_df["end_idx"]
@@ -315,14 +274,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                 idx_col = f"_{idx_col}"
 
             task_df_joint = merge_task_with_static(task_df, self.static_dfs)
-            # Filter out subjects that are not in the split
-            split_subjects = set(
-                pl.concat(self.static_dfs.values())
-                .select(pl.col("subject_id").unique())
-                .to_series()
-                .to_list()
-            )
-            task_df_joint = task_df_joint.filter(pl.col("subject_id").is_in(split_subjects))
             # Convert dates to indexes in the nested ragged tensor, (for fast indexing of data)
             subjs_and_ends, self.labels = get_task_indices_and_labels(task_df_joint)
             self.index = [(subj, 0, end) for subj, end in subjs_and_ends]
