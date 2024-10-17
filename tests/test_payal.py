@@ -10,6 +10,7 @@ import omegaconf
 import polars as pl
 import pytest
 import scipy
+import torch
 from mixins import SeedableMixin
 
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
@@ -75,8 +76,6 @@ class EveryQueryDataset(PytorchDataset):
                 raise ValueError("query_fixed_offset must be non-negative.")
 
     def _load_data(self):
-        # assuming unique codes
-        # is there an UNK code? why is there a none code
         return (
             pl.read_parquet(self.config.code_metadata_fp)
             .filter(pl.col("code").is_not_null())
@@ -170,7 +169,7 @@ class EveryQueryDataset(PytorchDataset):
                     ranges.append([float(lower), float(upper)])
                 self._set_data_at_code(code=code, col="values/range_options", value=ranges)
 
-        # refresh code options with new value info
+        # refresh code options with updated value info
         self.set_codes(codes=self.code_options["code"].to_list())
 
     def sample_code(self):
@@ -211,7 +210,7 @@ class EveryQueryDataset(PytorchDataset):
             lower, upper = self.sample_value_range(code)
         else:
             use_value = False
-            lower, upper = None, None
+            lower, upper = 0, 0  # mask later if needed
         event = {
             "name": code["code"],
             "vocab_index": code["code/vocab_index"],
@@ -319,7 +318,6 @@ class EveryQueryDataset(PytorchDataset):
         future_dynamic = future_dynamic.tensors
 
         count = 0
-        # should change from list of lists to a single 1d array in meds torch update
         for i in range(len(future_dynamic["dim1/code"])):
             for j in range(len(future_dynamic["dim1/code"][i])):
                 if future_dynamic["dim1/code"][i][j] == query["vocab_index"]:
@@ -384,6 +382,31 @@ class EveryQueryDataset(PytorchDataset):
         item = {"context": context, "query": query, "answer": answer}
 
         return item
+
+    def _query_collate(self, batch: list[dict]) -> dict:
+        return {
+            "offset": torch.tensor([x["offset"] for x in batch], dtype=torch.float64),
+            "duration": torch.tensor([x["duration"] for x in batch], dtype=torch.float64),
+            "vocab_index": torch.tensor([x["vocab_index"] for x in batch], dtype=torch.int64),
+            "has_value": torch.tensor([x["has_value"] for x in batch], dtype=torch.bool),
+            "use_value": torch.tensor([x["use_value"] for x in batch], dtype=torch.bool),
+            "range_lower": torch.tensor([x["range_lower"] for x in batch], dtype=torch.float64),
+            "range_upper": torch.tensor([x["range_upper"] for x in batch], dtype=torch.float64),
+        }
+
+    def _answer_collate(self, batch: list[dict]) -> dict:
+        return {
+            "censored": torch.tensor([x["censored"] for x in batch], dtype=torch.bool),
+            "count": torch.tensor([x["count"] for x in batch], dtype=torch.int64),
+            "occurs": torch.tensor([x["occurs"] for x in batch], dtype=torch.bool),
+        }
+
+    def collate(self, batch: list[dict]) -> dict:
+        return {
+            "context": super().collate([x["context"] for x in batch]),
+            "query": self._query_collate([x["query"] for x in batch]),
+            "answer": self._answer_collate([x["answer"] for x in batch]),
+        }
 
 
 """@pytest.mark.parametrize(
@@ -608,19 +631,20 @@ def test_pytorch_dataset(meds_dir: Path, collate_type):
     item = pyd[0]
     assert item.keys() == {"context", "query", "answer"}
     assert item["context"].keys() == {"static_indices", "static_values", "dynamic", "start_idx", "end_idx"}
-    # assert False
-    batch = pyd.collate([pyd[i]["context"] for i in range(2)])
-    if collate_type == "event_stream":
-        assert batch.keys() == {
-            "event_mask",
-            "dynamic_values_mask",
-            "time_delta_days",
-            "dynamic_indices",
-            "dynamic_values",
-            "static_indices",
-            "static_values",
-            "start_idx",
-            "end_idx",
-        }
-    else:
-        raise NotImplementedError(f"{collate_type} not implemented")
+    batch = pyd.collate([pyd[i] for i in range(2)])
+    assert batch.keys() == {
+        "context",
+        "query",
+        "answer",
+    }
+    assert batch["context"].keys() == {
+        "event_mask",
+        "dynamic_values_mask",
+        "time_delta_days",
+        "dynamic_indices",
+        "dynamic_values",
+        "static_indices",
+        "static_values",
+        "start_idx",
+        "end_idx",
+    }
