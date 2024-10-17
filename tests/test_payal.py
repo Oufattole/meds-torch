@@ -353,19 +353,16 @@ class EveryQueryDataset(PytorchDataset):
         times = np.cumsum(time_delta)
         future_duration = times[-1]
         """
+        assert context_end_idx <= record_end_idx
         shard = self.subj_map[subject_id]
         subject_idx = self.subj_indices[subject_id]
         static_row = self.static_dfs[shard][subject_idx].to_dict()
+        # should be the timestamp at which the context ends (and not the timestamp of the next event)
         context_end_time = static_row["time"].list.get(context_end_idx - 1)
-        # weird, check record_end_idx values
-        # should it be the timestamp at the record_end_idx or immediately after?
-        # use record_end_time at record_end_idx - 1
-        # handle the fact that you will never hit that end time...
-        # this is last time you can use, not the first time you can't use
-        if record_end_idx == static_row["time"].list.len().item():
-            record_end_time = static_row["time"].list.get(-1)
-        else:
-            record_end_time = static_row["time"].list.get(record_end_idx)
+        # last time you can use, not the first time you can't use
+        # should be the last timestamp included in the record
+        # not the first timestamp after the end of the record
+        record_end_time = static_row["time"].list.get(record_end_idx - 1)
         future_duration = (record_end_time - context_end_time).dt.total_minutes().item()
         return future_duration
 
