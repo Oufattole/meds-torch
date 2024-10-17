@@ -26,11 +26,10 @@ def meds_dir(tmp_path_factory) -> Path:
     shutil.copytree(Path("./tests/test_data"), meds_dir, dirs_exist_ok=True)
     meds_df = pl.read_parquet(meds_dir / "MEDS_cohort" / "data/*/*.parquet")
     meds_df = meds_df.sort(["subject_id", "time"]).filter(pl.col("time").is_not_null())
-    start_time_expr = pl.col("time").get(0).alias("start_time")
     prediction_time_expr = pl.col("time").get(pl.len() // 2).alias("prediction_time")
-    labels_df = meds_df.group_by("subject_id", maintain_order=True).agg(start_time_expr, prediction_time_expr)
+    labels_df = meds_df.group_by("subject_id", maintain_order=True).agg(prediction_time_expr)
     filter_meds_df = meds_df.join(labels_df, on="subject_id", how="left").filter(
-        (pl.col("time") >= pl.col("start_time")) & (pl.col("time") <= pl.col("prediction_time"))
+        pl.col("time") <= pl.col("prediction_time")
     )
     label_expr = (
         (pl.col("code").eq("ADMISSION//ONCOLOGY") | pl.col("code").eq("ADMISSION//CARDIAC"))
