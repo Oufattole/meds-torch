@@ -87,7 +87,6 @@ class EveryQueryDataset(PytorchDataset):
                 pl.col("values/quantiles").struct.field("values/quantile/0.75").alias("values/quantile/75"),
                 pl.col("values/max").alias("values/quantile/100"),
                 (pl.col("values/n_occurrences") > 0).alias("code/has_value"),
-                (pl.col("code/n_occurrences") / pl.col("code/n_occurrences").sum()).alias("code/frequency"),
                 (pl.col("values/sum") / pl.col("values/n_occurrences")).alias("values/mean"),
                 pl.lit(self.config.default_value_sampling_strategy).alias("values/strategy"),
                 pl.lit([]).cast(pl.List(pl.List(pl.Float64))).alias("values/range_options"),
@@ -138,15 +137,10 @@ class EveryQueryDataset(PytorchDataset):
         else:
             self._validate_codes(codes)
             codes = [x.lower() for x in codes]
-            self.code_options = (
-                self.metadata.filter(pl.col("code").str.to_lowercase().is_in(codes))
-                .drop("code/frequency")
-                .with_columns(
-                    (pl.col("code/n_occurrences") / pl.col("code/n_occurrences").sum()).alias(
-                        "code/frequency"
-                    )
-                )
-            )
+            self.code_options = self.metadata.filter(pl.col("code").str.to_lowercase().is_in(codes))
+        self.code_options = self.code_options.with_columns(
+            (pl.col("code/n_occurrences") / pl.col("code/n_occurrences").sum()).alias("code/frequency")
+        )
 
     def set_values(self, strategy: str, data: list | dict):
         assert strategy in self.value_strategies
@@ -172,6 +166,7 @@ class EveryQueryDataset(PytorchDataset):
                         upper_quantile = int(upper.replace("Q", ""))
                         upper = self._get_data_at_code(code=code, col=f"values/quantile/{upper_quantile}")
                     assert lower <= upper
+                    # normalize the range based on mean/std from metadata
                     ranges.append([float(lower), float(upper)])
                 self._set_data_at_code(code=code, col="values/range_options", value=ranges)
 
@@ -238,6 +233,7 @@ class EveryQueryDataset(PytorchDataset):
             # tbd: query['range_lower'], query['range_upper']
             # range is provided in un-normalized units by user
             # can use mean/std from metadata
+            # change in the preprocessing
             return query
 
     def sample_future(self, max_valid_duration):
@@ -298,6 +294,7 @@ class EveryQueryDataset(PytorchDataset):
         return offset
 
     def tally_answer(self, future_dynamic, query):
+        # can use timestamps here too
         time_delta = future_dynamic.tensors["dim0/time_delta_days"] * 1440
         if np.isnan(time_delta[0]):
             time_delta[0] = 0
@@ -309,39 +306,29 @@ class EveryQueryDataset(PytorchDataset):
         if end_time >= times[-1]:
             end_idx = None
         else:
-            end_idx = np.min(np.argwhere((times) > end_time))
+            end_idx = np.min(
+                np.argwhere((times) > end_time)
+            )  # correct # np.searchsorted, times list is sorted
             assert start_idx <= end_idx
 
+        # add docs to explain how this end_idx is different from record_end_idx
+
+        # end_idx is the first index you can't use
         if start_idx == end_idx:
             if start_idx == 0:
                 # query is short, comes before first measurement, and has no data
                 return 0
             else:
                 # one event only
-                return 0  # remove later once bug is fixed
-                future_dynamic = future_dynamic[start_idx:end_idx]  # this does not work
-            """
-            from nested_ragged_tensors.ragged_numpy import *
-            J = JointNestedRaggedTensorDict({
-            "dim0/time_delta_days": [0.00972222, 0.03333334],
-            "dim1/lengths": [2, 1],
-            "dim1/code": [[14, 15], [7]],
-            "dim1/numeric_value": [[-0.0539279, 1.1927332], [float('nan')]],
-            "dim1/bounds": [2, 3],
-            }, schema={
-            "dim1/time_delta_days": "float32",
-            "dim2/code": "uint8",
-            "dim2/numeric_value": "float32"
-            })
-            len(J)
-            J[0]
-            """
+                # check again that you should have no data here
+                return 0
         else:
             future_dynamic = future_dynamic[start_idx:end_idx]
 
         future_dynamic = future_dynamic.tensors
 
         count = 0
+        # should change from list of lists to a single 1d array in meds torch update
         for i in range(len(future_dynamic["dim1/code"])):
             for j in range(len(future_dynamic["dim1/code"][i])):
                 if future_dynamic["dim1/code"][i][j] == query["vocab_index"]:
@@ -370,6 +357,11 @@ class EveryQueryDataset(PytorchDataset):
         subject_idx = self.subj_indices[subject_id]
         static_row = self.static_dfs[shard][subject_idx].to_dict()
         context_end_time = static_row["time"].list.get(context_end_idx - 1)
+        # weird, check record_end_idx values
+        # should it be the timestamp at the record_end_idx or immediately after?
+        # use record_end_time at record_end_idx - 1
+        # handle the fact that you will never hit that end time...
+        # this is last time you can use, not the first time you can't use
         if record_end_idx == static_row["time"].list.len().item():
             record_end_time = static_row["time"].list.get(-1)
         else:
