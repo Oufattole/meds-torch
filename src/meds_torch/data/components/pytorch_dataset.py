@@ -621,10 +621,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         if not self.has_task:
             return out_batch
 
-        out_labels = {}
-        for task in self.tasks:
-            out_labels[task] = collated[task].float()
-
         # add task labels
         for k in batch[0].keys():
             if k not in ("dynamic", "static_values", "static_indices"):
