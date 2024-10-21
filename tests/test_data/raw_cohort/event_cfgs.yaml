@@ -1,3 +1,4 @@
+
 subjects:
   subject_id_col: MRN
   eye_color:
@@ -34,8 +35,8 @@ admit_vitals:
     numeric_value: HR
     _metadata:
       input_metadata:
-        description: { "title": { "lab_code": "HR" } }
-        parent_codes: { "LOINC/{loinc}": { "lab_code": "HR" } }
+        description: {"title": {"lab_code": "HR"}}
+        parent_codes: {"LOINC/{loinc}": {"lab_code": "HR"}}
   temp:
     code: TEMP
     time: col(vitals_date)
@@ -43,5 +44,5 @@ admit_vitals:
     numeric_value: temp
     _metadata:
       input_metadata:
-        description: { "title": { "lab_code": "temp" } }
-        parent_codes: { "LOINC/{loinc}": { "lab_code": "temp" } }
+        description: {"title": {"lab_code": "temp"}}
+        parent_codes: {"LOINC/{loinc}": {"lab_code": "temp"}}

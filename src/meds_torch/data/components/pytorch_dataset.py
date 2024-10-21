@@ -272,9 +272,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         subject_id, st, end = self.index[idx]
         shard = self.subj_map[subject_id]
         subject_idx = self.subj_indices[subject_id]
-        subject_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-            Path(self.config.data_dir) / "data" / f"{shard}.nrt", subject_idx
-        )
+
+        dynamic_data_fp = Path(self.config.data_dir) / "data" / f"{shard}.nrt"
+
+        subject_dynamic_data = JointNestedRaggedTensorDict(tensors_fp=dynamic_data_fp)[subject_idx]
+
         return subject_dynamic_data, subject_id, st, end
 
     @SeedableMixin.WithSeed
@@ -325,8 +327,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                     f"Measurement sequence length {seq_len} is less than event sequence length"
                     f" {event_seq_len}!"
                 )
-            tensors["dim1/numeric_value"] = np.concatenate(tensors["dim1/numeric_value"][st:end], axis=0)
-            tensors["dim1/code"] = np.concatenate(tensors["dim1/code"][st:end], axis=0)
+            tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
+            tensors["dim1/code"] = tensors["dim1/code"][st:end]
             seq_len = tensors["dim1/code"].shape[0]
             tensors["dim0/time_delta_days"] = subpad_vectors(
                 tensors["dim0/time_delta_days"][st:end], tensors["dim1/bounds"][st:end]
