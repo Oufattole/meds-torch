@@ -116,9 +116,9 @@ class RandomWindowPytorchDataset(PytorchDataset):
         shard = self.subj_map[subject_id]
         subject_idx = self.subj_indices[subject_id]
 
-        subject_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-            Path(self.config.data_dir) / "data" / f"{shard}.nrt", subject_idx
-        )
+        subject_dynamic_data = JointNestedRaggedTensorDict(
+            tensors_fp=Path(self.config.data_dir) / "data" / f"{shard}.nrt"
+        )[subject_idx]
 
         full_sequence = self.load_subject(subject_dynamic_data, subject_id, 0, len(subject_dynamic_data))
 
