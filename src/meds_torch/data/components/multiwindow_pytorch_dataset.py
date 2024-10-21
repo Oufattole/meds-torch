@@ -260,9 +260,9 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         subject_idx = self.pytorch_dataset.subj_indices[subject_id]
         out = {}
         for window in self.window_cols:
-            subject_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-                Path(self.config.data_dir) / "data" / f"{shard}.nrt", subject_idx
-            )
+            subject_dynamic_data = JointNestedRaggedTensorDict(
+                tensors_fp=Path(self.config.data_dir) / "data" / f"{shard}.nrt"
+            )[subject_idx]
             out[window] = self.pytorch_dataset.load_subject(
                 subject_dynamic_data, subject_id, windows[window][0], windows[window][1]
             )
