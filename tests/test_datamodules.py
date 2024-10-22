@@ -83,8 +83,8 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     assert len(pyd) == 70
     assert pyd.has_task
     item = pyd[0]
-    assert item.keys() == {"static_indices", "static_values", "dynamic", "supervised_task"}
-    task_df = pl.read_parquet(meds_dir / "tasks/supervised_task.parquet")
+    assert item.keys() == {"static_indices", "static_values", "dynamic", "boolean_value"}
+    task_df = pl.read_parquet(meds_dir / "tasks/boolean_value.parquet")
     code_index_df = pl.read_parquet(meds_dir / "triplet_tensors/metadata/codes.parquet")[
         "code", "code/vocab_index"
     ]
@@ -107,7 +107,7 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             task_df.filter(pl.col("subject_id").eq(subject_id))[SUPERVISED_TASK_NAME].item()
             == subject_data[SUPERVISED_TASK_NAME]
         )
-        assert subject_data[SUPERVISED_TASK_NAME] == pyd.labels[SUPERVISED_TASK_NAME][index]
+        assert subject_data[SUPERVISED_TASK_NAME] == pyd.labels[index]
         # Check the supervised task matches the target indices
         data_label = bool(
             functools.reduce(
