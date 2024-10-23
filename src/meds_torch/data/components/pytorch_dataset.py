@@ -17,12 +17,6 @@ from omegaconf import DictConfig
 BINARY_LABEL_COL = "boolean_value"
 
 
-class CollateType(StrEnum):
-    triplet = "triplet"
-    triplet_prompt = "triplet_prompt"
-    eic = "eic"
-
-
 def subpad_vectors(a: np.ndarray, b: np.ndarray):
     """Create a new array by placing elements of 'a' at indices specified by 'b'.
 
@@ -112,9 +106,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
     various types of medical events, static patient information, and task-specific labels. It provides
     functionality for loading, processing, and collating data for use in PyTorch models.
 
-    Key Features: - Handles different collation strategies (event stream, triplet, etc.) - Supports task-
-    specific data handling for binary classification - Implements custom sampling strategies and sequence
-    length constraints
+    Key Features: - Supports task- specific data handling for binary classification - Implements custom
+    sampling strategies and sequence length constraints
 
     Args:     cfg (DictConfig): Configuration options for the dataset.     split (str): The data split to use
     (e.g., 'train', 'validation', 'test').
@@ -300,9 +293,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         shapes.
 
         Notes:     - This method applies sequence length constraints and sampling strategies       as
-        specified in the dataset configuration.     - It handles different collate types (triplet, etc.)
-        differently.     - The method is decorated with @SeedableMixin.WithSeed to ensure
-        reproducibility.
+        specified in the dataset configuration.     - The method is decorated with @SeedableMixin.WithSeed to
+        ensure reproducibility.
         """
         shard = self.subj_map[subject_id]
         subject_idx = self.subj_indices[subject_id]
@@ -510,7 +502,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         return out_batch
 
     @classmethod
-    def process_triplet(cls, item: dict, do_prepend_static_data=True) -> dict:
+    def process_triplet(cls, item: dict) -> dict:
         """Process a single triplet of dynamic and static data.
 
         This method takes a dictionary containing dynamic and static data for a single
@@ -518,8 +510,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         Args:
             item (dict): A dictionary containing 'dynamic' and 'static' data.
-            do_prepend_static_data (bool, optional): Whether to prepend static data
-                                                     to the dynamic data. Defaults to True.
 
         Returns:
             dict: A processed dictionary containing:
@@ -563,48 +553,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         )
         return output
 
-    @classmethod
-    def collate_triplet(cls, batch: list[dict], do_prepend_static_data=True) -> dict:
-        """Collate a batch of triplet format data into a unified batch dictionary.
-
-        This method combines multiple data points in triplet format (times, codes, values)
-        into a single batch, applying necessary padding and tensorization.
-
-        Args:
-            batch (list[dict]): A list of dictionaries, each representing a single data point.
-            do_prepend_static_data (bool, optional): Whether to prepend static data to the
-                                                     dynamic data. Defaults to True.
-
-        Returns:
-            dict: A dictionary containing the collated batch data, including:
-                - mask: Tensor indicating valid data points across the batch.
-                - static_mask: Tensor indicating static data points.
-                - code: Tensor of concatenated static and dynamic codes.
-                - numeric_value: Tensor of concatenated static and dynamic numerical values.
-                - time_delta_days: Tensor of time deltas between events.
-                - Additional task-specific labels if present in the input data.
-
-        Notes:
-            - This method handles padding to ensure uniform sequence lengths within the batch.
-            - It converts all data to PyTorch tensors.
-            - The method is flexible to handle additional task-specific data present in the input.
-        """
-        processed_batch = [cls.process_triplet(item, do_prepend_static_data) for item in batch]
-        tensorized_batch = {
-            k: torch.nn.utils.rnn.pad_sequence(
-                [torch.as_tensor(x[k]) for x in processed_batch],
-                batch_first=True,
-                padding_value=0,
-            )
-            for k in processed_batch[0].keys()
-        }
-
-        # Add task labels to batch
-        for k in batch[0].keys():
-            if k not in ("dynamic", "static_values", "static_indices"):
-                tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
-        return tensorized_batch
-
     @TimeableMixin.TimeAs
     def collate(self, batch: list[dict]) -> dict:
         """Combine a batch of data points into a single, tensorized batch.
@@ -625,12 +573,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         - Each collation strategy is optimized for different model architectures and data representations.
           - The collated output is fully tensorized and padded, ready for input into a PyTorch model.
         """
-        collate_type = self.config.collate_type
-        if collate_type == CollateType.triplet_prompt:
-            return self.collate_triplet(batch)
-        elif collate_type == CollateType.eic:
-            return self.collate_triplet(batch, self.config.do_prepend_static_data)
-        elif collate_type == CollateType.triplet:
-            return self.collate_triplet(batch, self.config.do_prepend_static_data)
-        else:
-            raise NotImplementedError(f"Unsupported collate type {collate_type}!")
+        processed_batch = [self.process_triplet(item) for item in batch]
+        tensorized_batch = {
+            k: torch.nn.utils.rnn.pad_sequence(
+                [torch.as_tensor(x[k]) for x in processed_batch],
+                batch_first=True,
+                padding_value=0,
+            )
+            for k in processed_batch[0].keys()
+        }
+
+        # Add task labels to batch
+        for k in batch[0].keys():
+            if k not in ("dynamic", "static_values", "static_indices"):
+                tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
+        return tensorized_batch
