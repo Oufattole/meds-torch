@@ -7,12 +7,7 @@ import polars as pl
 import torch
 from loguru import logger
 from mixins import SeedableMixin, TimeableMixin
-from nested_ragged_tensors.ragged_numpy import (
-    NP_FLOAT_TYPES,
-    NP_INT_TYPES,
-    NP_UINT_TYPES,
-    JointNestedRaggedTensorDict,
-)
+from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 from omegaconf import DictConfig
 
 BINARY_LABEL_COL = "boolean_value"
@@ -446,61 +441,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         if "dynamic" not in out:
             raise ValueError(f"Failed to load dynamic data for subject {subject_id} at idx {idx}!")
         return out
-
-    @TimeableMixin.TimeAs
-    def __dynamic_only_collate(self, batch: list[dict[str, list[float]]]) -> dict:
-        """An internal collate function for only dynamic data."""
-        keys = batch[0].keys()
-        dense_keys = {k for k in keys if k not in ("dynamic", "static_indices", "static_values")}
-
-        if dense_keys:
-            dense_collated = torch.utils.data.default_collate([{k: x[k] for k in dense_keys} for x in batch])
-        else:
-            dense_collated = {}
-
-        dynamic = JointNestedRaggedTensorDict.vstack([x["dynamic"] for x in batch]).to_dense(
-            padding_side=self.config.seq_padding_side
-        )
-        dynamic["event_mask"] = dynamic.pop("dim1/mask")
-        dynamic["dynamic_values"] = dynamic.pop("numeric_value")
-        dynamic["dynamic_indices"] = dynamic.pop("code")
-        dynamic["dynamic_values_mask"] = dynamic.pop("dim2/mask") & ~np.isnan(dynamic["dynamic_values"])
-
-        dynamic_collated = {}
-        for k, v in dynamic.items():
-            if k.endswith("mask"):
-                dynamic_collated[k] = torch.from_numpy(v)
-            elif v.dtype in NP_UINT_TYPES + NP_INT_TYPES:
-                dynamic_collated[k] = torch.from_numpy(v.astype(int)).long()
-            elif v.dtype in NP_FLOAT_TYPES:
-                dynamic_collated[k] = torch.from_numpy(v.astype(float)).float()
-            else:
-                raise TypeError(f"Don't know how to tensorify {k} of type {v.dtype}!")
-
-        collated = {**dense_collated, **dynamic_collated}
-
-        out_batch = {}
-        out_batch["event_mask"] = collated["event_mask"]
-        out_batch["dynamic_values_mask"] = collated["dynamic_values_mask"]
-        out_batch["time_delta_days"] = torch.nan_to_num(collated["time_delta_days"].float(), nan=0)
-        out_batch["dynamic_indices"] = collated["dynamic_indices"].long()
-        out_batch["dynamic_values"] = torch.nan_to_num(collated["dynamic_values"].float(), nan=0)
-
-        if self.config.do_include_start_time_min:
-            out_batch["start_time"] = collated["start_time"].float()
-        if self.config.do_include_subsequence_indices:
-            out_batch["start_idx"] = collated["start_idx"].long()
-            out_batch["end_idx"] = collated["end_idx"].long()
-        if self.config.do_include_subject_id:
-            out_batch["subject_id"] = collated["subject_id"].long()
-
-        if not self.has_task:
-            return out_batch
-
-        # add task labels
-        out_batch[BINARY_LABEL_COL] = torch.tensor([e[BINARY_LABEL_COL] for e in batch], dtype=torch.float32)
-
-        return out_batch
 
     @TimeableMixin.TimeAs
     def collate(self, batch: list[dict]) -> dict:
