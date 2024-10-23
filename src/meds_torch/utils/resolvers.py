@@ -17,10 +17,6 @@ def get_eos_token_id(vocab_size, eos_offset):
     return vocab_size - eos_offset
 
 
-def resolve_max_seq_len(max_seq_len, prepend_eos):
-    return max_seq_len + int(prepend_eos)
-
-
 def setup_resolvers():
     OmegaConf.register_new_resolver(
         "get_vocab_size",
@@ -30,10 +26,5 @@ def setup_resolvers():
     OmegaConf.register_new_resolver(
         "get_eos_token_id",
         get_eos_token_id,
-        replace=True,
-    )
-    OmegaConf.register_new_resolver(
-        "resolve_max_seq_len",
-        resolve_max_seq_len,
         replace=True,
     )
