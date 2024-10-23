@@ -261,7 +261,7 @@ class TripletForecastingModule(BaseModule):
         model = AutoregressiveWrapper(self.model.model)
         batch = self.input_encoder(batch)
         prompts, mask = batch[INPUT_ENCODER_TOKENS_KEY].transpose(1, 2), batch[INPUT_ENCODER_MASK_KEY]
-        max_seq_len, greedy = model._resolved_max_seq_len, temperature == 0.0
+        max_seq_len, greedy = model.max_seq_len, temperature == 0.0
 
         t = prompts.shape[1]
         prompt_lens = mask.sum(axis=1)

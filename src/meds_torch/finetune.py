@@ -41,8 +41,8 @@ def finetune(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     # TODO this just adds backwards compatibility find a better way for loading pretrain_cfg
     # see: https://github.com/Oufattole/meds-torch/issues/47
     with open_dict(pretrain_cfg):
-        pretrain_cfg.model._resolved_max_seq_len = cfg.data._resolved_max_seq_len
-        pretrain_cfg.model.input_encoder._resolved_max_seq_len = cfg.data._resolved_max_seq_len
+        pretrain_cfg.model.max_seq_len = cfg.data.max_seq_len
+        pretrain_cfg.model.input_encoder.max_seq_len = cfg.data.max_seq_len
         pretrain_cfg.data.vocab_size = cfg.data.vocab_size
         pretrain_cfg.model.vocab_size = cfg.data.vocab_size
 
