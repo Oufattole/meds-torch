@@ -400,8 +400,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         data = JointNestedRaggedTensorDict.vstack([item["dynamic"] for item in batch]).to_dense()
         tensorized_batch = {k: torch.as_tensor(v) for k, v in data.items()}
+        tensorized_batch["code"] = tensorized_batch["code"].long()
         tensorized_batch["mask"] = tensorized_batch.pop("dim1/mask")
         tensorized_batch["numeric_value_mask"] = ~torch.isnan(tensorized_batch["numeric_value"])
+        tensorized_batch["time_delta_days"] = torch.nan_to_num(tensorized_batch["time_delta_days"], nan=0)
+        tensorized_batch["numeric_value"] = torch.nan_to_num(tensorized_batch["numeric_value"], nan=0)
 
         # Add task labels to batch
         for k in batch[0].keys():
