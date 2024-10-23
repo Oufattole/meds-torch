@@ -111,7 +111,7 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
         # Check the supervised task matches the target indices
         data_label = bool(
             functools.reduce(
-                operator.or_, [subject_data["dynamic"]["code"] == t for t in target_indices]
+                operator.or_, [subject_data["dynamic"].tensors["dim0/code"] == t for t in target_indices]
             ).any()
         )
         assert (

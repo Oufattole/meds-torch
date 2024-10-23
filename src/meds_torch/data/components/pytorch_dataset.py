@@ -1,4 +1,3 @@
-from collections import defaultdict
 from enum import StrEnum
 from pathlib import Path
 
@@ -315,64 +314,47 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             out["end_idx"] = global_end
 
         subject_dynamic_data = subject_dynamic_data.flatten()
+        schema = subject_dynamic_data.schema
         tensors = subject_dynamic_data.tensors
 
-        key_map = [
-            ("dim0/time_delta_days", "time_delta_days"),
-            ("dim0/code", "code"),
-            ("dim0/numeric_value", "numeric_value"),
-        ]
-        for old_key, new_key in key_map:
-            tensors[new_key] = tensors.pop(old_key)
-
         if self.config.do_prepend_static_data:
-            tensors["time_delta_days"] = np.concatenate(
+            tensors["dim0/time_delta_days"] = np.concatenate(
                 [
-                    np.zeros(len(out["static_indices"]), dtype=tensors["time_delta_days"].dtype),
-                    tensors["time_delta_days"],
+                    np.zeros(len(out["static_indices"]), dtype=schema["time_delta_days"]),
+                    tensors["dim0/time_delta_days"],
                 ]
             )
-            tensors["static_mask"] = np.concatenate(
+            tensors["dim0/static_mask"] = np.concatenate(
                 [
                     np.ones(len(out["static_indices"]), dtype=bool),
-                    np.zeros(len(tensors["code"]), dtype=bool),
+                    np.zeros(len(tensors["dim0/code"]), dtype=bool),
                 ]
             )
-            tensors["code"] = np.concatenate([out["static_indices"], tensors["code"]])
-            tensors["numeric_value"] = np.concatenate([out["static_values"], tensors["numeric_value"]])
+            tensors["dim0/code"] = np.concatenate([out["static_indices"], tensors["dim0/code"]])
+            tensors["dim0/numeric_value"] = np.concatenate(
+                [out["static_values"], tensors["dim0/numeric_value"]]
+            )
         else:
-            tensors["static_mask"] = np.zeros(len(tensors["code"]), dtype=bool)
+            tensors["dim0/static_mask"] = np.zeros(len(tensors["dim0/code"]), dtype=bool)
 
-        out["dynamic"] = tensors
+        if self.config.postpend_eos_token:
+            eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=schema["code"].dtype)
+            tensors["dim0/code"] = np.append(tensors["dim0/code"], eos_token)
+
+            tensors["dim0/static_mask"] = np.append(tensors["dim0/static_mask"], np.array([0], dtype=bool))
+            tensors["dim0/numeric_value"] = np.append(
+                tensors["dim0/numeric_value"], np.array([0], dtype=schema["numeric_value"])
+            )
+            tensors["dim0/time_delta_days"] = np.append(
+                tensors["dim0/time_delta_days"], np.array([0], dtype=schema["time_delta_days"])
+            )
+
+        subject_dynamic_data = JointNestedRaggedTensorDict(processed_tensors=tensors, schema=schema)
+
+        out["dynamic"] = subject_dynamic_data
 
         if self.config.do_include_start_time_min:
             out["start_time"] = static_row["time"].item().to_list()[global_st]
-
-        if self.config.postpend_eos_token:
-            eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["code"].dtype)
-            out["dynamic"]["code"] = np.append(out["dynamic"]["code"], eos_token)
-
-            numeric_dtype = out["dynamic"]["numeric_value"].dtype
-            time_dtype = out["dynamic"]["time_delta_days"].dtype
-            out["dynamic"]["static_mask"] = np.append(
-                out["dynamic"]["static_mask"], np.array([0], dtype=bool)
-            )
-            out["dynamic"]["numeric_value"] = np.append(
-                out["dynamic"]["numeric_value"], np.array([0], dtype=numeric_dtype)
-            )
-            out["dynamic"]["time_delta_days"] = np.append(
-                out["dynamic"]["time_delta_days"], np.array([0], dtype=time_dtype)
-            )
-
-        if not (
-            len(out["dynamic"]["code"])
-            == len(out["dynamic"]["numeric_value"])
-            == len(out["dynamic"]["time_delta_days"])
-        ):
-            code_shape = out["dynamic"]["code"].shape
-            numeric_shape = out["dynamic"]["numeric_value"].shape
-            time_shape = out["dynamic"]["time_delta_days"].shape
-            raise ValueError(f"Shape mismatch: {code_shape} vs {numeric_shape} vs {time_shape}")
 
         return out
 
@@ -393,8 +375,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         if self.labels is not None:
             out[BINARY_LABEL_COL] = self.labels[idx]
 
-        if "dynamic" not in out:
-            raise ValueError(f"Failed to load dynamic data for subject {subject_id} at idx {idx}!")
         return out
 
     @TimeableMixin.TimeAs
@@ -417,21 +397,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         - Each collation strategy is optimized for different model architectures and data representations.
           - The collated output is fully tensorized and padded, ready for input into a PyTorch model.
         """
-        data = defaultdict(list)
-        for item in batch:
-            vals = torch.as_tensor(item["dynamic"]["numeric_value"], dtype=torch.float32)
-            days = torch.as_tensor(item["dynamic"]["time_delta_days"], dtype=torch.float32)
 
-            data["mask"].append(torch.ones(len(item["dynamic"]["code"]), dtype=bool))
-            data["static_mask"].append(torch.as_tensor(item["dynamic"]["static_mask"]))
-            data["code"].append(torch.as_tensor(item["dynamic"]["code"], dtype=torch.int64))
-            data["numeric_value_mask"].append(~torch.isnan(vals))
-            data["numeric_value"].append(torch.nan_to_num(vals, nan=0))
-            data["time_delta_days"].append(torch.nan_to_num(days, nan=0))
-
-        tensorized_batch = {
-            k: torch.nn.utils.rnn.pad_sequence(v, batch_first=True, padding_value=0) for k, v in data.items()
-        }
+        data = JointNestedRaggedTensorDict.vstack([item["dynamic"] for item in batch]).to_dense()
+        tensorized_batch = {k: torch.as_tensor(v) for k, v in data.items()}
+        tensorized_batch["mask"] = tensorized_batch.pop("dim1/mask")
+        tensorized_batch["numeric_value_mask"] = ~torch.isnan(tensorized_batch["numeric_value"])
 
         # Add task labels to batch
         for k in batch[0].keys():
