@@ -308,10 +308,24 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         subject_idx = self.subj_indices[subject_id]
         static_row = self.static_dfs[shard][subject_idx].to_dict()
 
+        max_seq_len = self.config.max_seq_len
+
         out = {
             "static_indices": static_row["static_indices"].item().to_list(),
             "static_values": static_row["static_values"].item().to_list(),
         }
+
+        if self.config.do_prepend_static_data:
+            n_static = len(out["static_indices"])
+            if n_static >= max_seq_len:
+                raise ValueError(
+                    f"Static data length {n_static} matches or exceeds "
+                    f"max_seq_len {max_seq_len} for subject {subject_id}!"
+                )
+
+            max_seq_len -= n_static
+        if self.config.postpend_eos_token:
+            max_seq_len -= 1
 
         # TODO: remove this and handle flattening in the NRT class
         event_seq_len = end - st
@@ -322,6 +336,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                 f"Measurement sequence length {seq_len} is less than event sequence length"
                 f" {event_seq_len}!"
             )
+
         tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
         tensors["dim1/code"] = tensors["dim1/code"][st:end]
         seq_len = tensors["dim1/code"].shape[0]
@@ -331,12 +346,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         st = 0
         end = st + seq_len
 
-        if seq_len > self.config.max_seq_len:
+        if seq_len > max_seq_len:
             match self.config.subsequence_sampling_strategy:
                 case SubsequenceSamplingStrategy.RANDOM:
-                    start_offset = np.random.choice(seq_len - self.config.max_seq_len)
+                    start_offset = np.random.choice(seq_len - max_seq_len)
                 case SubsequenceSamplingStrategy.TO_END:
-                    start_offset = seq_len - self.config.max_seq_len
+                    start_offset = seq_len - max_seq_len
                 case SubsequenceSamplingStrategy.FROM_START:
                     start_offset = 0
                 case _:
@@ -354,6 +369,25 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         tensors["dim1/code"] = tensors["dim1/code"][st:end]
         tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
         tensors["dim0/time_delta_days"] = tensors["dim0/time_delta_days"][st:end]
+
+        if self.config.do_prepend_static_data:
+            tensors["dim0/time_delta_days"] = np.concatenate(
+                [
+                    np.zeros(len(out["static_indices"]), dtype=tensors["dim0/time_delta_days"].dtype),
+                    tensors["dim0/time_delta_days"],
+                ]
+            )
+            tensors["static_mask"] = np.concatenate(
+                [
+                    np.ones(len(out["static_indices"]), dtype=bool),
+                    np.zeros(len(tensors["dim1/code"]), dtype=bool),
+                ]
+            )
+            tensors["dim1/code"] = np.concatenate([out["static_indices"], tensors["dim1/code"]])
+            tensors["dim1/numeric_value"] = np.concatenate(
+                [out["static_values"], tensors["dim1/numeric_value"]]
+            )
+
         out["dynamic"] = tensors
 
         if self.config.do_include_start_time_min:
@@ -529,18 +563,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         code = dynamic_data["dim1/code"]
         numeric_value = dynamic_data["dim1/numeric_value"]
         time_delta_days = dynamic_data["dim0/time_delta_days"]
-
-        static_mask = np.zeros(len(code), dtype=bool)
-        if do_prepend_static_data:
-            static_values = np.asarray(item["static_values"], dtype=np.float32)
-            static_indices = np.asarray(item["static_indices"], dtype=np.int32)
-            code = np.concatenate([static_indices, code], dtype=np.int32, casting="unsafe")
-            numeric_value = np.concatenate([static_values, numeric_value])
-            static_mask = np.zeros(len(code), dtype=bool)
-            static_mask[: len(static_values)] = True
-            time_delta_days = np.concatenate(
-                [np.zeros(len(static_values), dtype=time_delta_days.dtype), time_delta_days]
-            )
+        static_mask = dynamic_data["static_mask"]
 
         numeric_value_mask = ~np.isnan(numeric_value)
         # Replace NaNs with 0s
