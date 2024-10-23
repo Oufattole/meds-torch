@@ -13,32 +13,6 @@ from omegaconf import DictConfig
 BINARY_LABEL_COL = "boolean_value"
 
 
-def subpad_vectors(a: np.ndarray, b: np.ndarray):
-    """Create a new array by placing elements of 'a' at indices specified by 'b'.
-
-    This function creates an array of zeros with length equal to the maximum value in 'b',
-    then places the values from 'a' at the indices specified by 'b'.
-
-    Args:
-        a (numpy.ndarray): The source array containing values to be placed.
-        b (numpy.ndarray): The array specifying the indices where values from 'a' should be placed.
-
-    Returns:
-        numpy.ndarray: A new array with values from 'a' placed at indices specified by 'b',
-                       and zeros elsewhere.
-
-    Example:
-    >>> a = np.array([2, 4, 5])
-    >>> b = np.array([3, 5, 10])
-    >>> subpad_vectors(a, b)
-    array([2, 0, 0, 4, 0, 5, 0, 0, 0, 0])
-    """
-    total_length = b[-1]
-    result = np.zeros(total_length, dtype=a.dtype)
-    result[[0] + list(b[:-1])] = a
-    return result
-
-
 class SubsequenceSamplingStrategy(StrEnum):
     """An enumeration of the possible subsequence sampling strategies for the dataset.
 
@@ -340,16 +314,16 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             out["start_idx"] = global_st
             out["end_idx"] = global_end
 
+        subject_dynamic_data = subject_dynamic_data.flatten()
         tensors = subject_dynamic_data.tensors
+
         key_map = [
             ("dim0/time_delta_days", "time_delta_days"),
-            ("dim1/code", "code"),
-            ("dim1/numeric_value", "numeric_value"),
+            ("dim0/code", "code"),
+            ("dim0/numeric_value", "numeric_value"),
         ]
         for old_key, new_key in key_map:
             tensors[new_key] = tensors.pop(old_key)
-
-        tensors["time_delta_days"] = subpad_vectors(tensors["time_delta_days"], tensors["dim1/bounds"])
 
         if self.config.do_prepend_static_data:
             tensors["time_delta_days"] = np.concatenate(
