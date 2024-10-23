@@ -1,3 +1,4 @@
+from collections import defaultdict
 from enum import StrEnum
 from pathlib import Path
 
@@ -501,58 +502,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         return out_batch
 
-    @classmethod
-    def process_triplet(cls, item: dict) -> dict:
-        """Process a single triplet of dynamic and static data.
-
-        This method takes a dictionary containing dynamic and static data for a single
-        data point and processes it into a unified representation suitable for model input.
-
-        Args:
-            item (dict): A dictionary containing 'dynamic' and 'static' data.
-
-        Returns:
-            dict: A processed dictionary containing:
-                - mask: Boolean mask indicating valid data points.
-                - static_mask: Boolean mask indicating static data points.
-                - code: Concatenated static and dynamic codes.
-                - numeric_value: Concatenated static and dynamic numerical values.
-                - time_delta_days: Time deltas between events.
-                - numeric_value_mask: Boolean mask for valid numeric values.
-
-        Notes:
-            - This method handles the integration of static and dynamic data.
-            - It applies appropriate type conversions and handles missing values.
-            - The resulting dictionary is suitable for further tensorization or batching.
-        """
-        dynamic_data = item["dynamic"]
-        code = dynamic_data["dim1/code"]
-        numeric_value = dynamic_data["dim1/numeric_value"]
-        time_delta_days = dynamic_data["dim0/time_delta_days"]
-        static_mask = dynamic_data["static_mask"]
-
-        numeric_value_mask = ~np.isnan(numeric_value)
-        # Replace NaNs with 0s
-        np.nan_to_num(numeric_value, nan=0, copy=False)
-        np.nan_to_num(time_delta_days, nan=0, copy=False)
-
-        mask = np.ones(len(code), dtype=bool)
-        if not len(mask) == len(code) == len(numeric_value) == len(time_delta_days):
-            raise ValueError(
-                f"Shape mismatch: {code.shape} vs {mask.shape} vs "
-                f"{numeric_value.shape} vs {time_delta_days.shape}"
-            )
-
-        output = dict(
-            mask=mask,
-            static_mask=static_mask,
-            code=torch.as_tensor(code, dtype=torch.int64),
-            numeric_value=numeric_value,
-            time_delta_days=time_delta_days,
-            numeric_value_mask=numeric_value_mask,
-        )
-        return output
-
     @TimeableMixin.TimeAs
     def collate(self, batch: list[dict]) -> dict:
         """Combine a batch of data points into a single, tensorized batch.
@@ -573,14 +522,20 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         - Each collation strategy is optimized for different model architectures and data representations.
           - The collated output is fully tensorized and padded, ready for input into a PyTorch model.
         """
-        processed_batch = [self.process_triplet(item) for item in batch]
+        data = defaultdict(list)
+        for item in batch:
+            vals = torch.as_tensor(item["dynamic"]["dim1/numeric_value"], dtype=torch.float32)
+            days = torch.as_tensor(item["dynamic"]["dim0/time_delta_days"], dtype=torch.float32)
+
+            data["mask"].append(torch.ones(len(item["dynamic"]["dim1/code"]), dtype=bool))
+            data["static_mask"].append(torch.as_tensor(item["dynamic"]["static_mask"]))
+            data["code"].append(torch.as_tensor(item["dynamic"]["dim1/code"], dtype=torch.int64))
+            data["numeric_value_mask"].append(~torch.isnan(vals))
+            data["numeric_value"].append(torch.nan_to_num(vals, nan=0))
+            data["time_delta_days"].append(torch.nan_to_num(days, nan=0))
+
         tensorized_batch = {
-            k: torch.nn.utils.rnn.pad_sequence(
-                [torch.as_tensor(x[k]) for x in processed_batch],
-                batch_first=True,
-                padding_value=0,
-            )
-            for k in processed_batch[0].keys()
+            k: torch.nn.utils.rnn.pad_sequence(v, batch_first=True, padding_value=0) for k, v in data.items()
         }
 
         # Add task labels to batch
