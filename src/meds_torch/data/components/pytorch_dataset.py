@@ -314,15 +314,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             out["end_idx"] = global_end
 
         subject_dynamic_data = subject_dynamic_data.flatten()
-        schema = subject_dynamic_data.schema
         tensors = subject_dynamic_data.tensors
 
         if self.config.do_prepend_static_data:
             tensors["dim0/time_delta_days"] = np.concatenate(
-                [
-                    np.zeros(len(out["static_indices"]), dtype=schema["time_delta_days"]),
-                    tensors["dim0/time_delta_days"],
-                ]
+                [np.zeros(len(out["static_indices"])), tensors["dim0/time_delta_days"]]
             )
             tensors["dim0/static_mask"] = np.concatenate(
                 [
@@ -338,18 +334,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             tensors["dim0/static_mask"] = np.zeros(len(tensors["dim0/code"]), dtype=bool)
 
         if self.config.postpend_eos_token:
-            eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=schema["code"].dtype)
-            tensors["dim0/code"] = np.append(tensors["dim0/code"], eos_token)
+            tensors["dim0/code"] = np.append(tensors["dim0/code"], [self.config.EOS_TOKEN_ID])
+            tensors["dim0/static_mask"] = np.append(tensors["dim0/static_mask"], [False])
+            tensors["dim0/numeric_value"] = np.append(tensors["dim0/numeric_value"], [0])
+            tensors["dim0/time_delta_days"] = np.append(tensors["dim0/time_delta_days"], [0])
 
-            tensors["dim0/static_mask"] = np.append(tensors["dim0/static_mask"], np.array([0], dtype=bool))
-            tensors["dim0/numeric_value"] = np.append(
-                tensors["dim0/numeric_value"], np.array([0], dtype=schema["numeric_value"])
-            )
-            tensors["dim0/time_delta_days"] = np.append(
-                tensors["dim0/time_delta_days"], np.array([0], dtype=schema["time_delta_days"])
-            )
-
-        subject_dynamic_data = JointNestedRaggedTensorDict(processed_tensors=tensors, schema=schema)
+        subject_dynamic_data = JointNestedRaggedTensorDict(processed_tensors=tensors)
 
         out["dynamic"] = subject_dynamic_data
 
@@ -399,15 +389,15 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         """
 
         data = JointNestedRaggedTensorDict.vstack([item["dynamic"] for item in batch]).to_dense()
-        tensorized_batch = {k: torch.as_tensor(v) for k, v in data.items()}
-        tensorized_batch["code"] = tensorized_batch["code"].long()
-        tensorized_batch["mask"] = tensorized_batch.pop("dim1/mask")
-        tensorized_batch["numeric_value_mask"] = ~torch.isnan(tensorized_batch["numeric_value"])
-        tensorized_batch["time_delta_days"] = torch.nan_to_num(tensorized_batch["time_delta_days"], nan=0)
-        tensorized_batch["numeric_value"] = torch.nan_to_num(tensorized_batch["numeric_value"], nan=0)
+        tensorized = {k: torch.as_tensor(v) for k, v in data.items()}
+        tensorized["code"] = tensorized["code"].long()
+        tensorized["mask"] = tensorized.pop("dim1/mask")
+        tensorized["numeric_value_mask"] = ~torch.isnan(tensorized["numeric_value"])
+        tensorized["time_delta_days"] = torch.nan_to_num(tensorized["time_delta_days"], nan=0).float()
+        tensorized["numeric_value"] = torch.nan_to_num(tensorized["numeric_value"], nan=0).float()
 
         # Add task labels to batch
         for k in batch[0].keys():
             if k not in ("dynamic", "static_values", "static_indices"):
-                tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
-        return tensorized_batch
+                tensorized[k] = torch.Tensor([item[k] for item in batch])
+        return tensorized
