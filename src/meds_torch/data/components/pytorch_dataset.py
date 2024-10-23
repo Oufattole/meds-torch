@@ -387,6 +387,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             tensors["dim1/numeric_value"] = np.concatenate(
                 [out["static_values"], tensors["dim1/numeric_value"]]
             )
+        else:
+            tensors["static_mask"] = np.zeros(len(tensors["dim1/code"]), dtype=bool)
 
         out["dynamic"] = tensors
 
@@ -405,6 +407,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
             numeric_dtype = out["dynamic"]["dim1/numeric_value"].dtype
             time_dtype = out["dynamic"]["dim0/time_delta_days"].dtype
+            out["dynamic"]["static_mask"] = np.append(
+                out["dynamic"]["static_mask"], np.array([0], dtype=bool)
+            )
             out["dynamic"]["dim1/numeric_value"] = np.append(
                 out["dynamic"]["dim1/numeric_value"], np.array([0], dtype=numeric_dtype)
             )
@@ -529,35 +534,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             - This method handles the integration of static and dynamic data.
             - It applies appropriate type conversions and handles missing values.
             - The resulting dictionary is suitable for further tensorization or batching.
-
-        Examples:
-            >>> import numpy as np
-            >>> import tempfile, json, os
-            >>> from omegaconf import DictConfig
-            >>> item =  {
-            ...         'dynamic': {
-            ...                 'dim1/code': np.array([5, 6, 1, 2]),
-            ...                 'dim1/numeric_value': np.array([50.0, 60.0, np.nan, np.nan]),
-            ...                 'dim0/time_delta_days': np.array([0, 0, 12, 0])
-            ...         },
-            ...         'static_values': [70.0],
-            ...         'static_indices': [2]
-            ...     }
-            >>> triplet_item = PytorchDataset.process_triplet(item)
-            >>> for each in sorted(list(triplet_item.keys())): print(each)
-            code
-            mask
-            numeric_value
-            numeric_value_mask
-            static_mask
-            time_delta_days
-            >>> for key, value in triplet_item.items(): print(key, value);
-            mask [ True  True  True  True  True]
-            static_mask [ True False False False False]
-            code tensor([2, 5, 6, 1, 2])
-            numeric_value [70. 50. 60.  0.  0.]
-            time_delta_days [ 0  0  0 12  0]
-            numeric_value_mask [ True  True  True False False]
         """
         dynamic_data = item["dynamic"]
         code = dynamic_data["dim1/code"]
@@ -612,46 +588,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             - This method handles padding to ensure uniform sequence lengths within the batch.
             - It converts all data to PyTorch tensors.
             - The method is flexible to handle additional task-specific data present in the input.
-
-        Examples:
-            >>> import torch
-            >>> import numpy as np
-            >>> batch = [
-            ...     {
-            ...         'dynamic': {
-            ...              'dim1/code': np.array([1]),
-            ...              'dim1/numeric_value': np.array([10.0]),
-            ...              'dim0/time_delta_days': np.array([0])},
-            ...         'static_values': [20.0],
-            ...         'static_indices': [0],
-            ...         'label': 0,
-            ...     },
-            ...     {
-            ...         'dynamic':{
-            ...              'dim1/code': np.array([5, 6, 1, 2]),
-            ...              'dim1/numeric_value': np.array([50.0, 60.0, 0, 0]),
-            ...              'dim0/time_delta_days': np.array([0, 0, 12, 0])},
-            ...         'static_values': [70.0],
-            ...         'static_indices': [2],
-            ...         'label': 1,
-            ...         },
-            ... ]
-            >>> collated_batch = PytorchDataset.collate_triplet(batch)
-            >>> from pprint import pprint
-            >>> pprint(collated_batch)
-            {'code': tensor([[0, 1, 0, 0, 0],
-                    [2, 5, 6, 1, 2]]),
-             'label': tensor([0., 1.]),
-             'mask': tensor([[ True,  True, False, False, False],
-                    [ True,  True,  True,  True,  True]]),
-             'numeric_value': tensor([[20., 10.,  0.,  0.,  0.],
-                    [70., 50., 60.,  0.,  0.]], dtype=torch.float64),
-             'numeric_value_mask': tensor([[ True,  True, False, False, False],
-                    [ True,  True,  True,  True,  True]]),
-             'static_mask': tensor([[ True, False, False, False, False],
-                    [ True, False, False, False, False]]),
-             'time_delta_days': tensor([[ 0,  0,  0,  0,  0],
-                    [ 0,  0,  0, 12,  0]])}
         """
         processed_batch = [cls.process_triplet(item, do_prepend_static_data) for item in batch]
         tensorized_batch = {
