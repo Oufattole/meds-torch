@@ -122,7 +122,7 @@ class RandomWindowPytorchDataset(PytorchDataset):
 
         full_sequence = self.load_subject(subject_dynamic_data, subject_id, 0, len(subject_dynamic_data))
 
-        seq_len = len(full_sequence["dynamic"]["dim1/code"])
+        seq_len = len(full_sequence["dynamic"])
         windows = self.generate_random_windows(seq_len)
         partitioned_sequence = self.partition_sequence(full_sequence, windows)
 

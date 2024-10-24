@@ -1,4 +1,3 @@
-from collections import defaultdict
 from enum import StrEnum
 from pathlib import Path
 
@@ -11,32 +10,6 @@ from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 from omegaconf import DictConfig
 
 BINARY_LABEL_COL = "boolean_value"
-
-
-def subpad_vectors(a: np.ndarray, b: np.ndarray):
-    """Create a new array by placing elements of 'a' at indices specified by 'b'.
-
-    This function creates an array of zeros with length equal to the maximum value in 'b',
-    then places the values from 'a' at the indices specified by 'b'.
-
-    Args:
-        a (numpy.ndarray): The source array containing values to be placed.
-        b (numpy.ndarray): The array specifying the indices where values from 'a' should be placed.
-
-    Returns:
-        numpy.ndarray: A new array with values from 'a' placed at indices specified by 'b',
-                       and zeros elsewhere.
-
-    Example:
-    >>> a = np.array([2, 4, 5])
-    >>> b = np.array([3, 5, 10])
-    >>> subpad_vectors(a, b)
-    array([2, 0, 0, 4, 0, 5, 0, 0, 0, 0])
-    """
-    total_length = b[-1]
-    result = np.zeros(total_length, dtype=a.dtype)
-    result[[0] + list(b[:-1])] = a
-    return result
 
 
 class SubsequenceSamplingStrategy(StrEnum):
@@ -262,14 +235,14 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         dynamic_data_fp = Path(self.config.data_dir) / "data" / f"{shard}.nrt"
 
-        subject_dynamic_data = JointNestedRaggedTensorDict(tensors_fp=dynamic_data_fp)[subject_idx]
+        subject_dynamic_data = JointNestedRaggedTensorDict(tensors_fp=dynamic_data_fp)[subject_idx, st:end]
 
         return subject_dynamic_data, subject_id, st, end
 
     @SeedableMixin.WithSeed
     @TimeableMixin.TimeAs
     def load_subject(
-        self, subject_dynamic_data, subject_id: int, st: int, end: int
+        self, subject_dynamic_data, subject_id: int, global_st: int, global_end: int
     ) -> dict[str, list[float]]:
         """Load and process data for a single subject.
 
@@ -315,24 +288,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         if self.config.postpend_eos_token:
             max_seq_len -= 1
 
-        # TODO: remove this and handle flattening in the NRT class
-        event_seq_len = end - st
-        tensors = subject_dynamic_data.tensors
-        seq_len = sum([array.size for array in tensors["dim1/code"][st:end]])
-        if not seq_len >= event_seq_len:
-            raise ValueError(
-                f"Measurement sequence length {seq_len} is less than event sequence length"
-                f" {event_seq_len}!"
-            )
-
-        tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
-        tensors["dim1/code"] = tensors["dim1/code"][st:end]
-        seq_len = tensors["dim1/code"].shape[0]
-        tensors["dim0/time_delta_days"] = subpad_vectors(
-            tensors["dim0/time_delta_days"][st:end], tensors["dim1/bounds"][st:end]
-        )
-        st = 0
-        end = st + seq_len
+        seq_len = len(subject_dynamic_data)
 
         if seq_len > max_seq_len:
             match self.config.subsequence_sampling_strategy:
@@ -347,77 +303,48 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                         f"Invalid subsequence sampling strategy {self.config.subsequence_sampling_strategy}!"
                     )
 
-            st += start_offset
-            end = min(end, st + self.config.max_seq_len)
+            end = min(seq_len, start_offset + self.config.max_seq_len)
+            subject_dynamic_data = subject_dynamic_data[start_offset:end]
+
+            global_st += start_offset
+            global_end += end
 
         if self.config.do_include_subsequence_indices:
-            out["start_idx"] = st
-            out["end_idx"] = end
+            out["start_idx"] = global_st
+            out["end_idx"] = global_end
 
-        tensors["dim1/code"] = tensors["dim1/code"][st:end]
-        tensors["dim1/numeric_value"] = tensors["dim1/numeric_value"][st:end]
-        tensors["dim0/time_delta_days"] = tensors["dim0/time_delta_days"][st:end]
+        subject_dynamic_data = subject_dynamic_data.flatten()
+        tensors = subject_dynamic_data.tensors
 
         if self.config.do_prepend_static_data:
             tensors["dim0/time_delta_days"] = np.concatenate(
-                [
-                    np.zeros(len(out["static_indices"]), dtype=tensors["dim0/time_delta_days"].dtype),
-                    tensors["dim0/time_delta_days"],
-                ]
+                [np.zeros(len(out["static_indices"])), tensors["dim0/time_delta_days"]]
             )
-            tensors["static_mask"] = np.concatenate(
+            tensors["dim0/static_mask"] = np.concatenate(
                 [
                     np.ones(len(out["static_indices"]), dtype=bool),
-                    np.zeros(len(tensors["dim1/code"]), dtype=bool),
+                    np.zeros(len(tensors["dim0/code"]), dtype=bool),
                 ]
             )
-            tensors["dim1/code"] = np.concatenate([out["static_indices"], tensors["dim1/code"]])
-            tensors["dim1/numeric_value"] = np.concatenate(
-                [out["static_values"], tensors["dim1/numeric_value"]]
+            tensors["dim0/code"] = np.concatenate([out["static_indices"], tensors["dim0/code"]])
+            tensors["dim0/numeric_value"] = np.concatenate(
+                [out["static_values"], tensors["dim0/numeric_value"]]
             )
         else:
-            tensors["static_mask"] = np.zeros(len(tensors["dim1/code"]), dtype=bool)
-
-        out["dynamic"] = tensors
-
-        if self.config.do_include_start_time_min:
-            out["start_time"] = static_row["time"].item().to_list()[st]
-
-        if end - st > self.config.max_seq_len:
-            raise ValueError(f"Sequence length {end - st} exceeds max_seq_len {self.config.max_seq_len}!")
-
-        if end == st:
-            raise ValueError(f"Sequence length {end - st} is 0!")
+            tensors["dim0/static_mask"] = np.zeros(len(tensors["dim0/code"]), dtype=bool)
 
         if self.config.postpend_eos_token:
-            eos_token = np.array([self.config.EOS_TOKEN_ID], dtype=out["dynamic"]["dim1/code"].dtype)
-            out["dynamic"]["dim1/code"] = np.append(out["dynamic"]["dim1/code"], eos_token)
+            tensors["dim0/code"] = np.append(tensors["dim0/code"], [self.config.EOS_TOKEN_ID])
+            tensors["dim0/static_mask"] = np.append(tensors["dim0/static_mask"], [False])
+            tensors["dim0/numeric_value"] = np.append(tensors["dim0/numeric_value"], [0])
+            tensors["dim0/time_delta_days"] = np.append(tensors["dim0/time_delta_days"], [0])
 
-            numeric_dtype = out["dynamic"]["dim1/numeric_value"].dtype
-            time_dtype = out["dynamic"]["dim0/time_delta_days"].dtype
-            out["dynamic"]["static_mask"] = np.append(
-                out["dynamic"]["static_mask"], np.array([0], dtype=bool)
-            )
-            out["dynamic"]["dim1/numeric_value"] = np.append(
-                out["dynamic"]["dim1/numeric_value"], np.array([0], dtype=numeric_dtype)
-            )
-            out["dynamic"]["dim0/time_delta_days"] = np.append(
-                out["dynamic"]["dim0/time_delta_days"], np.array([0], dtype=time_dtype)
-            )
+        subject_dynamic_data = JointNestedRaggedTensorDict(processed_tensors=tensors)
 
-        # Update end_idx if it's included
-        if self.config.do_include_subsequence_indices:
-            out["end_idx"] = end
+        out["dynamic"] = subject_dynamic_data
 
-        if not (
-            len(out["dynamic"]["dim1/code"])
-            == len(out["dynamic"]["dim1/numeric_value"])
-            == len(out["dynamic"]["dim0/time_delta_days"])
-        ):
-            code_shape = out["dynamic"]["dim1/code"].shape
-            numeric_shape = out["dynamic"]["dim1/numeric_value"].shape
-            time_shape = out["dynamic"]["dim0/time_delta_days"].shape
-            raise ValueError(f"Shape mismatch: {code_shape} vs {numeric_shape} vs {time_shape}")
+        if self.config.do_include_start_time_min:
+            out["start_time"] = static_row["time"].item().to_list()[global_st]
 
         return out
 
@@ -438,8 +365,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         if self.labels is not None:
             out[BINARY_LABEL_COL] = self.labels[idx]
 
-        if "dynamic" not in out:
-            raise ValueError(f"Failed to load dynamic data for subject {subject_id} at idx {idx}!")
         return out
 
     @TimeableMixin.TimeAs
@@ -462,24 +387,17 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         - Each collation strategy is optimized for different model architectures and data representations.
           - The collated output is fully tensorized and padded, ready for input into a PyTorch model.
         """
-        data = defaultdict(list)
-        for item in batch:
-            vals = torch.as_tensor(item["dynamic"]["dim1/numeric_value"], dtype=torch.float32)
-            days = torch.as_tensor(item["dynamic"]["dim0/time_delta_days"], dtype=torch.float32)
 
-            data["mask"].append(torch.ones(len(item["dynamic"]["dim1/code"]), dtype=bool))
-            data["static_mask"].append(torch.as_tensor(item["dynamic"]["static_mask"]))
-            data["code"].append(torch.as_tensor(item["dynamic"]["dim1/code"], dtype=torch.int64))
-            data["numeric_value_mask"].append(~torch.isnan(vals))
-            data["numeric_value"].append(torch.nan_to_num(vals, nan=0))
-            data["time_delta_days"].append(torch.nan_to_num(days, nan=0))
-
-        tensorized_batch = {
-            k: torch.nn.utils.rnn.pad_sequence(v, batch_first=True, padding_value=0) for k, v in data.items()
-        }
+        data = JointNestedRaggedTensorDict.vstack([item["dynamic"] for item in batch]).to_dense()
+        tensorized = {k: torch.as_tensor(v) for k, v in data.items()}
+        tensorized["code"] = tensorized["code"].long()
+        tensorized["mask"] = tensorized.pop("dim1/mask")
+        tensorized["numeric_value_mask"] = ~torch.isnan(tensorized["numeric_value"])
+        tensorized["time_delta_days"] = torch.nan_to_num(tensorized["time_delta_days"], nan=0).float()
+        tensorized["numeric_value"] = torch.nan_to_num(tensorized["numeric_value"], nan=0).float()
 
         # Add task labels to batch
         for k in batch[0].keys():
             if k not in ("dynamic", "static_values", "static_indices"):
-                tensorized_batch[k] = torch.Tensor([item[k] for item in batch])
-        return tensorized_batch
+                tensorized[k] = torch.Tensor([item[k] for item in batch])
+        return tensorized
