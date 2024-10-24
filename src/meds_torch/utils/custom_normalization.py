@@ -332,7 +332,7 @@ def convert_metadata_codes_to_discrete_quantiles(
     >>> quantile_code_metadata = convert_metadata_codes_to_discrete_quantiles(
     ...    code_metadata, custom_quantiles)
     >>> quantile_code_metadata.sort("code/vocab_index")
-    shape: (27, 3)
+    shape: (25, 3)
     ┌──────────────┬──────────────────┬───────────────────────┐
     │ code         ┆ code/vocab_index ┆ values/quantiles      │
     │ ---          ┆ ---              ┆ ---                   │
@@ -344,11 +344,11 @@ def convert_metadata_codes_to_discrete_quantiles(
     │ lab//A//_Q_3 ┆ 3                ┆ {-3.0,-1.0,1.0,3.0}   │
     │ lab//A//_Q_4 ┆ 4                ┆ {-3.0,-1.0,1.0,3.0}   │
     │ …            ┆ …                ┆ …                     │
-    │ dx//D        ┆ 22               ┆ {null,null,null,null} │
-    │ dx//D//_Q_1  ┆ 23               ┆ {null,null,null,null} │
-    │ dx//D//_Q_2  ┆ 24               ┆ {null,null,null,null} │
-    │ dx//D//_Q_3  ┆ 25               ┆ {null,null,null,null} │
-    │ dx//D//_Q_4  ┆ 26               ┆ {null,null,null,null} │
+    │ lab//F//_Q_2 ┆ 20               ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ lab//F//_Q_3 ┆ 21               ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ lab//F//_Q_4 ┆ 22               ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ lab//F//_Q_5 ┆ 23               ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ dx//D        ┆ 24               ┆ {null,null,null,null} │
     └──────────────┴──────────────────┴───────────────────────┘
     """
     # Step 1: Add custom_quantiles column to code_metadata
@@ -423,63 +423,69 @@ def generate_quantile_code_metadata(code_metadata: pl.DataFrame) -> pl.DataFrame
     │ 25               ┆ {null,null,null,null} ┆ dx//D        │
     └──────────────────┴───────────────────────┴──────────────┘
     """
-    # Step 1: Determine the number of quantiles for each code
+    # Step 1: Get the number of quantiles
     quantile_fields = code_metadata.schema["values/quantiles"].fields
-    num_quantiles = len(quantile_fields)
-    first_quantile_name = quantile_fields[0].name
-    no_quantiles = code_metadata.select(
-        pl.col("values/quantiles").struct.field(first_quantile_name).is_null()
-    )
-    num_quantiles_expr = pl.when(no_quantiles).then(1).otherwise(pl.lit(num_quantiles) + 2)
+    num_bins = len(quantile_fields) + 1  # Add 1 for n+1 bins
+    codes_per_entry = num_bins + 1  # Add 1 for the original code
+
+    # Get first quantile name
+    first_quantile = quantile_fields[0].name
+    is_null_quantile = code_metadata.select(pl.col("values/quantiles").struct.field(first_quantile).is_null())
+
+    # Determine number of bins per row
+    codes_per_entry_expr = pl.when(is_null_quantile).then(1).otherwise(codes_per_entry)
+
+    # If custom quantiles exist, update the expression
     if "custom_quantiles" in code_metadata.columns and isinstance(
         code_metadata.schema["custom_quantiles"], pl.Struct
     ):
-        num_custom_quantiles = len(code_metadata.schema["custom_quantiles"].fields)
-        num_quantiles_expr = (
+        custom_bins = len(code_metadata.schema["custom_quantiles"].fields) + 2
+        codes_per_entry_expr = (
             pl.when(pl.col("custom_quantiles").is_not_null())
-            .then(pl.lit(num_custom_quantiles) + 2)
-            .otherwise(num_quantiles_expr)
+            .then(custom_bins + 2)
+            .otherwise(codes_per_entry_expr)
         )
 
-    code_metadata = code_metadata.with_columns(num_quantiles_expr.alias("num_quantiles"))
+    code_metadata = code_metadata.with_columns(codes_per_entry_expr.alias("codes_per_entry_expr"))
 
     # Step 2: Generate rows for each code and its quantiles
     expanded_metadata = (
         code_metadata.select(
-            pl.col("code").repeat_by(pl.col("num_quantiles")),
-            pl.col("code/vocab_index").repeat_by(pl.col("num_quantiles")).alias("base_index"),
+            pl.col("code").repeat_by(pl.col("codes_per_entry_expr")),
+            pl.col("code/vocab_index").repeat_by(pl.col("codes_per_entry_expr")).alias("base_index"),
             pl.exclude("code", "code/vocab_index"),
         )
         .explode(["code", "base_index"])
         .with_row_index()
     )
 
-    # Step 3: Generate quantile indices and adjust vocab indices
+    # Step 3: Generate binned code vocab indices and adjust vocab indices
     offset = (
         expanded_metadata.group_by("code", maintain_order=True)
-        .agg(pl.col("base_index").first(), pl.col("num_quantiles").first())
-        .select(pl.col("code"), pl.col("num_quantiles").cum_sum().alias("offset") - pl.col("num_quantiles"))
+        .agg(pl.col("base_index").first(), pl.col("codes_per_entry_expr").first())
+        .select(
+            pl.col("code"),
+            pl.col("codes_per_entry_expr").cum_sum().alias("offset") - pl.col("codes_per_entry_expr"),
+        )
     )
     expanded_metadata = expanded_metadata.join(offset, on="code", how="left")
     assert expanded_metadata["base_index"].is_sorted()
     expanded_metadata = expanded_metadata.with_columns((pl.col("index") - pl.col("offset")).alias("quantile"))
     expanded_metadata = expanded_metadata.rename({"index": "code/vocab_index"}).drop(
-        "num_quantiles", "offset"
+        "codes_per_entry_expr", "offset"
     )
     if "custom_quantiles" in expanded_metadata.columns:
         expanded_metadata = expanded_metadata.drop("custom_quantiles")
 
     # Step 4: Generate quantile codes
     expanded_metadata = expanded_metadata.with_columns(
-        quantile_code=pl.when(pl.col("quantile") != 0)
+        binned_code=pl.when(pl.col("quantile") != 0)
         .then(pl.concat_str(pl.col("code"), pl.lit("//_Q_"), pl.col("quantile").cast(pl.Utf8)))
         .otherwise(pl.col("code"))
     )
 
     # Step 5: Select and rename final columns
-    final_metadata = expanded_metadata.drop("base_index", "code", "quantile").rename(
-        {"quantile_code": "code"}
-    )
+    final_metadata = expanded_metadata.drop("base_index", "code", "quantile").rename({"binned_code": "code"})
 
     return final_metadata
 
@@ -600,30 +606,34 @@ def quantile_normalize(
         │ lab//F ┆ 5                ┆ {-3.0,-1.0,1.0,3.0}   │
         └────────┴──────────────────┴───────────────────────┘
         >>> quantile_normalize(MEDS_df.lazy(), code_metadata).collect().sort("subject_id", "time", "code")
-        shape: (4, 4)
+        shape: (6, 4)
         ┌────────────┬─────────────────────┬──────┬───────────────┐
         │ subject_id ┆ time                ┆ code ┆ numeric_value │
         │ ---        ┆ ---                 ┆ ---  ┆ ---           │
         │ u32        ┆ datetime[μs]        ┆ u32  ┆ f64           │
         ╞════════════╪═════════════════════╪══════╪═══════════════╡
         │ 1          ┆ 2021-01-01 00:00:00 ┆ 3    ┆ 1.0           │
-        │ 1          ┆ 2021-01-02 00:00:00 ┆ 8    ┆ null          │
-        │ 2          ┆ 2022-10-02 00:00:00 ┆ 4    ┆ null          │
-        │ 3          ┆ 2022-10-02 00:00:00 ┆ 16   ┆ null          │
+        │ 1          ┆ 2021-01-01 00:00:00 ┆ 4    ┆ 3.0           │
+        │ 1          ┆ 2021-01-02 00:00:00 ┆ 12   ┆ null          │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 4    ┆ 3.0           │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 6    ┆ null          │
+        │ 3          ┆ 2022-10-02 00:00:00 ┆ 19   ┆ null          │
         └────────────┴─────────────────────┴──────┴───────────────┘
         >>> custom_quantiles = {"lab//A": {"values/quantile/0.5": 2}}
         >>> quantile_normalize(MEDS_df.lazy(), code_metadata, custom_quantiles=custom_quantiles
         ...     ).collect().sort("subject_id", "time", "code")
-        shape: (4, 4)
+            shape: (6, 4)
         ┌────────────┬─────────────────────┬──────┬───────────────┐
         │ subject_id ┆ time                ┆ code ┆ numeric_value │
         │ ---        ┆ ---                 ┆ ---  ┆ ---           │
         │ u32        ┆ datetime[μs]        ┆ u32  ┆ f64           │
         ╞════════════╪═════════════════════╪══════╪═══════════════╡
         │ 1          ┆ 2021-01-01 00:00:00 ┆ 1    ┆ 1.0           │
-        │ 1          ┆ 2021-01-02 00:00:00 ┆ 7    ┆ null          │
-        │ 2          ┆ 2022-10-02 00:00:00 ┆ 2    ┆ null          │
-        │ 3          ┆ 2022-10-02 00:00:00 ┆ 17   ┆ null          │
+        │ 1          ┆ 2021-01-01 00:00:00 ┆ 2    ┆ 3.0           │
+        │ 1          ┆ 2021-01-02 00:00:00 ┆ 11   ┆ null          │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 2    ┆ 3.0           │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 5    ┆ null          │
+        │ 3          ┆ 2022-10-02 00:00:00 ┆ 18   ┆ null          │
         └────────────┴─────────────────────┴──────┴───────────────┘
     """
     # TODO: add support for original values/mean and values/std normalization of continuous values
