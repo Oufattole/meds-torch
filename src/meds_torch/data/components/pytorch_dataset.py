@@ -937,7 +937,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             case SubsequenceSamplingStrategy.AROUND_RANDOM:
                 rng = self._get_rng(subject_id)
                 start_offset = rng.choice(max(seq_len - self.config.max_seq_len, 1))
-                out["center_idx"] = seq_len // 2
+                out["center_idx"] = min(seq_len, self.config.max_seq_len) // 2
             case SubsequenceSamplingStrategy.AROUND_END:
                 start_offset = max(center_idx - self.config.max_seq_len // 2, 0)
                 out["center_idx"] = center_idx - start_offset

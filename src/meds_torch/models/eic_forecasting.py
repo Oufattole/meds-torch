@@ -41,11 +41,12 @@ def align_right(t, lens, pad_id=0):
 
 
 def select_values_from_logits(logits, target_indices):
-    """Selects values from a 3D logits tensor based on indices specified for the last dimension.
+    """Selects values from a 3D logits tensor based on indices specified for the last
+    dimension.
 
     :param logits: A tensor of shape [batch_size, seq_length, num_classes]
-    :param target_indices: A tensor of indices with shape [batch_size, seq_length] where each index is valid
-        within the range of the last dimension of logits
+    :param target_indices: A tensor of indices with shape [batch_size, seq_length] where
+        each index is valid within the range of the last dimension of logits
     :return: A tensor of selected values with shape [batch_size, seq_length]
     """
     batch_size, seq_length, _ = logits.shape
@@ -79,18 +80,26 @@ class EicForecastingModule(BaseModule):
             raise NotImplementedError(f"Unsupported input encoder type: {type(self.input_encoder)}")
         self.code_head = self.cfg.code_head
 
-    def get_loss(
-        self,
-        batch,
-    ):
+    def get_loss(self, batch):
         code_logits = batch[CODE_LOGITS]
         assert not torch.isnan(code_logits).any(), "code_logits is NaN"
+
         # Code Mask
+        mask = batch["mask"]
         code_target = batch["code"]
+
+        # Shift the target to predict the next token
+        shifted_code_target = code_target[:, 1:]  # Remove the first token
+        shifted_mask = mask[:, :-1]  # Remove the last position from the mask
+
+        # Apply the mask to code_logits and shifted_code_target
+        masked_code_logits = code_logits[:, :-1] * shifted_mask.unsqueeze(-1)  # Remove the last prediction
+        masked_code_target = shifted_code_target * shifted_mask
+
         # Code Loss
         code_loss = F.cross_entropy(
-            code_logits.view(-1, code_logits.size(-1)),
-            code_target.view(-1).to(dtype=torch.long),
+            masked_code_logits.view(-1, masked_code_logits.size(-1)),
+            masked_code_target.view(-1).to(dtype=torch.long),
             reduction="mean",
         )
 
