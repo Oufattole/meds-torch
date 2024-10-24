@@ -79,7 +79,6 @@ TASKS=(
 for TASK_NAME in "${TASKS[@]}"; do
     run_job ${TASK_NAME} "eic_forecast_mtr" "eic" "$ROOT_DIR" "$CONDA_ENV" "eic_forecasting"
     run_job ${TASK_NAME} "triplet_forecast_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV" "triplet_forecasting"
-    run_job ${TASK_NAME} "text_code_forecast_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV" "triplet_forecasting"
 done
 
 echo "All jobs completed sequentially."

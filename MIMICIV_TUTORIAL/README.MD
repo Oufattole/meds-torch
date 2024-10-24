@@ -132,17 +132,3 @@ MAX_POLARS_THREADS=4 meds-torch-train experiment=triplet_mtr paths.data_dir="${M
     data.task_name="$TASK_NAME" data.task_root_dir="$TASKS_DIR" \
     hydra.searchpath=[pkg://meds_torch.configs,"$(pwd)/MIMICIV_TUTORIAL/configs/meds-torch-configs"]
 ```
-
-Now we can launch a meds-torch experiment. The `text_code_mtr.yaml` experiment will require around `26GB` of GPU memory and takes ~47min per epoch.
-
-```console
-export MIMICIV_TRIPLET_DIR=??? # set to the directory in which you want to output the tensorized MIMIC-IV data
-export OUTPUT_DIR=??? # set to the directory in which you want to output checkpoints and results
-export CUDA_VISIBLE_DEVICES=2 # set to the GPU you want to use
-conda activate meds-torch
-
-MAX_POLARS_THREADS=4 meds-torch-train experiment=text_code_mtr paths.data_dir="${MIMICIV_TRIPLET_DIR}" \
-    paths.meds_cohort_dir="${MIMICIV_MEDS_DIR}" paths.output_dir="${OUTPUT_DIR}" \
-    data.task_name="$TASK_NAME" data.task_root_dir="$TASKS_DIR" \
-    hydra.searchpath=[pkg://meds_torch.configs,"$(pwd)/MIMICIV_TUTORIAL/configs/meds-torch-configs"]
-```

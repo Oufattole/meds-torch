@@ -17,7 +17,7 @@ scheduler:
   factor: 0.1
   patience: 10
 
-_resolved_max_seq_len: ${data._resolved_max_seq_len}
+max_seq_len: ${data.max_seq_len}
 token_dim: 4
 vocab_size: ${data.vocab_size}
 get_representations: false
