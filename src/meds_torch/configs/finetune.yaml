@@ -31,6 +31,8 @@ name: "finetune"
 # task name, determines output directory path
 task_name: null
 
+test_devices: "1"
+
 # tags to help you identify your experiments
 # you can overwrite this in experiment configs
 # overwrite from command line with `python train.py tags="[first_tag, second_tag]"`

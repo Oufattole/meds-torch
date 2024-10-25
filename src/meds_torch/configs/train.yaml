@@ -29,6 +29,8 @@ defaults:
 
 name: "train"
 
+test_devices: "1"
+
 best_config_path: null
 
 # task name, determines output directory path
