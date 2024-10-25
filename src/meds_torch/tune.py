@@ -13,10 +13,13 @@ import ray
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf, open_dict
 from ray import tune
+from ray.train import CheckpointConfig, RunConfig, ScalingConfig
+from ray.train.lightning import RayLightningEnvironment, prepare_trainer
+from ray.train.torch import TorchTrainer
 
 from meds_torch.eval import evaluate
-from meds_torch.finetune import finetune
-from meds_torch.train import train
+from meds_torch.finetune import initialize_finetune_objects
+from meds_torch.train import initialize_train_objects
 from meds_torch.utils import RankedLogger, extras
 from meds_torch.utils.resolvers import setup_resolvers
 
@@ -26,7 +29,7 @@ setup_resolvers()
 config_yaml = files("meds_torch").joinpath("configs/train.yaml")
 
 
-def ray_tune_runner(cfg: DictConfig, train_fn: Callable):
+def ray_tune_runner(cfg: DictConfig, train_func: Callable):
     def objective(config):
         setup_resolvers()
         # Create a new config for this trial
@@ -36,28 +39,46 @@ def ray_tune_runner(cfg: DictConfig, train_fn: Callable):
             OmegaConf.update(trial_cfg, key, value, merge=True)
 
         # Run the training function
-        _ = train_fn(trial_cfg)
+        _ = train_func(trial_cfg)
 
     # Set up the Ray Tune search space
     search_space = {}
     for key, value in cfg.hparams_search.search_space.items():
         search_space[key] = hydra.utils.instantiate(value)
 
-    # Run the Ray Tune optimization
-    analysis = tune.run(
-        objective,
-        config=search_space,
-        num_samples=cfg.hparams_search.ray.num_samples,
-        scheduler=hydra.utils.instantiate(cfg.hparams_search.scheduler),
-        resources_per_trial=OmegaConf.to_container(cfg.hparams_search.ray.resources_per_trial),
+    scaling_config = ScalingConfig(use_gpu=True, resources_per_worker={"GPU": 1})
+
+    run_config = RunConfig(
+        checkpoint_config=CheckpointConfig(
+            num_to_keep=1,
+            checkpoint_score_attribute=cfg.hparams_search.optimized_metric,
+            checkpoint_score_order=cfg.hparams_search.direction,
+        ),
         name="ray_tune",
-        mode=cfg.hparams_search.direction,
-        metric=cfg.hparams_search.optimized_metric,
         storage_path=cfg.paths.time_output_dir,
     )
 
+    # Define a TorchTrainer without hyper-parameters for Tuner
+    ray_trainer = TorchTrainer(
+        objective,
+        scaling_config=scaling_config,
+        run_config=run_config,
+    )
+
+    tuner = tune.Tuner(
+        ray_trainer,
+        param_space={"train_loop_config": search_space},
+        tune_config=tune.TuneConfig(
+            metric=cfg.hparams_search.optimized_metric,
+            mode=cfg.hparams_search.direction,
+            num_samples=cfg.hparams_search.ray.num_samples,
+            scheduler=hydra.utils.instantiate(cfg.hparams_search.scheduler),
+        ),
+    )
+    analysis = tuner.fit()
+
     # Return the best trial results
-    best_trial = analysis.get_best_trial(
+    best_trial = analysis.get_best_result(
         cfg.hparams_search.optimized_metric, cfg.hparams_search.direction, scope="all"
     )
     return analysis, best_trial
@@ -81,24 +102,38 @@ def get_checkpoint_path(log_dir, checkpoint_dir_name, time_output_path):
         return checkpoint_files[0]
 
 
+def train_func(cfg):
+    if cfg.hparams_search.train_fn == "train":
+        initialize_objects = initialize_train_objects
+    elif cfg.hparams_search.train_fn == "finetune":
+        initialize_objects = initialize_finetune_objects
+    else:
+        raise ValueError(f"Invalid train_fn: {cfg.hparams_search.train_fn}, should be 'train' or 'finetune'")
+    plugins = [RayLightningEnvironment()]
+
+    object_dict = initialize_objects(cfg, plugins=plugins)
+    dm = object_dict["datamodule"]
+    model = object_dict["model"]
+    trainer = object_dict["trainer"]
+
+    trainer = prepare_trainer(trainer)
+    trainer.fit(model, datamodule=dm)
+
+
 @hydra.main(version_base="1.3", config_path=str(config_yaml.parent.resolve()), config_name=config_yaml.stem)
 def main(cfg: DictConfig) -> float | None:
     """Main entry point for training.
 
-    :param cfg: DictConfig configuration composed by Hydra.
-    :return: Optional[float] with optimized metric value.
+    Args:
+        cfg: DictConfig configuration composed by Hydra.
+    Returns:
+        Optional[float] with optimized metric value.
     """
+    os.environ["RAY_memory_monitor_refresh_ms"] = "0"
     # apply extra utilities
     os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
+    OmegaConf.save(config=cfg, f=Path(cfg.paths.time_output_dir) / "hydra_config.yaml")
     extras(cfg)
-
-    # Choose the training function based on the configuration
-    if cfg.hparams_search.train_fn == "train":
-        train_fn = train
-    elif cfg.hparams_search.train_fn == "finetune":
-        train_fn = finetune
-    else:
-        raise ValueError(f"Invalid train_fn: {cfg.hparams_search.train_fn}, should be 'train' or 'finetune'")
 
     if cfg.best_config_path:
         if not Path(cfg.best_config_path).exists():
@@ -116,25 +151,33 @@ def main(cfg: DictConfig) -> float | None:
         # Manually resolve the path to avoid issues with Ray Tune
         # see https://github.com/Oufattole/meds-torch/issues/41
         cfg.paths.time_output_dir = str(Path(cfg.paths.time_output_dir))
-    analysis, best_trial = ray_tune_runner(cfg, train_fn=train_fn)
+
+    analysis, best_trial = ray_tune_runner(cfg, train_func=train_func)
     ray.shutdown()
 
     # return tune results
     results_df = pl.from_dataframe(
-        analysis.dataframe(metric=cfg.hparams_search.optimized_metric, mode=cfg.hparams_search.direction)
+        analysis.get_dataframe(
+            filter_metric=cfg.hparams_search.optimized_metric, filter_mode=cfg.hparams_search.direction
+        )
     )
     results_df.write_parquet(Path(cfg.paths.time_output_dir) / "sweep_results.parquet")
 
-    result_value = best_trial.last_result[cfg.hparams_search.optimized_metric]
-    analysis.get_best_checkpoint(best_trial)
-    best_model_path = Path(analysis.get_best_checkpoint(best_trial).path) / "checkpoint.ckpt"
+    best_model_path = (
+        Path(
+            best_trial.get_best_checkpoint(
+                metric=cfg.hparams_search.optimized_metric, mode=cfg.hparams_search.direction
+            ).path
+        )
+        / "checkpoint.ckpt"
+    )
 
     checkpoint_dir = Path(cfg.paths.time_output_dir) / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(best_model_path, checkpoint_dir / "best_model.ckpt")
 
     with open(Path(cfg.paths.time_output_dir) / "best_config.json", "w") as outfile:
-        json.dump(analysis.get_best_config(), outfile)
+        json.dump(best_trial.config, outfile)
 
     # Generate summary of results
     summary_results_df_cols = [
@@ -146,6 +189,7 @@ def main(cfg: DictConfig) -> float | None:
         or each.startswith("test")
     ] + ["logdir", "checkpoint_dir_name"]
     summary_df = results_df[summary_results_df_cols]
+
     # Create a new column 'best_checkpoint_path' using the get_checkpoint_path function
     log_dir_index = summary_df.columns.index("logdir")
     ckpt_dir_name_index = summary_df.columns.index("checkpoint_dir_name")
@@ -156,19 +200,25 @@ def main(cfg: DictConfig) -> float | None:
 
     if cfg.get("test"):
         logger.info("Computing Test Results")
-        datamodule = hydra.utils.instantiate(cfg.data)
         test_results = []
+        with open_dict(cfg):
+            del cfg.trainer.strategy
+            del cfg.callbacks
+            cfg.trainer.devices = cfg.test_devices
+        datamodule = hydra.utils.instantiate(cfg.data)
         for ckpt_path in summary_df["best_checkpoint_path"].to_list():
-            cfg.ckpt_path = ckpt_path
+            with open_dict(cfg):
+                cfg.ckpt_path = ckpt_path
             result, _ = evaluate(cfg, datamodule=datamodule)
             test_results.append(result)
         results = {key: [result[key] for result in test_results] for key in test_results[0].keys()}
         for key, values in results.items():
             summary_df = summary_df.with_columns(pl.Series(values).alias(key))
 
+    logger.info(summary_df)
     summary_df.write_parquet(Path(cfg.paths.time_output_dir) / "sweep_results_summary.parquet")
 
-    return best_trial, result_value
+    return best_trial
 
 
 if __name__ == "__main__":
