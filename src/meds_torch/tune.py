@@ -140,7 +140,7 @@ def main(cfg: DictConfig) -> float | None:
             raise FileNotFoundError(f"Best config file not found at {cfg.best_config_path}")
         logger.info(f"Loading best tuning config from {cfg.best_config_path}")
         with open(Path(cfg.best_config_path)) as config_json:
-            best_config = json.load(config_json)
+            best_config = json.load(config_json)["train_loop_config"]
         for key, value in best_config.items():
             OmegaConf.update(cfg, key, value, merge=False)
     else:
