@@ -622,7 +622,7 @@ def quantile_normalize(
         >>> custom_quantiles = {"lab//A": {"values/quantile/0.5": 2}}
         >>> quantile_normalize(MEDS_df.lazy(), code_metadata, custom_quantiles=custom_quantiles
         ...     ).collect().sort("subject_id", "time", "code")
-            shape: (6, 4)
+        shape: (6, 4)
         ┌────────────┬─────────────────────┬──────┬───────────────┐
         │ subject_id ┆ time                ┆ code ┆ numeric_value │
         │ ---        ┆ ---                 ┆ ---  ┆ ---           │
