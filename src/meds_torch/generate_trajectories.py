@@ -10,6 +10,7 @@ from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 
+from meds_torch.models import GENERATE_PREFIX
 from meds_torch.utils import (
     RankedLogger,
     extras,
@@ -88,9 +89,9 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     dfs = {"input": input_df}
 
     # Extract generated trajectories
-    generated_trajectory_keys = [key for key in predictions[0].keys() if key.startswith("GENERATED//")]
+    generated_trajectory_keys = [key for key in predictions[0].keys() if key.startswith(GENERATE_PREFIX)]
     for gen_key in generated_trajectory_keys:
-        gen_traj = [pred["GENERATED//1"] for pred in predictions]
+        gen_traj = [pred[gen_key] for pred in predictions]
         gen_df = pl.DataFrame(
             {
                 key: pl.Series(
