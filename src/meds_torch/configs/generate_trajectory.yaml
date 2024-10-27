@@ -1,0 +1,23 @@
+# @package _global_
+
+defaults:
+  - _self_
+  - data: pytorch_dataset # choose datamodule with `test_dataloader()` for evaluation
+  - model: supervised
+  - logger: null
+  - trainer: default
+  - paths: default
+  - extras: default
+  - hydra: default
+
+name: "generate_trajectory"
+
+task_name: null
+
+tags: ["dev"]
+
+# passing checkpoint path is necessary for evaluation
+ckpt_path: ???
+
+paths:
+  generated_trajectory_fp: ${paths.time_output_dir}/generated_trajectory.parquet

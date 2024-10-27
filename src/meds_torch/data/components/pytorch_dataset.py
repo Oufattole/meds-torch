@@ -354,6 +354,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         if self.config.do_include_start_time_min:
             out["start_time"] = static_row["time"].item().to_list()[global_st]
+        if self.config.do_include_prediction_time:
+            out["prediction_time"] = static_row["time"].item().to_list()[global_end - 1]
 
         return out
 
@@ -403,5 +405,5 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         # Add task labels to batch
         for k in batch[0].keys():
             if k not in ("dynamic", "static_values", "static_indices"):
-                tensorized[k] = torch.Tensor([item[k] for item in batch])
+                tensorized[k] = [item[k] for item in batch]
         return tensorized
