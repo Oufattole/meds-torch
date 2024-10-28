@@ -1,9 +1,11 @@
 import os
 from importlib.resources import files
 from itertools import chain
+from pathlib import Path
 from typing import Any
 
 import hydra
+import loguru
 import polars as pl
 import torch
 from lightning import LightningDataModule, LightningModule, Trainer
@@ -70,7 +72,7 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
         log_hyperparameters(object_dict)
 
     log.info("Starting Generating Predictions!")
-    predictions = trainer.predict(model=model, dataloaders=datamodule, ckpt_path=cfg.ckpt_path)
+    predictions = trainer.predict(model=model, dataloaders=datamodule)
 
     # Extract input trajectory
     keys = ["code", "numeric_value", "time_delta_days", "mask", "numeric_value_mask", "static_mask"]
@@ -119,7 +121,9 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
         }
     )
 
-    generate_trajectories_df.write_parquet(cfg.path.generated_trajectory_fp)
+    Path(cfg.paths.generated_trajectory_fp).parent.mkdir(parents=True, exist_ok=True)
+    generate_trajectories_df.write_parquet(cfg.paths.generated_trajectory_fp)
+    loguru.logger.info(generate_trajectories_df.head())
 
 
 @hydra.main(version_base="1.3", config_path=str(config_yaml.parent.resolve()), config_name=config_yaml.stem)

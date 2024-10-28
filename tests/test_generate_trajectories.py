@@ -3,11 +3,13 @@ import subprocess
 from pathlib import Path
 
 import hydra
+import polars as pl
 import pytest
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import open_dict
 
 from meds_torch.generate_trajectories import generate_trajectories
+from meds_torch.models import GENERATE_PREFIX
 from meds_torch.train import main as train_main
 from tests.conftest import create_cfg
 from tests.test_configs import get_overrides_and_exceptions
@@ -75,9 +77,18 @@ def test_train_predict(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: F
         )
         assert "last.ckpt" in os.listdir(time_output_dir / "checkpoints")
         overrides, _, supervised = get_overrides_and_exceptions(**kwargs["input_kwargs"])
-        overrides += ["data.do_include_subject_id=true", "data.do_include_prediction_time=true"]
+        overrides += [
+            "data.do_include_subject_id=true",
+            "data.do_include_prediction_time=true",
+            "model.num_samples=2",
+            "data.max_seq_len=256",
+            "model.max_seq_len=260",
+        ]
         cfg_gen = create_cfg(
-            overrides=overrides, meds_dir=meds_dir, config_name="eval.yaml", supervised=supervised
+            overrides=overrides,
+            meds_dir=meds_dir,
+            config_name="generate_trajectories.yaml",
+            supervised=supervised,
         )
         with open_dict(cfg_gen):
             cfg_gen.ckpt_path = str(time_output_dir / "checkpoints" / "last.ckpt")
@@ -85,4 +96,8 @@ def test_train_predict(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: F
 
         HydraConfig().set_config(cfg_gen)
         generate_trajectories(cfg_gen)
-        assert Path(cfg_gen.paths.generate_trajectories_fp).exists()
+        assert Path(cfg_gen.paths.generated_trajectory_fp).exists()
+        df = pl.read_parquet(cfg_gen.paths.generated_trajectory_fp)
+        generated_columns = [GENERATE_PREFIX + "0", GENERATE_PREFIX + "1"]
+        for gen_col in generated_columns:
+            assert gen_col in df.columns

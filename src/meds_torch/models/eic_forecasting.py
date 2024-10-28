@@ -1,4 +1,5 @@
 import numpy as np
+import polars as pl
 import torch
 import torch.nn.functional as F
 from loguru import logger
@@ -11,7 +12,7 @@ from x_transformers.autoregressive_wrapper import eval_decorator
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.input_encoder.eic_encoder import EicEncoder
-from meds_torch.models import BACKBONE_TOKENS_KEY, MODEL_LOSS_KEY
+from meds_torch.models import BACKBONE_TOKENS_KEY, GENERATE_PREFIX, MODEL_LOSS_KEY
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
 
@@ -179,6 +180,8 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         self.val_next_token_metric = NextTokenPredictionMetric(vocab_size=self.cfg.vocab_size)
         self.test_next_token_metric = NextTokenPredictionMetric(vocab_size=self.cfg.vocab_size)
 
+        self.metadata_df = pl.read_parquet(self.cfg.code_metadata_fp)
+
     def get_loss(self, batch):
         code_logits = batch[CODE_LOGITS]
         assert not torch.isnan(code_logits).any(), "code_logits is NaN"
@@ -225,15 +228,23 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
         code_loss = self.get_loss(batch)
         batch[MODEL_LOSS_KEY] = code_loss
+        batch = self._generate(batch)
         return batch
 
     def _log(self, batch, split):
         self.log(split + "/loss", batch[MODEL_LOSS_KEY])
 
+    def _generate(self, batch):
+        if self.cfg.num_samples > 0:
+            return self.generate_evaluation(batch)
+        else:
+            return batch
+
     def training_step(self, batch):
         batch = self(batch)
         assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "train")
+        self.train_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
         return batch[MODEL_LOSS_KEY]
 
     def on_train_epoch_end(self):
@@ -285,56 +296,51 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         else:
             prompts, mask = input_batch[INPUT_ENCODER_TOKENS_KEY], input_batch[INPUT_ENCODER_MASK_KEY]
 
-        if "center_idx" not in input_batch:
-            raise NotImplementedError(
-                "Only `around_end` and `around_random` sequence sampling strategies are supported for now"
-            )
-
         # Compute bounds
-        max_center_idx = input_batch["center_idx"].max().int()
-        batch_size = prompts.shape[0]
-
-        # Get input prompts
-        pre_mask = torch.arange(max_center_idx, device=input_batch["center_idx"].device).repeat(
-            batch_size, 1
-        ) < input_batch["center_idx"].unsqueeze(1)
-        pre_mask &= mask[:, :max_center_idx]
-        pre_prompt = prompts[:, :max_center_idx]
-
-        # Get targets
-        post_mask = torch.arange(prompts.shape[1], device=input_batch["center_idx"].device).repeat(
-            batch_size, 1
-        ) >= input_batch["center_idx"].unsqueeze(1)
-        post_mask &= mask
-
         model = AutoregressiveWrapper(self.model.model)
 
         # Calculate actual lengths of prompts using the mask
-        prompt_lengths = pre_mask.sum(dim=1)
+        prompt_lengths = mask.sum(dim=1)
 
         logger.info("Generate output using the history")
-        out = model.generate(
-            pre_prompt,
-            self.cfg._resolved_max_seq_len,
-            prompt_lens=prompt_lengths,
-            eos_token=self.cfg.eos_token_id,
-            context_mask=pre_mask,
-            **kwargs,
+        self.time_quantile_map = torch.tensor(
+            [
+                TIME_QUANTILE_VALUES[TIME_QUANTILE_NAMES.index(code)]
+                if code in set(TIME_QUANTILE_NAMES)
+                else 0
+                for code in self.metadata_df["code"]
+            ],
+            device=self.device,
         )
+        self.time_quantile_map = torch.cat([self.time_quantile_map, torch.zeros(1)])
 
-        out_mask = torch.cat(
-            [torch.zeros_like(pre_mask), torch.ones_like(out[:, pre_prompt.shape[1] :])], dim=1
-        ).bool()
+        for i in range(self.cfg.num_samples):
+            out = model.generate(
+                prompts,
+                self.cfg.max_seq_len,
+                prompt_lens=prompt_lengths,
+                temperature=self.cfg.temperature,
+                eos_token=self.cfg.eos_token_id,
+                context_mask=mask,
+                **kwargs,
+            )
 
-        # Store generated data
-        generated_data = {
-            "input_prompts": pre_prompt.cpu().numpy(),
-            "generated_output": out.cpu().numpy(),
-            "input_mask": pre_mask.cpu().numpy(),
-            "output_mask": out_mask.cpu().numpy(),
-        }
+            out_mask = torch.cat(
+                [torch.zeros_like(mask), torch.ones_like(out[:, prompts.shape[1] :])], dim=1
+            ).bool()
 
-        # Append to the list instead of saving immediately
-        self.generated_data_list.append(generated_data)
+            # Store generated data
+            null_data = torch.zeros_like(out).cpu()
+            # Convert codes to time deltas
+            time_deltas = self.time_quantile_map.to(out.device)[out]
+            generated_data = {
+                "code": out.cpu(),
+                "mask": out_mask.cpu(),
+                "numeric_value": null_data,
+                "numeric_value_mask": null_data,
+                "static_mask": null_data,
+                "time_delta_days": time_deltas.cpu(),
+            }
+            input_batch[GENERATE_PREFIX + str(i)] = generated_data
 
         return input_batch
