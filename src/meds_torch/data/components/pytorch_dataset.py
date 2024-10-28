@@ -316,7 +316,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             subject_dynamic_data = subject_dynamic_data[start_offset:end]
 
             global_st += start_offset
-            global_end += end
+            global_end = global_st + len(subject_dynamic_data)
 
         if self.config.do_include_subsequence_indices:
             out["start_idx"] = global_st
