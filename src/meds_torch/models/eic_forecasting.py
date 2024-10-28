@@ -323,11 +323,11 @@ class EicForecastingModule(BaseModule, TimeableMixin):
                 eos_token=self.cfg.eos_token_id,
                 context_mask=mask,
                 **kwargs,
-            )
+            )[
+                :, prompts.shape[1] :
+            ]  # Remove the prompt
 
-            out_mask = torch.cat(
-                [torch.zeros_like(mask), torch.ones_like(out[:, prompts.shape[1] :])], dim=1
-            ).bool()
+            out_mask = torch.ones_like(out).bool()
 
             # Store generated data
             null_data = torch.zeros_like(out).cpu()
