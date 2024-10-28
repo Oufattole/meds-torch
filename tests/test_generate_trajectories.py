@@ -64,6 +64,8 @@ def test_train_predict(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: F
         cfg_train.trainer.max_epochs = 1
         cfg_train.test = True
         cfg_train.paths.output_dir = str(tmp_path)
+        if "multiwindow_pytorch_dataset" == cfg_train.data.name:
+            cfg_train.data.default_window_name = "pre"
     HydraConfig().set_config(cfg_train)
     if raises_value_error:
         with pytest.raises(hydra.errors.InstantiationException):
@@ -81,8 +83,8 @@ def test_train_predict(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: F
             "data.do_include_subject_id=true",
             "data.do_include_prediction_time=true",
             "model.num_samples=2",
-            "data.max_seq_len=256",
-            "model.max_seq_len=260",
+            "data.max_seq_len=10",
+            "model.max_seq_len=20",
         ]
         cfg_gen = create_cfg(
             overrides=overrides,
@@ -93,6 +95,8 @@ def test_train_predict(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: F
         with open_dict(cfg_gen):
             cfg_gen.ckpt_path = str(time_output_dir / "checkpoints" / "last.ckpt")
             cfg_gen.paths.output_dir = str(tmp_path)
+            if "multiwindow_pytorch_dataset" == cfg_gen.data.name:
+                cfg_gen.data.default_window_name = "pre"
 
         HydraConfig().set_config(cfg_gen)
         generate_trajectories(cfg_gen)

@@ -208,7 +208,11 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             out[col] = self.pytorch_dataset.collate([x[col] for x in batch])
         for key in batch[0].keys():
             if key not in self.window_cols:
-                out[key] = batch[key]
+                out[key] = [item[key] for item in batch]
+        # Move the default window data to the top level
+        if self.config.default_window_name:
+            for key in out[self.config.default_window_name].keys():
+                out[key] = out[self.config.default_window_name][key]
         return out
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
