@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+from loguru import logger
 from mixins import SeedableMixin
 from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 from omegaconf import DictConfig
@@ -29,6 +30,30 @@ class RandomWindowPytorchDataset(PytorchDataset):
         self.n_windows = cfg.n_windows
         self.window_cols = [f"window_{i}" for i in range(cfg.n_windows)]
         self.cfg = cfg
+        self.filter_index()
+
+    def filter_index(self):
+        filtered_index = []
+        for i in range(len(self.index)):
+            seq_length = self.index[i][2] - self.index[i][1]
+            window_size = self.get_random_window_size(seq_length)
+            if window_size < self.min_window_size:
+                logger.warning(
+                    f"Sequence length {seq_length} is too short to accommodate "
+                    f"{self.n_windows} windows of minimum size {self.min_window_size}. "
+                    f"Skipping subject {self.index[i][0]}."
+                )
+            else:
+                filtered_index.append(self.index[i])
+        if len(filtered_index) < len(self.index):
+            logger.warning(f"Filtered data to {len(filtered_index) / len(self.index)}% of original data.")
+        self.index = filtered_index
+
+    def get_random_window_size(self, seq_length: int) -> int:
+        """Calculates the size of the generated random windows."""
+        total_window_size = min(seq_length, self.max_window_size * self.n_windows)
+        window_size = total_window_size // self.n_windows
+        return window_size
 
     def generate_random_windows(self, seq_length: int) -> list[tuple[int, int]]:
         """Generate random windows within a sequence.
@@ -60,16 +85,8 @@ class RandomWindowPytorchDataset(PytorchDataset):
                 f"Number of window names ({len(window_names)}) does not match n_windows ({self.n_windows})"
             )
 
-        # Calculate the size of each window
-        total_window_size = min(seq_length, self.max_window_size * self.n_windows)
-        window_size = total_window_size // self.n_windows
-
-        if window_size < self.min_window_size:
-            raise ValueError(
-                f"Sequence length {seq_length} is too short to accommodate "
-                f"{self.n_windows} windows of minimum size {self.min_window_size}"
-            )
-
+        window_size = self.get_random_window_size(seq_length)
+        total_window_size = window_size * self.n_windows
         windows = []
 
         if self.cfg.get("consecutive_windows", False):
