@@ -7,12 +7,14 @@ from typing import Any
 import hydra
 import loguru
 import polars as pl
+import pyarrow as pa
 import torch
 from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 
 from meds_torch.models import MODEL_PRED_PROBA_KEY
+from meds_torch.schemas.predict_schema import validate_prediction_data
 from meds_torch.utils import (
     RankedLogger,
     extras,
@@ -77,7 +79,9 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
     # Extract input trajectory
     dfs = {}
 
-    subject_ids = pl.Series(list(chain.from_iterable([batch["subject_id"] for batch in predictions])))
+    subject_ids = pl.Series(list(chain.from_iterable([batch["subject_id"] for batch in predictions]))).cast(
+        pl.Int64
+    )
     prediction_times = pl.Series(
         list(chain.from_iterable([batch["prediction_time"] for batch in predictions]))
     )
@@ -92,9 +96,9 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
     )
     if cfg.data.task_name:
         predict_df = predict_df.with_columns(
-            pl.Series(list(chain.from_iterable([batch[cfg.data.task_name] for batch in predictions]))).alias(
-                "boolean_value"
-            )
+            pl.Series(list(chain.from_iterable([batch[cfg.data.task_name] for batch in predictions])))
+            .alias("boolean_value")
+            .cast(pl.Boolean)
         )
 
     if MODEL_PRED_PROBA_KEY in predictions[0]:
@@ -108,9 +112,9 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
         )
 
     Path(cfg.paths.predict_fp).parent.mkdir(parents=True, exist_ok=True)
-    predict_df.write_parquet(cfg.paths.predict_fp)
-
-    loguru.logger.info(predict_df.head())
+    validated_table = validate_prediction_data(predict_df)
+    pa.parquet.write_table(validated_table, cfg.paths.predict_fp)
+    loguru.logger.info(pl.from_arrow(validated_table).head())
 
 
 @hydra.main(version_base="1.3", config_path=str(config_yaml.parent.resolve()), config_name=config_yaml.stem)
