@@ -8,7 +8,6 @@ from meds_torch.models import (
     MODEL_BATCH_LOSS_KEY,
     MODEL_EMBEDDINGS_KEY,
     MODEL_LOGITS_KEY,
-    MODEL_TOKENS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
 
@@ -74,15 +73,12 @@ class EBCLModule(BaseModule):
         loss_post = self.criterion(logits_per_post, labels)
         loss_pre = self.criterion(logits_per_pre, labels)
         loss = (loss_pre + loss_post) / 2
-        output = dict(
-            pre=pre_batch,
-            post=post_batch,
-        )
-        output[MODEL_EMBEDDINGS_KEY] = torch.concat([pre_norm_embeds, post_norm_embeds], dim=0)
-        output[MODEL_TOKENS_KEY] = None
-        output[MODEL_BATCH_LOSS_KEY] = loss
-        output[MODEL_LOGITS_KEY] = logits
-        return output
+        batch["pre"] = pre_batch
+        batch["post"] = pre_batch
+        batch[MODEL_EMBEDDINGS_KEY] = torch.concat([pre_norm_embeds, post_norm_embeds], dim=1)
+        batch[MODEL_BATCH_LOSS_KEY] = loss
+        batch[MODEL_LOGITS_KEY] = logits
+        return batch
 
     def training_step(self, batch):
         output = self.forward(batch)

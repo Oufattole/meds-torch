@@ -43,7 +43,7 @@ from tests.test_configs import get_overrides_and_exceptions
                 "eic_encoder",
                 "transformer_decoder",
             ),
-            # ("multiwindow_pytorch_dataset", "ebcl", None, None, "triplet_encoder", "transformer_encoder"),
+            ("multiwindow_pytorch_dataset", "ebcl", None, None, "triplet_encoder", "transformer_encoder"),
             # (
             #     "multiwindow_pytorch_dataset",
             #     "value_forecasting",

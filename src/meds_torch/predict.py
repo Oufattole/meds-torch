@@ -158,6 +158,9 @@ def process_predictions(predictions: list[dict[str, Any]], model_keys: dict[str,
         if key not in predictions[0]:
             continue
 
+        if not isinstance(predictions[0][key], torch.Tensor):
+            continue
+
         if len(predictions[0][key].shape) == 0:  # skip scalars
             continue
 
