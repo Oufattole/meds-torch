@@ -118,3 +118,6 @@ def test_train_predict(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: F
         df = pl.read_parquet(cfg_pred.paths.predict_fp)
         assert "subject_id" in df.columns
         assert "prediction_time" in df.columns
+        assert "boolean_value" in df.columns
+        assert "predicted_boolean_value" in df.columns
+        assert "predicted_boolean_probability" in df.columns

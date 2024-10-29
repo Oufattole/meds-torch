@@ -12,6 +12,7 @@ from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 
+from meds_torch.models import MODEL_PRED_PROBA_KEY
 from meds_torch.utils import (
     RankedLogger,
     extras,
@@ -89,6 +90,22 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
             **{name: df.to_struct() for name, df in dfs.items()},
         }
     )
+    if cfg.data.task_name:
+        predict_df = predict_df.with_columns(
+            pl.Series(list(chain.from_iterable([batch[cfg.data.task_name] for batch in predictions]))).alias(
+                "boolean_value"
+            )
+        )
+
+    if MODEL_PRED_PROBA_KEY in predictions[0]:
+        predict_df = predict_df.with_columns(
+            pl.Series(
+                list(chain.from_iterable([batch[MODEL_PRED_PROBA_KEY] for batch in predictions]))
+            ).alias("predicted_boolean_probability")
+        )
+        predict_df = predict_df.with_columns(
+            pl.col("predicted_boolean_probability").gt(0.5).alias("predicted_boolean_value"),
+        )
 
     Path(cfg.paths.predict_fp).parent.mkdir(parents=True, exist_ok=True)
     predict_df.write_parquet(cfg.paths.predict_fp)

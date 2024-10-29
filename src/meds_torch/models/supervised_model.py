@@ -9,6 +9,7 @@ from meds_torch.models import (
     MODEL_EMBEDDINGS_KEY,
     MODEL_LOGITS_KEY,
     MODEL_LOSS_KEY,
+    MODEL_PRED_PROBA_KEY,
 )
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.utils import OutputBase
@@ -52,6 +53,7 @@ class SupervisedModule(BaseModule):
             loss = self.criterion(logits.squeeze(dim=-1), batch[self.task_name].float())
         batch[MODEL_EMBEDDINGS_KEY] = embeddings
         batch[MODEL_LOGITS_KEY] = logits
+        batch[MODEL_PRED_PROBA_KEY] = torch.sigmoid(logits)
         batch[MODEL_LOSS_KEY] = loss
         return batch
 
