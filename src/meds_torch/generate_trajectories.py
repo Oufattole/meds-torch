@@ -12,7 +12,7 @@ from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 
-from meds_torch.models import GENERATE_PREFIX
+from meds_torch.models import ACTUAL_FUTURE, GENERATE_PREFIX
 from meds_torch.utils import (
     RankedLogger,
     extras,
@@ -25,6 +25,22 @@ from meds_torch.utils.resolvers import setup_resolvers
 setup_resolvers()
 log = RankedLogger(__name__, rank_zero_only=True)
 config_yaml = files("meds_torch").joinpath("configs/eval.yaml")
+
+
+def convert_tensors_to_df(batches):
+    keys = ["code", "numeric_value", "time_delta_days", "mask", "numeric_value_mask", "static_mask"]
+    return pl.DataFrame(
+        {
+            key: pl.Series(
+                [
+                    batch[key][i][batch["mask"][i]].tolist()
+                    for batch in batches
+                    for i in range(batch[key].shape[0])
+                ]
+            )
+            for key in keys
+        }
+    )
 
 
 @task_wrapper
@@ -75,37 +91,18 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     predictions = trainer.predict(model=model, dataloaders=datamodule)
 
     # Extract input trajectory
-    keys = ["code", "numeric_value", "time_delta_days", "mask", "numeric_value_mask", "static_mask"]
-    input_df = pl.DataFrame(
-        {
-            key: pl.Series(
-                [
-                    batch[key][i][batch["mask"][i]].tolist()
-                    for batch in predictions
-                    for i in range(batch[key].shape[0])
-                ]
-            )
-            for key in keys
-        }
-    )
+    input_df = convert_tensors_to_df(predictions)
     dfs = {"input": input_df}
+    if cfg.actual_future_name:
+        actual_tensors = [batch[cfg.actual_future_name] for batch in predictions]
+        actual_df = convert_tensors_to_df(actual_tensors)
+        dfs[ACTUAL_FUTURE] = actual_df
 
     # Extract generated trajectories
     generated_trajectory_keys = [key for key in predictions[0].keys() if key.startswith(GENERATE_PREFIX)]
     for gen_key in generated_trajectory_keys:
         gen_traj = [pred[gen_key] for pred in predictions]
-        gen_df = pl.DataFrame(
-            {
-                key: pl.Series(
-                    [
-                        batch[key][i][batch["mask"][i]].tolist()
-                        for batch in gen_traj
-                        for i in range(batch[key].shape[0])
-                    ]
-                )
-                for key in keys
-            }
-        )
+        gen_df = convert_tensors_to_df(gen_traj)
         dfs[gen_key] = gen_df
     subject_ids = pl.Series(list(chain.from_iterable([batch["subject_id"] for batch in predictions])))
     prediction_times = pl.Series(
@@ -123,6 +120,7 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
 
     Path(cfg.paths.generated_trajectory_fp).parent.mkdir(parents=True, exist_ok=True)
     generate_trajectories_df.write_parquet(cfg.paths.generated_trajectory_fp)
+
     loguru.logger.info(generate_trajectories_df.head())
 
 

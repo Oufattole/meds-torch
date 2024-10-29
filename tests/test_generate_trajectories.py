@@ -9,7 +9,7 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import open_dict
 
 from meds_torch.generate_trajectories import generate_trajectories
-from meds_torch.models import GENERATE_PREFIX
+from meds_torch.models import ACTUAL_FUTURE, GENERATE_PREFIX
 from meds_torch.train import main as train_main
 from tests.conftest import create_cfg
 from tests.test_configs import get_overrides_and_exceptions
@@ -97,6 +97,7 @@ def test_train_predict(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: F
             cfg_gen.paths.output_dir = str(tmp_path)
             if "multiwindow_pytorch_dataset" == cfg_gen.data.name:
                 cfg_gen.data.default_window_name = "pre"
+                cfg_gen.actual_future_name = "post"
 
         HydraConfig().set_config(cfg_gen)
         generate_trajectories(cfg_gen)
@@ -105,3 +106,5 @@ def test_train_predict(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: F
         generated_columns = [GENERATE_PREFIX + "0", GENERATE_PREFIX + "1"]
         for gen_col in generated_columns:
             assert gen_col in df.columns
+        if "multiwindow_pytorch_dataset" == cfg_gen.data.name:
+            assert ACTUAL_FUTURE in df.columns

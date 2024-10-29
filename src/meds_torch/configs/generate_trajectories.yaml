@@ -21,3 +21,5 @@ ckpt_path: ???
 
 paths:
   generated_trajectory_fp: ${paths.time_output_dir}/generated_trajectory.parquet
+
+actual_future_name: null
