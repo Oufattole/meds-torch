@@ -39,7 +39,7 @@ class ValueForecastingModule(BaseModule):
 
     def forward(self, batch):
         forecast_window_data = batch[self.cfg.forecast_window_name]
-        batch = self.model(self.input_encoder(batch[self.cfg.input_window_name]))
+        batch[self.cfg.input_window_name] = self.model(self.input_encoder(batch[self.cfg.input_window_name]))
 
         numeric_values = forecast_window_data["numeric_value"]
         codes = forecast_window_data["code"]
@@ -75,23 +75,24 @@ class ValueForecastingModule(BaseModule):
             # Set the 0 index to zero to ignore mask tokens
             value_target[:, 0] = 0
 
-        value_forecast = self.value_projection(batch[BACKBONE_EMBEDDINGS_KEY])
-        presence_forecast = self.presence_projection(batch[BACKBONE_EMBEDDINGS_KEY])
+        value_forecast = self.value_projection(batch[self.cfg.input_window_name][BACKBONE_EMBEDDINGS_KEY])
+        presence_forecast = self.presence_projection(
+            batch[self.cfg.input_window_name][BACKBONE_EMBEDDINGS_KEY]
+        )
 
         value_loss = self.value_criterion(value_forecast, value_target)
         presence_loss = self.presence_criterion(presence_forecast, presence_target)
         loss = value_loss + presence_loss
 
-        output = batch
-        output["MODEL//VALUE_TARGET"] = value_target
-        output["MODEL//PRESENCE_TARGET"] = presence_target
-        output["MODEL//VALUE_FORECAST"] = value_forecast
-        output["MODEL//PRESENCE_FORECAST"] = presence_forecast
-        output["MODEL//VALUE_LOSS"] = value_loss
-        output["MODEL//PRESENCE_LOSS"] = presence_loss
-        output[MODEL_BATCH_LOSS_KEY] = loss
+        batch["MODEL//VALUE_TARGET"] = value_target
+        batch["MODEL//PRESENCE_TARGET"] = presence_target
+        batch["MODEL//VALUE_FORECAST"] = value_forecast
+        batch["MODEL//PRESENCE_FORECAST"] = presence_forecast
+        batch["MODEL//VALUE_LOSS"] = value_loss
+        batch["MODEL//PRESENCE_LOSS"] = presence_loss
+        batch[MODEL_BATCH_LOSS_KEY] = loss
 
-        return output
+        return batch
 
     def training_step(self, batch):
         output = self.forward(batch)

@@ -96,7 +96,6 @@ class OCPModule(BaseModule):
             # Repeat the same procedure for the token embeddings
             fused_batch = {INPUT_ENCODER_MASK_KEY: fusion_mask, INPUT_ENCODER_TOKENS_KEY: fusion_tokens}
             batch = self.model(fused_batch)
-            output = batch
             classifier_inputs = batch[BACKBONE_EMBEDDINGS_KEY]
         else:
             pre_batch = batch[self.cfg.pre_window_name]
@@ -113,20 +112,18 @@ class OCPModule(BaseModule):
             shuffled_pre_outputs = torch.where(random_flips, post_outputs, pre_outputs)
             shuffled_post_outputs = torch.where(random_flips, pre_outputs, post_outputs)
             classifier_inputs = torch.concat([shuffled_pre_outputs, shuffled_post_outputs], dim=1)
-            output = dict(
-                pre=pre_batch,
-                post=post_batch,
-            )
+            batch["pre"] = pre_batch
+            batch["post"] = pre_batch
         logits = self.projection(classifier_inputs)
         loss = self.criterion(logits, random_flips.float())
 
-        output[MODEL_EMBEDDINGS_KEY] = classifier_inputs
-        output[MODEL_TOKENS_KEY] = None
-        output[MODEL_BATCH_LOSS_KEY] = loss
-        output[MODEL_LOGITS_KEY] = logits
-        output["MODEL//LABELS"] = random_flips
+        batch[MODEL_EMBEDDINGS_KEY] = classifier_inputs
+        batch[MODEL_TOKENS_KEY] = None
+        batch[MODEL_BATCH_LOSS_KEY] = loss
+        batch[MODEL_LOGITS_KEY] = logits
+        batch["MODEL//LABELS"] = random_flips
 
-        return output
+        return batch
 
     def training_step(self, batch):
         output = self.forward(batch)

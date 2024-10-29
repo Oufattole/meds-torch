@@ -44,14 +44,15 @@ from tests.test_configs import get_overrides_and_exceptions
                 "transformer_decoder",
             ),
             ("multiwindow_pytorch_dataset", "ebcl", None, None, "triplet_encoder", "transformer_encoder"),
-            # (
-            #     "multiwindow_pytorch_dataset",
-            #     "value_forecasting",
-            #     None, None,
-            #     "triplet_encoder",
-            #     "transformer_encoder",
-            # ),
-            # ("multiwindow_pytorch_dataset", "ocp", "false", None, "triplet_encoder", "transformer_encoder"),
+            (
+                "multiwindow_pytorch_dataset",
+                "value_forecasting",
+                None,
+                None,
+                "triplet_encoder",
+                "transformer_encoder",
+            ),
+            ("multiwindow_pytorch_dataset", "ocp", "false", None, "triplet_encoder", "transformer_encoder"),
         ]
     ]
 )
