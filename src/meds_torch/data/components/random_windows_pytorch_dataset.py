@@ -5,7 +5,7 @@ from mixins import SeedableMixin
 from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 from omegaconf import DictConfig
 
-from meds_torch.data.components.pytorch_dataset import CollateType, PytorchDataset
+from meds_torch.data.components.pytorch_dataset import PytorchDataset
 
 
 class RandomWindowPytorchDataset(PytorchDataset):
@@ -122,10 +122,7 @@ class RandomWindowPytorchDataset(PytorchDataset):
 
         full_sequence = self.load_subject(subject_dynamic_data, subject_id, 0, len(subject_dynamic_data))
 
-        if self.cfg.collate_type == CollateType.event_stream:
-            seq_len = len(full_sequence["dynamic"].tensors["dim1/code"])
-        else:
-            seq_len = len(full_sequence["dynamic"]["dim1/code"])
+        seq_len = len(full_sequence["dynamic"])
         windows = self.generate_random_windows(seq_len)
         partitioned_sequence = self.partition_sequence(full_sequence, windows)
 

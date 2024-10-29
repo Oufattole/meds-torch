@@ -52,8 +52,6 @@ tmux kill-server 2>/dev/null || true
 # launch_job 1 "long_los" "eic_mtr" "eic" "$ROOT_DIR" "$CONDA_ENV"
 launch_job 2 "icu_mortality" "triplet_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"
 # launch_job 3 "long_los" "triplet_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"
-# launch_job 4 "icu_mortality" "text_code_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"
-# launch_job 5 "long_los" "text_code_mtr" "triplet" "$ROOT_DIR" "$CONDA_ENV"
 
 echo "All jobs launched. Checking tmux sessions..."
 tmux ls || echo "No tmux sessions found."
