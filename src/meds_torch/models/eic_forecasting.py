@@ -12,7 +12,14 @@ from x_transformers.autoregressive_wrapper import eval_decorator
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.input_encoder.eic_encoder import EicEncoder
-from meds_torch.models import BACKBONE_TOKENS_KEY, GENERATE_PREFIX, MODEL_LOSS_KEY
+from meds_torch.models import (
+    BACKBONE_TOKENS_KEY,
+    GENERATE_PREFIX,
+    MODEL_BATCH_LOSS_KEY,
+    MODEL_LOGITS_SEQUENCE_KEY,
+    MODEL_LOSS_KEY,
+    MODEL_TOKENS_KEY,
+)
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
 
@@ -200,10 +207,10 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
         # Code Loss
         code_loss = F.cross_entropy(
-            masked_code_logits.view(-1, masked_code_logits.size(-1)),
-            masked_code_target.view(-1).to(dtype=torch.long),
-            reduction="mean",
-        )
+            masked_code_logits.transpose(1, 2),
+            masked_code_target.to(dtype=torch.long),
+            reduction="none",
+        ).mean(dim=-1)
 
         assert not torch.isnan(code_loss).any(), "code_loss is NaN"
 
@@ -223,16 +230,19 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         batch = self.input_encoder(batch)
         model_output = self.model(batch)
 
+        batch[MODEL_TOKENS_KEY] = model_output[BACKBONE_TOKENS_KEY]
         forecast = self.get_forecast_logits(model_output)
         batch[CODE_LOGITS] = forecast[CODE_LOGITS]
+        batch[MODEL_LOGITS_SEQUENCE_KEY] = forecast[CODE_LOGITS]
 
         code_loss = self.get_loss(batch)
         batch[MODEL_LOSS_KEY] = code_loss
+        batch[MODEL_BATCH_LOSS_KEY] = code_loss.mean()
         batch = self._generate(batch)
         return batch
 
     def _log(self, batch, split):
-        self.log(split + "/loss", batch[MODEL_LOSS_KEY])
+        self.log(split + "/loss", batch[MODEL_BATCH_LOSS_KEY])
 
     def _generate(self, batch):
         if self.cfg.num_samples > 0:
@@ -242,10 +252,10 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
     def training_step(self, batch):
         batch = self(batch)
-        assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
+        assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "train")
         self.train_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
-        return batch[MODEL_LOSS_KEY]
+        return batch[MODEL_BATCH_LOSS_KEY]
 
     def on_train_epoch_end(self):
         next_token_results = self.train_next_token_metric.compute()
@@ -255,10 +265,10 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
     def validation_step(self, batch):
         batch = self(batch)
-        assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
+        assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "val")
         self.val_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
-        return batch[MODEL_LOSS_KEY]
+        return batch[MODEL_BATCH_LOSS_KEY]
 
     def on_validation_epoch_end(self):
         next_token_results = self.val_next_token_metric.compute()
@@ -268,9 +278,9 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
     def test_step(self, batch):
         batch = self(batch)
-        assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
+        assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "test")
-        loss = batch[MODEL_LOSS_KEY]
+        loss = batch[MODEL_BATCH_LOSS_KEY]
         self.test_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
         return loss
 

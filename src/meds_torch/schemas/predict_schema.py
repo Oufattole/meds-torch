@@ -121,13 +121,13 @@ def validate_prediction_data(df: pl.DataFrame) -> pa.Table:
     df = df.select(expected_columns)
 
     # Convert to arrow and validate
-    arrow_table = df.to_arrow()
+    arrow_table = df.to_arrow().cast(validated_schema)
 
     # Validate the schema
     validate_prediction_schema(arrow_table.schema)
 
     # Cast to the validated schema
-    return arrow_table.cast(validated_schema)
+    return arrow_table
 
 
 # Example usage:

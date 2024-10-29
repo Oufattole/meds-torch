@@ -7,9 +7,9 @@ from torch import nn
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models import (
     BACKBONE_EMBEDDINGS_KEY,
+    MODEL_BATCH_LOSS_KEY,
     MODEL_EMBEDDINGS_KEY,
     MODEL_LOGITS_KEY,
-    MODEL_LOSS_KEY,
     MODEL_TOKENS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
@@ -122,7 +122,7 @@ class OCPModule(BaseModule):
 
         output[MODEL_EMBEDDINGS_KEY] = classifier_inputs
         output[MODEL_TOKENS_KEY] = None
-        output[MODEL_LOSS_KEY] = loss
+        output[MODEL_BATCH_LOSS_KEY] = loss
         output[MODEL_LOGITS_KEY] = logits
         output["MODEL//LABELS"] = random_flips
 
@@ -135,8 +135,8 @@ class OCPModule(BaseModule):
         labels = output["MODEL//LABELS"].float()
         self.train_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.train_auc.update(output[MODEL_LOGITS_KEY], labels)
-        self.log("train/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
-        return output[MODEL_LOSS_KEY]
+        self.log("train/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def validation_step(self, batch):
         output = self.forward(batch)
@@ -144,8 +144,8 @@ class OCPModule(BaseModule):
         labels = output["MODEL//LABELS"].float()
         self.val_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.val_auc.update(output[MODEL_LOGITS_KEY], labels)
-        self.log("val/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
-        return output[MODEL_LOSS_KEY]
+        self.log("val/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def test_step(self, batch):
         output = self.forward(batch)
@@ -153,8 +153,8 @@ class OCPModule(BaseModule):
         labels = output["MODEL//LABELS"].float()
         self.test_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.test_auc.update(output[MODEL_LOGITS_KEY], labels)
-        self.log("test/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
-        return output[MODEL_LOSS_KEY]
+        self.log("test/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def on_train_epoch_end(self):
         self.log(

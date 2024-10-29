@@ -6,6 +6,7 @@ from typing import Any
 
 import hydra
 import loguru
+import numpy as np
 import polars as pl
 import pyarrow as pa
 import torch
@@ -13,7 +14,14 @@ from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 
-from meds_torch.models import MODEL_PRED_PROBA_KEY
+from meds_torch.models import (
+    MODEL_EMBEDDINGS_KEY,
+    MODEL_LOGITS_KEY,
+    MODEL_LOGITS_SEQUENCE_KEY,
+    MODEL_LOSS_KEY,
+    MODEL_PRED_PROBA_KEY,
+    MODEL_TOKENS_KEY,
+)
 from meds_torch.schemas.predict_schema import validate_prediction_data
 from meds_torch.utils import (
     RankedLogger,
@@ -27,6 +35,143 @@ from meds_torch.utils.resolvers import setup_resolvers
 setup_resolvers()
 log = RankedLogger(__name__, rank_zero_only=True)
 config_yaml = files("meds_torch").joinpath("configs/eval.yaml")
+
+MODEL_KEY_TO_PREDICT_SCHEMA_NAME = {
+    MODEL_EMBEDDINGS_KEY: "embeddings",
+    MODEL_LOGITS_KEY: "logits",
+    MODEL_LOGITS_SEQUENCE_KEY: "logits_sequence",
+    MODEL_TOKENS_KEY: "tokens",
+    MODEL_LOSS_KEY: "loss",
+}
+
+
+def process_tensor_batches(predictions: list[dict[str, Any]], key: str) -> list[torch.Tensor | np.ndarray]:
+    """
+    Process tensor batches of different dimensions into a list suitable for Polars DataFrame.
+
+    Args:
+        predictions: List of dictionaries containing tensor batches
+        key: Key to access the tensor in each batch
+
+    Returns:
+        List where each element represents one row in the final DataFrame
+
+    Examples:
+    >>> # 1D tensor example
+    >>> batch1 = {'values': torch.tensor([1., 2.])}
+    >>> batch2 = {'values': torch.tensor([3., 4.])}
+    >>> predictions = [batch1, batch2]
+    >>> result = process_tensor_batches(predictions, 'values')
+    >>> len(result)
+    4
+    >>> result[0]
+    1.0
+    >>> # 2D tensor example
+    >>> batch1 = {'matrix': torch.tensor([[1., 2.], [3., 4.]])}
+    >>> batch2 = {'matrix': torch.tensor([[5., 6.], [7., 8.]])}
+    >>> predictions = [batch1, batch2]
+    >>> result = process_tensor_batches(predictions, 'matrix')
+    >>> len(result)
+    4
+    >>> result[0]
+    [1.0, 2.0]
+    >>> # 3D tensor example
+    >>> batch1 = {'tokens': torch.tensor([[[1., 2.], [3., 4.]], [[5., 6.], [7., 8.]]])}
+    >>> batch2 = {'tokens': torch.tensor([[[9., 10.], [11., 12.]], [[13., 14.], [15., 16.]]])}
+    >>> predictions = [batch1, batch2]
+    >>> result = process_tensor_batches(predictions, 'tokens')
+    >>> len(result)
+    4
+    >>> result[0]
+    [[1.0, 2.0], [3.0, 4.0]]
+    """
+    flattened_data = []
+
+    for batch in predictions:
+        tensor = batch[key]
+
+        # Handle different tensor dimensions
+        if len(tensor.shape) == 1:
+            # 1D tensor: split into individual elements
+            flattened_data.extend(tensor.tolist())
+        elif len(tensor.shape) == 2:
+            # 2D tensor: each row becomes an element
+            flattened_data.extend(tensor.tolist())
+        elif len(tensor.shape) == 3:
+            # 3D tensor: first dimension is batch, store remaining 2D array
+            for item in tensor:
+                flattened_data.append(item.tolist())
+        else:
+            raise ValueError(f"Unsupported tensor dimension: {len(tensor.shape)}")
+
+    return flattened_data
+
+
+def process_predictions(predictions: list[dict[str, Any]], model_keys: dict[str, str]) -> pl.DataFrame:
+    """
+    Process predictions and create a Polars DataFrame handling tensors of different dimensions.
+
+    Args:
+        predictions: List of prediction batches
+        model_keys: Dictionary mapping model keys to schema names
+
+    Returns:
+        Polars DataFrame with processed data
+
+    Examples:
+    >>> # Mixed dimension example
+    >>> batch1 = {
+    ...     '1d': torch.tensor([1., 2.]),
+    ...     '2d': torch.tensor([[3., 4.], [5., 6.]]),
+    ...     '3d': torch.tensor([[[7., 8.], [9., 10.]], [[11., 12.], [13., 14.]]])
+    ... }
+    >>> batch2 = {
+    ...     '1d': torch.tensor([15., 16.]),
+    ...     '2d': torch.tensor([[17., 18.], [19., 20.]]),
+    ...     '3d': torch.tensor([[[21., 22.], [23., 24.]], [[25., 26.], [27., 28.]]])
+    ... }
+    >>> predictions = [batch1, batch2]
+    >>> keys = {'1d': 'scalar', '2d': 'vector', '3d': 'matrix'}
+    >>> df = process_predictions(predictions, keys)
+    >>> df.shape[0]  # Number of rows
+    4
+    >>> df.sort("scalar")
+    shape: (4, 3)
+    ┌────────┬──────────────┬──────────────────────────────┐
+    │ scalar ┆ vector       ┆ matrix                       │
+    │ ---    ┆ ---          ┆ ---                          │
+    │ f64    ┆ list[f64]    ┆ list[list[f64]]              │
+    ╞════════╪══════════════╪══════════════════════════════╡
+    │ 1.0    ┆ [3.0, 4.0]   ┆ [[7.0, 8.0], [9.0, 10.0]]    │
+    │ 2.0    ┆ [5.0, 6.0]   ┆ [[11.0, 12.0], [13.0, 14.0]] │
+    │ 15.0   ┆ [17.0, 18.0] ┆ [[21.0, 22.0], [23.0, 24.0]] │
+    │ 16.0   ┆ [19.0, 20.0] ┆ [[25.0, 26.0], [27.0, 28.0]] │
+    └────────┴──────────────┴──────────────────────────────┘
+    >>> del predictions[1]['1d']
+    >>> import pytest
+    >>> with pytest.raises(RuntimeError):
+    ...     pytest.raises(process_predictions(predictions, keys))
+    """
+    predict_df = pl.DataFrame()
+
+    for key in model_keys:
+        if key not in predictions[0]:
+            continue
+
+        if len(predictions[0][key].shape) == 0:  # skip scalars
+            continue
+
+        key_name = model_keys[key]
+        try:
+            # Process the tensor into appropriate format
+            processed_data = process_tensor_batches(predictions, key)
+
+            # Create a Polars series from the processed data
+            predict_df = predict_df.with_columns(pl.Series(processed_data).alias(key_name))
+        except Exception as e:
+            raise RuntimeError(f"Error processing key {key}: {str(e)}")
+
+    return predict_df
 
 
 @task_wrapper
@@ -110,6 +255,8 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
         predict_df = predict_df.with_columns(
             pl.col("predicted_boolean_probability").gt(0.5).alias("predicted_boolean_value"),
         )
+
+    predict_df = predict_df.hstack(process_predictions(predictions, MODEL_KEY_TO_PREDICT_SCHEMA_NAME))
 
     Path(cfg.paths.predict_fp).parent.mkdir(parents=True, exist_ok=True)
     validated_table = validate_prediction_data(predict_df)

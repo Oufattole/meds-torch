@@ -14,6 +14,131 @@ from omegaconf import DictConfig
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
 
 
+def fuse_window_data(windows_data: dict, windows_to_fuse: list[str], fused_window_name: str) -> dict:
+    """Fuse multiple windows into a single window, tracking the lengths of original windows.
+
+    Args:
+        windows_data (dict): Dictionary containing data from multiple windows to be fused
+        windows_to_fuse (list[str]): List of window names to fuse in specified order
+        fused_window_name (str): Name for the resulting fused window
+
+    Returns:
+        dict: Fused window data with length tracking information
+
+    Raises:
+        ValueError: If fusion configuration is invalid or data type is unsupported
+
+    Example:
+    >>> import torch
+    >>> # Create mock data with different types
+    >>> windows_data = {
+    ...     "pre": {
+    ...         # 1D tensor
+    ...         "static_values": torch.tensor([1.0, 2.0]),
+    ...         # 2D tensor (batch_size=2, seq_len=3, features=2)
+    ...         "embeddings": torch.ones(2, 3, 2),
+    ...         # List
+    ...         "codes": ["A", "B", "C"],
+    ...         # Scalar
+    ...         "scalar": 42
+    ...     },
+    ...     "post": {
+    ...         "static_values": torch.tensor([3.0, 4.0]),
+    ...         "embeddings": torch.ones(2, 2, 2) * 2,
+    ...         "codes": ["D", "E"],
+    ...         "scalar": 43
+    ...     }
+    ... }
+    >>> # Fuse windows
+    >>> fused = fuse_window_data(
+    ...     windows_data,
+    ...     windows_to_fuse=["pre", "post"],
+    ...     fused_window_name="fused"
+    ... )
+    >>> # Check lengths tracking
+    >>> fused["LENGTHS//static_values"]  # Two windows with lengths 2 and 2
+    [2, 2]
+    >>> fused["LENGTHS//embeddings"]  # Two windows with sequence lengths 3 and 2
+    [3, 2]
+    >>> fused["LENGTHS//codes"]  # List lengths: 3 and 2
+    [3, 2]
+    >>> fused["LENGTHS//scalar"]  # Scalar values: count as length 1 each
+    [1]
+    >>> # Check concatenated values
+    >>> torch.equal(fused["static_values"],
+    ...            torch.cat([torch.tensor([1.0, 2.0]),
+    ...                      torch.tensor([3.0, 4.0])]))
+    True
+    >>> # Check 2D tensor concatenation along sequence dimension
+    >>> torch.equal(fused["embeddings"],
+    ...            torch.cat([torch.ones(2, 3, 2),
+    ...                      torch.ones(2, 2, 2) * 2], dim=1))
+    True
+    >>> fused["codes"]  # Lists are concatenated
+    ['A', 'B', 'C', 'D', 'E']
+    >>> fused["scalar"]  # First scalar value is kept
+    42
+    >>> # Test error handling
+    >>> fuse_window_data(windows_data, ["nonexistent"], "fused")  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+    ValueError: Window nonexistent specified in windows_to_fuse not found in data
+    """
+    if not fused_window_name:
+        raise ValueError("fused_window_name must not be empty")
+
+    fused_window = {}
+    lengths_tracking = {}
+
+    # Process each window in the specified order
+    for window in windows_to_fuse:
+        if window not in windows_data:
+            raise ValueError(f"Window {window} specified in windows_to_fuse not found in data")
+
+        window_data = windows_data[window]
+
+        # Process each key in the window data
+        for key, data in window_data.items():
+            # Initialize containers in fused window
+            if key not in fused_window:
+                lengths_tracking[f"LENGTHS//{key}"] = []
+
+            if isinstance(data, torch.Tensor):
+                # For tensors, concatenate along the appropriate dimension
+                concat_dim = int(len(data.shape) > 1)
+                lengths_tracking[f"LENGTHS//{key}"].append(data.shape[concat_dim])
+                if key not in fused_window:
+                    fused_window[key] = data
+                else:  # 2D or higher tensor
+                    if key not in fused_window:
+                        fused_window[key] = data
+                    else:
+                        fused_window[key] = torch.cat([fused_window[key], data], dim=concat_dim)
+
+            elif isinstance(data, list):
+                # For lists, extend the fused window list
+                fused_window.setdefault(key, []).extend(data)
+                lengths_tracking[f"LENGTHS//{key}"].append(len(data))
+
+            elif isinstance(data, (int, float, datetime.datetime)):
+                # For scalars, use the first value
+                if key not in fused_window:
+                    fused_window[key] = data
+                    lengths_tracking[f"LENGTHS//{key}"].append(1)
+
+            else:
+                raise ValueError(f"Unsupported data type {type(data)} for key {key}")
+
+    # Convert lists to tensors where appropriate
+    for key, value in fused_window.items():
+        if isinstance(value, list) and value and isinstance(value[0], torch.Tensor):
+            fused_window[key] = torch.cat(value)
+
+    # Add lengths tracking to the fused window
+    fused_window.update(lengths_tracking)
+
+    return fused_window
+
+
 def get_window_indexes(timeseries_df: pl.DataFrame, windows_df: pl.DataFrame) -> pl.DataFrame:
     """Computes the start and end indexes of time windows for each entry in the provided DataFrame. This
     function assumes that the "time" in `timestamps_series` is sorted. It finds the index of timestamps that
@@ -213,10 +338,15 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                     out[key] = [item[key] for item in batch]
                 else:
                     out[key] = torch.Tensor([item[key] for item in batch])
-        # Move the default window data to the top level
+        # Fuse windows
+        if self.config.early_fusion_windows:
+            out[self.config.early_fusion_window_name] = fuse_window_data(
+                out, self.config.early_fusion_windows, self.config.early_fusion_window_name
+            )
         if self.config.default_window_name:
             for key in out[self.config.default_window_name].keys():
                 out[key] = out[self.config.default_window_name][key]
+
         return out
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
