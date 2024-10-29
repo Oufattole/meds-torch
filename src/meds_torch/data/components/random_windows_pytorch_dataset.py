@@ -14,10 +14,12 @@ class RandomWindowPytorchDataset(PytorchDataset):
     This class extends PytorchDataset to support random window generation without relying on predefined
     windows.
 
-    Args:     cfg (DictConfig): Configuration options for the dataset.     split (str): The data split to use
-    (e.g., 'train', 'validation', 'test').     min_window_size (int): Minimum size of generated windows.
-    max_window_size (int): Maximum size of generated windows.     n_windows (int): Number of windows to
-    generate for each sample.
+    Args:
+        cfg (DictConfig): Configuration options for the dataset.
+        split (str): The data split to use (e.g., 'train', 'validation', 'test').
+        min_window_size (int): Minimum size of generated windows.
+        max_window_size (int): Maximum size of generated windows.
+        n_windows (int): Number of windows to generate for each sample.
     """
 
     def __init__(self, cfg: DictConfig, split: str):
@@ -36,11 +38,14 @@ class RandomWindowPytorchDataset(PytorchDataset):
 
         The window sizes are predetermined to be the same and add up to less than the length of the dataset.
 
-        Args:     seq_length (int): Length of the sequence to generate windows from.
+        Args:
+            seq_length (int): Length of the sequence to generate windows from.
 
-        Returns:     List[Tuple[int, int]]: List of (start, end) indices for each window.
+        Returns:
+            List[Tuple[int, int]]: List of (start, end) indices for each window.
 
-        Raises:     ValueError: If the sequence length is too short to accommodate all windows.
+        Raises:
+            ValueError: If the sequence length is too short to accommodate all windows.
         """
         # Use user-defined window names if provided, otherwise use default names
         window_names = (
@@ -92,10 +97,12 @@ class RandomWindowPytorchDataset(PytorchDataset):
     def partition_sequence(self, sequence: dict, windows: list[tuple[int, int]]) -> dict:
         """Partition a sequence into multiple windows.
 
-        Args:     sequence (dict): The full sequence data.     windows (List[Tuple[int, int]]): List of
-        (start, end) indices for each window.
+        Args:
+            sequence (dict): The full sequence data.
+            windows (List[Tuple[int, int]]): List of (start, end) indices for each window.
 
-        Returns:     dict: A dictionary with partitioned data for each window.
+        Returns:
+            dict: A dictionary with partitioned data for each window.
         """
         partitioned = {}
         for window_name, (start, end) in windows.items():
@@ -108,9 +115,11 @@ class RandomWindowPytorchDataset(PytorchDataset):
     def _seeded_getitem(self, idx: int) -> dict:
         """Get a randomly windowed item from the dataset.
 
-        Args:     idx (int): Index of the item to retrieve.
+        Args:
+            idx (int): Index of the item to retrieve.
 
-        Returns:     dict: A dictionary containing randomly generated windows of the sequence.
+        Returns:
+            dict: A dictionary containing randomly generated windows of the sequence.
         """
         subject_id, _, _ = self.index[idx]
         shard = self.subj_map[subject_id]
@@ -134,9 +143,11 @@ class RandomWindowPytorchDataset(PytorchDataset):
     def collate(self, batch: list[dict]) -> dict:
         """Collate a batch of randomly windowed sequences.
 
-        Args:     batch (List[dict]): A list of dictionaries, each containing windowed sequences.
+        Args:
+            batch (List[dict]): A list of dictionaries, each containing windowed sequences.
 
-        Returns:     dict: A dictionary with collated data for each window.
+        Returns:
+            dict: A dictionary with collated data for each window.
         """
         out = {}
         for col in self.window_cols:

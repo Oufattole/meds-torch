@@ -1,3 +1,4 @@
+import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -208,7 +209,10 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             out[col] = self.pytorch_dataset.collate([x[col] for x in batch])
         for key in batch[0].keys():
             if key not in self.window_cols:
-                out[key] = [item[key] for item in batch]
+                if isinstance(batch[0][key], datetime.datetime):
+                    out[key] = [item[key] for item in batch]
+                else:
+                    out[key] = torch.Tensor([item[key] for item in batch])
         # Move the default window data to the top level
         if self.config.default_window_name:
             for key in out[self.config.default_window_name].keys():

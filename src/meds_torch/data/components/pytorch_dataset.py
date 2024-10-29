@@ -1,3 +1,4 @@
+import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -15,9 +16,11 @@ BINARY_LABEL_COL = "boolean_value"
 class SubsequenceSamplingStrategy(StrEnum):
     """An enumeration of the possible subsequence sampling strategies for the dataset.
 
-    Attributes:     RANDOM: Randomly sample a subsequence from the full sequence.     TO_END: Sample a
-    subsequence from the end of the full sequence.         Note this starts at the last element and moves
-    back.     FROM_START: Sample a subsequence from the start of the full sequence.
+    Attributes:
+        RANDOM: Randomly sample a subsequence from the full sequence.
+        TO_END: Sample a subsequence from the end of the full sequence.
+            Note this starts at the last element and moves back.
+        FROM_START: Sample a subsequence from the start of the full sequence.
     """
 
     RANDOM = "random"
@@ -75,22 +78,28 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
     various types of medical events, static patient information, and task-specific labels. It provides
     functionality for loading, processing, and collating data for use in PyTorch models.
 
-    Key Features: - Supports task- specific data handling for binary classification - Implements custom
-    sampling strategies and sequence length constraints
+    Key Features:
+    - Supports task-specific data handling for binary classification
+    - Implements custom sampling strategies and sequence length constraints
 
-    Args:     cfg (DictConfig): Configuration options for the dataset.     split (str): The data split to use
-    (e.g., 'train', 'validation', 'test').
+    Args:
+        cfg (DictConfig): Configuration options for the dataset.
+        split (str): The data split to use (e.g., 'train', 'validation', 'test').
 
-    Attributes:     config (DictConfig): The dataset configuration.     split (str): The current data split.
-    code_metadata (pl.LazyFrame): Metadata for event codes.     static_dfs (dict): Dictionary of static
-    DataFrames for each data shard.     subj_indices (dict): Mapping of subject IDs to their indices in the
-    dataset.     subj_seq_bounds (dict): Sequence bounds (start, end) for each subject.     index (list): List
-    of (subject_id, start, end) tuples for data access.     labels (dict): Task-specific labels for each data
-    point.     tasks (list): List of task names.
+    Attributes:
+        config (DictConfig): The dataset configuration.
+        split (str): The current data split. code_metadata (pl.LazyFrame): Metadata for event codes.
+        static_dfs (dict): Dictionary of static DataFrames for each data shard.
+        subj_indices (dict): Mapping of subject IDs to their indices in the dataset.
+        subj_seq_bounds (dict): Sequence bounds (start, end) for each subject.
+        index (list): List of (subject_id, start, end) tuples for data access.
+        labels (dict): Task-specific labels for each data point.
+        tasks (list): List of task names.
 
-    Methods:     __len__(): Returns the number of items in the dataset.     __getitem__(idx): Retrieves a
-    single data point.     collate(batch): Collates a batch of data points based on the specified collation
-    strategy.
+    Methods:
+    __len__(): Returns the number of items in the dataset.
+    __getitem__(idx): Retrieves a single data point.
+    collate(batch): Collates a batch of data points based on the specified collation strategy.
     """
 
     def __init__(self, cfg: DictConfig, split: str):
@@ -405,5 +414,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         # Add task labels to batch
         for k in batch[0].keys():
             if k not in ("dynamic", "static_values", "static_indices"):
-                tensorized[k] = [item[k] for item in batch]
+                if isinstance(batch[0][k], datetime.datetime):
+                    tensorized[k] = [item[k] for item in batch]
+                else:
+                    tensorized[k] = torch.Tensor([item[k] for item in batch])
         return tensorized
