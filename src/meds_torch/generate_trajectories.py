@@ -7,12 +7,17 @@ from typing import Any
 import hydra
 import loguru
 import polars as pl
+import pyarrow as pa
 import torch
 from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 
-from meds_torch.models import ACTUAL_FUTURE, GENERATE_PREFIX
+from meds_torch.models import ACTUAL_FUTURE, GENERATE_PREFIX, INPUT_DATA
+from meds_torch.schemas.generate_analysis_schema import (
+    reorder_struct_fields,
+    validate_generated_data,
+)
 from meds_torch.utils import (
     RankedLogger,
     extras,
@@ -92,7 +97,7 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
 
     # Extract input trajectory
     input_df = convert_tensors_to_df(predictions)
-    dfs = {"input": input_df}
+    dfs = {INPUT_DATA: input_df}
     if cfg.actual_future_name:
         actual_tensors = [batch[cfg.actual_future_name] for batch in predictions]
         actual_df = convert_tensors_to_df(actual_tensors)
@@ -119,9 +124,13 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     )
 
     Path(cfg.paths.generated_trajectory_fp).parent.mkdir(parents=True, exist_ok=True)
-    generate_trajectories_df.write_parquet(cfg.paths.generated_trajectory_fp)
-
-    loguru.logger.info(generate_trajectories_df.head())
+    # Convert to arrow table and write to parquet
+    for col in generate_trajectories_df.columns:
+        if isinstance(generate_trajectories_df[col].dtype, pl.Struct):
+            generate_trajectories_df = reorder_struct_fields(generate_trajectories_df, col)
+    validated_table = validate_generated_data(generate_trajectories_df)
+    pa.parquet.write_table(validated_table, cfg.paths.generated_trajectory_fp)
+    loguru.logger.info(pl.from_arrow(validated_table).head())
 
 
 @hydra.main(version_base="1.3", config_path=str(config_yaml.parent.resolve()), config_name=config_yaml.stem)
