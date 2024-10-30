@@ -64,7 +64,7 @@ def subsample_subject_data(
         >>> np.random.seed(42)
         >>> # Create sample nested data
         >>> tensors = {
-        ...     "code": [[1,2],[3,4],[5,6],[7,8],[9,10]],
+        ...     "code": [[1,2],[3,4],[5,6],[7,8,9,10],[11,12]],
         ...     "time": [0,1,2,3,4],
         ... }
         >>> data = JointNestedRaggedTensorDict(raw_tensors=tensors)
@@ -83,51 +83,78 @@ def subsample_subject_data(
 
         >>> # Test TO_END strategy with flattening
         >>> subsampled, st, end = subsample_subject_data(
-        ...     data, max_seq_len=4,
+        ...     JointNestedRaggedTensorDict(raw_tensors=tensors), max_seq_len=4,
         ...     sampling_strategy=SubsequenceSamplingStrategy.TO_END,
         ...     do_flatten_tensors=True
         ... )
         >>> subsampled.tensors["dim0/code"]
-        array([ 7,  8,  9, 10], dtype=uint8)
+        array([ 9,  10,  11, 12], dtype=uint8)
         >>> subsampled.tensors["dim0/time"]
-        array([3, 0, 4, 0], dtype=uint8)
+        array([0, 0, 4, 0], dtype=uint8)
         >>> st, end
-        (6, 10)
+        (3, 5)
+
+        >>> # Test TO_END strategy
+        >>> subsampled, st, end = subsample_subject_data(
+        ...     data, max_seq_len=2,
+        ...     sampling_strategy=SubsequenceSamplingStrategy.TO_END,
+        ...     do_flatten_tensors=False,
+        ... )
+        >>> st, end
+        (3, 5)
 
         >>> # Test RANDOM strategy
         >>> subsampled, st, end = subsample_subject_data(
         ...     data, max_seq_len=2,
         ...     sampling_strategy=SubsequenceSamplingStrategy.RANDOM,
         ...     do_flatten_tensors=True,
-        ...     global_st=5
         ... )
         >>> len(subsampled.tensors["dim0/code"]) == 2
         True
     """
     seq_len = len(subject_data)
 
-    if seq_len <= max_seq_len:
-        return subject_data, global_st, global_st + seq_len
-
     if do_flatten_tensors:
+        # Store original lengths for each time step before flattening
+        cum_lens = subject_data.tensors["dim1/bounds"]
+
         subject_data = subject_data.flatten()
         seq_len = len(subject_data)
 
-    match sampling_strategy:
-        case SubsequenceSamplingStrategy.RANDOM:
-            start_offset = np.random.choice(seq_len - max_seq_len)
-        case SubsequenceSamplingStrategy.TO_END:
-            start_offset = seq_len - max_seq_len
-        case SubsequenceSamplingStrategy.FROM_START:
-            start_offset = 0
-        case _:
-            raise ValueError(f"Invalid subsequence sampling strategy {sampling_strategy}!")
+        match sampling_strategy:
+            case SubsequenceSamplingStrategy.RANDOM:
+                start_offset = np.random.choice(seq_len - max_seq_len)
+            case SubsequenceSamplingStrategy.TO_END:
+                start_offset = seq_len - max_seq_len
+            case SubsequenceSamplingStrategy.FROM_START:
+                start_offset = 0
+            case _:
+                raise ValueError(f"Invalid subsequence sampling strategy {sampling_strategy}!")
 
-    end = min(seq_len, start_offset + max_seq_len)
-    subject_data = subject_data[start_offset:end]
+        end = min(seq_len, start_offset + max_seq_len)
+        subject_data = subject_data[start_offset:end]
 
-    new_global_st = global_st + start_offset
-    new_global_end = new_global_st + len(subject_data)
+        # Map flattened indices back to original time indices
+        new_global_st = global_st + np.searchsorted(cum_lens, start_offset, side="right").item()
+        new_global_end = global_st + np.searchsorted(cum_lens, end, side="right").item()
+    else:
+        if seq_len <= max_seq_len:
+            return subject_data, global_st, global_st + seq_len
+        match sampling_strategy:
+            case SubsequenceSamplingStrategy.RANDOM:
+                start_offset = np.random.choice(seq_len - max_seq_len)
+            case SubsequenceSamplingStrategy.TO_END:
+                start_offset = seq_len - max_seq_len
+            case SubsequenceSamplingStrategy.FROM_START:
+                start_offset = 0
+            case _:
+                raise ValueError(f"Invalid subsequence sampling strategy {sampling_strategy}!")
+
+        end = min(seq_len, start_offset + max_seq_len)
+        subject_data = subject_data[start_offset:end]
+
+        new_global_st = global_st + start_offset
+        new_global_end = new_global_st + len(subject_data)
 
     return subject_data, new_global_st, new_global_end
 
