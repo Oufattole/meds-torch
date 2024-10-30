@@ -120,17 +120,18 @@ def subsample_subject_data(
 
         subject_data = subject_data.flatten()
         seq_len = len(subject_data)
-
-        match sampling_strategy:
-            case SubsequenceSamplingStrategy.RANDOM:
-                start_offset = np.random.choice(seq_len - max_seq_len)
-            case SubsequenceSamplingStrategy.TO_END:
-                start_offset = seq_len - max_seq_len
-            case SubsequenceSamplingStrategy.FROM_START:
-                start_offset = 0
-            case _:
-                raise ValueError(f"Invalid subsequence sampling strategy {sampling_strategy}!")
-
+        if seq_len > max_seq_len:
+            match sampling_strategy:
+                case SubsequenceSamplingStrategy.RANDOM:
+                    start_offset = np.random.choice(seq_len - max_seq_len)
+                case SubsequenceSamplingStrategy.TO_END:
+                    start_offset = seq_len - max_seq_len
+                case SubsequenceSamplingStrategy.FROM_START:
+                    start_offset = 0
+                case _:
+                    raise ValueError(f"Invalid subsequence sampling strategy {sampling_strategy}!")
+        else:
+            start_offset = 0
         end = min(seq_len, start_offset + max_seq_len)
         subject_data = subject_data[start_offset:end]
 
@@ -430,32 +431,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         if self.config.postpend_eos_token:
             max_seq_len -= 1
 
-        seq_len = len(subject_dynamic_data)
-
-        if seq_len > max_seq_len:
-            match self.config.subsequence_sampling_strategy:
-                case SubsequenceSamplingStrategy.RANDOM:
-                    start_offset = np.random.choice(seq_len - max_seq_len)
-                case SubsequenceSamplingStrategy.TO_END:
-                    start_offset = seq_len - max_seq_len
-                case SubsequenceSamplingStrategy.FROM_START:
-                    start_offset = 0
-                case _:
-                    raise ValueError(
-                        f"Invalid subsequence sampling strategy {self.config.subsequence_sampling_strategy}!"
-                    )
-
-            end = min(seq_len, start_offset + self.config.max_seq_len)
-            subject_dynamic_data = subject_dynamic_data[start_offset:end]
-
-            global_st += start_offset
-            global_end = global_st + len(subject_dynamic_data)
+        subject_dynamic_data, global_st, global_end = subsample_subject_data(
+            subject_dynamic_data,
+            max_seq_len,
+            self.config.subsequence_sampling_strategy,
+            self.config.do_flatten_tensors,
+            global_st,
+        )
 
         if self.config.do_include_subsequence_indices:
             out["start_idx"] = global_st
             out["end_idx"] = global_end
 
-        subject_dynamic_data = subject_dynamic_data.flatten()
         tensors = subject_dynamic_data.tensors
 
         if self.config.do_prepend_static_data:
