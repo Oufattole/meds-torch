@@ -217,11 +217,14 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         Returns:
             dict: A dictionary containing the data for the specified index. The structure typically includes:
-                - 'time_delta_days': List of time deltas between events.
-                - 'dynamic_indices': List of categorical metadata elements.
-                - 'dynamic_values': List of numerical metadata elements.
-                - 'static_indices': List of static categorical metadata elements.
-                Additional keys may be present based on the dataset configuration.
+                - code: List of categorical metadata elements.
+                - mask: Mask of valid elements in the sequence, False means it is a padded element.
+                - numeric_value: List of dynamic numeric values.
+                - numeric_value_mask: Mask of numeric values (False means no numeric value was recorded)
+                - time_delta_days: List of dynamic time deltas between observations.
+                - static_indices(Optional): List of static MEDS codes.
+                - static_values(Optional): List of static MEDS numeric values.
+                - static_mask(Optional): List of static masks (True means the value is static).
 
         Notes:
             This method uses the SeedableMixin to ensure reproducibility in data loading.
@@ -388,8 +391,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                 returned by the __getitem__ method.
 
         Returns:
-            dict: A dictionary containing the collated batch data. The exact structure depends on the
-                collation strategy used.
+            dict: A dictionary containing the collated batch data.
         """
 
         data = JointNestedRaggedTensorDict.vstack([item["dynamic"] for item in batch]).to_dense()
@@ -402,6 +404,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         # Add task labels to batch
         for k in batch[0].keys():
-            if k not in ("dynamic", "static_values", "static_indices"):
+            if k not in ("dynamic", "static_values", "static_indices", "static_mask"):
                 tensorized[k] = torch.Tensor([item[k] for item in batch])
         return tensorized
