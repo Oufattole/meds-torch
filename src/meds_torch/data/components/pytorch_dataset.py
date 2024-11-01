@@ -74,27 +74,29 @@ def subsample_subject_data(
         ...     sampling_strategy=SubsequenceSamplingStrategy.FROM_START,
         ...     do_flatten_tensors=False
         ... )
-        >>> subsampled.tensors["dim1/code"]
-        array([1, 2, 3, 4], dtype=uint8)
-        >>> subsampled.tensors["dim0/time"]
-        array([0, 1], dtype=uint8)
+        >>> subsampled.tensors["dim1/code"].tolist()
+        [1, 2, 3, 4]
+        >>> subsampled.tensors["dim0/time"].tolist()
+        [0, 1]
         >>> st, end
         (0, 2)
 
         >>> # Test TO_END strategy with flattening
+        >>> data = JointNestedRaggedTensorDict(raw_tensors=tensors)
         >>> subsampled, st, end = subsample_subject_data(
-        ...     JointNestedRaggedTensorDict(raw_tensors=tensors), max_seq_len=4,
+        ...     data, max_seq_len=4,
         ...     sampling_strategy=SubsequenceSamplingStrategy.TO_END,
         ...     do_flatten_tensors=True
         ... )
-        >>> subsampled.tensors["dim0/code"]
-        array([ 9,  10,  11, 12], dtype=uint8)
-        >>> subsampled.tensors["dim0/time"]
-        array([0, 0, 4, 0], dtype=uint8)
+        >>> subsampled.tensors["dim0/code"].tolist()
+        [9, 10, 11, 12]
+        >>> subsampled.tensors["dim0/time"].tolist()
+        [0, 0, 4, 0]
         >>> st, end
         (3, 5)
 
         >>> # Test TO_END strategy
+        >>> data = JointNestedRaggedTensorDict(raw_tensors=tensors)
         >>> subsampled, st, end = subsample_subject_data(
         ...     data, max_seq_len=2,
         ...     sampling_strategy=SubsequenceSamplingStrategy.TO_END,
@@ -104,6 +106,7 @@ def subsample_subject_data(
         (3, 5)
 
         >>> # Test RANDOM strategy
+        >>> data = JointNestedRaggedTensorDict(raw_tensors=tensors)
         >>> subsampled, st, end = subsample_subject_data(
         ...     data, max_seq_len=2,
         ...     sampling_strategy=SubsequenceSamplingStrategy.RANDOM,
