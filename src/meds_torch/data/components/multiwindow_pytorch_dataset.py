@@ -1,3 +1,4 @@
+import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -106,8 +107,10 @@ def cache_window_indexes(cfg: DictConfig, split: str, static_dfs) -> pl.DataFram
 class MultiWindowSamplingStrategy(StrEnum):
     """Enumeration of sampling strategies for multi-window datasets.
 
-    Attributes:     RANDOM: Randomly sample and window from the dataset, partitioning it into separate
-    subwindows.     PREDEFINED: Use predefined windows around events to sample from the dataset.
+    Attributes:
+        RANDOM: Randomly sample and window from the dataset, partitioning it into separate
+            subwindows.
+        PREDEFINED: Use predefined windows around events to sample from the dataset.
     """
 
     RANDOM = "random"
@@ -124,13 +127,17 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
     The dataset can be configured to sample at the subject level or at the window level, allowing for flexible
     data loading strategies in contrastive learning scenarios.
 
-    Args:     cfg (DictConfig): Configuration options for the dataset.     split (str): The data split to use
-    (e.g., 'train', 'validation', 'test').
+    Args:
+        cfg (DictConfig): Configuration options for the dataset.
+        split (str): The data split to use (e.g., 'train', 'validation', 'test').
 
-    Attributes:     config (DictConfig): The configuration object for the dataset.     split (str): The
-    current data split being used.     pytorch_dataset (PytorchDataset): The underlying PyTorch dataset.
-    window_cols (list): List of window column names.     index (list): List of dictionaries, each representing
-    a subject or a window,                   depending on the sampling strategy.
+    Attributes:
+        config (DictConfig): The configuration object for the dataset.
+        split (str): The current data split being used.
+        pytorch_dataset (PytorchDataset): The underlying PyTorch dataset.
+        window_cols (list): List of window column names.
+        index (list): List of dictionaries, each representing a subject or a window,
+            depending on the sampling strategy.
     """
 
     def __init__(self, cfg: DictConfig, split: str):
@@ -139,8 +146,9 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         This method sets up the dataset by loading or creating cached window indexes, initializing the
         underlying PytorchDataset, and preparing the index based on the specified sampling strategy.
 
-        Args:     cfg (DictConfig): Configuration options for the dataset.     split (str): The data split to
-        use (e.g., 'train', 'validation', 'test').
+        Args:
+            cfg (DictConfig): Configuration options for the dataset.
+            split (str): The data split to use (e.g., 'train', 'validation', 'test').
         """
         super().__init__()
 
@@ -189,17 +197,26 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         processed by a PyTorch model. It handles both window-specific data and any additional data that might
         be present.
 
-        Args:     batch (dict[str, np.array]): A dictionary of arrays, each representing a batch of data for a
-        specific feature.
+        Args:
+            batch (dict[str, np.array]): A dictionary of arrays, each representing a batch of data for a
+                specific feature.
 
-        Returns:     dict[str, torch.Tensor]: A dictionary of tensors, representing the collated batch data.
+        Returns:
+            dict[str, torch.Tensor]: A dictionary of tensors, representing the collated batch data.
         """
         out = {}
         for col in self.window_cols:
             out[col] = self.pytorch_dataset.collate([x[col] for x in batch])
         for key in batch[0].keys():
             if key not in self.window_cols:
-                out[key] = batch[key]
+                if isinstance(batch[0][key], datetime.datetime):
+                    out[key] = [item[key] for item in batch]
+                else:
+                    out[key] = torch.Tensor([item[key] for item in batch])
+        # Move the default window data to the top level
+        if self.config.default_window_name:
+            for key in out[self.config.default_window_name].keys():
+                out[key] = out[self.config.default_window_name][key]
         return out
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
@@ -210,13 +227,17 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
 
         Args:     idx (int): The index of the item to retrieve.
 
-        Returns:     dict[str, dict]: A dictionary where keys are window names (e.g., 'pre', 'post') and
-        values are dictionaries containing the data for each window.                      The structure of
-        each window's data typically includes:         - 'static_indices': List of static categorical metadata
-        elements.         - 'static_values': List of static numerical metadata elements.         - 'dynamic':
-        Dictionary containing:             - 'time_delta_days': List of time deltas between events. -
-        'dim1/code': List of dynamic categorical metadata elements.             - 'dim1/numeric_value': List
-        of dynamic numerical metadata elements.
+        Returns:
+            dict[str, dict]: A dictionary where keys are window names (e.g., 'pre', 'post') and
+                values are dictionaries containing the data for each window.
+                The structure of each window's data typically includes:
+                    - 'static_indices': List of static categorical metadata elements.
+                    - 'static_values': List of static numerical metadata elements.
+                    - 'dynamic':
+                        Dictionary containing:
+                        - 'time_delta_days': List of time deltas between events.
+                        - 'dim1/code': List of dynamic categorical metadata elements.
+                        - 'dim1/numeric_value': List of dynamic numerical metadata elements.
         """
         return self._seeded_getitem(idx)
 
@@ -228,11 +249,13 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         both subject-level and window-level sampling, returning a dictionary of window data for the selected
         subject.
 
-        Args:     idx (int): The index of the item to retrieve.
+        Args:
+            idx (int): The index of the item to retrieve.
 
-        Returns:     dict[str, dict]: A dictionary where keys are window names (e.g., 'pre', 'post') and
-        values are dictionaries containing the data for each window,                      as returned by
-        PytorchDataset.load_subject().
+        Returns:
+            dict[str, dict]: A dictionary where keys are window names (e.g., 'pre', 'post') and
+                values are dictionaries containing the data for each window,
+                as returned by PytorchDataset.load_subject().
         """
         if self.config.subject_level_sampling:
             # index by subject_id
@@ -260,12 +283,12 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
         subject_idx = self.pytorch_dataset.subj_indices[subject_id]
         out = {}
         for window in self.window_cols:
-            subject_dynamic_data = JointNestedRaggedTensorDict.load_slice(
-                Path(self.config.data_dir) / "data" / f"{shard}.nrt", subject_idx
-            )
-            out[window] = self.pytorch_dataset.load_subject(
-                subject_dynamic_data, subject_id, windows[window][0], windows[window][1]
-            )
+            st, end = windows[window][0], windows[window][1]
+            subject_dynamic_data = JointNestedRaggedTensorDict(
+                tensors_fp=Path(self.config.data_dir) / "data" / f"{shard}.nrt"
+            )[subject_idx, st:end]
+
+            out[window] = self.pytorch_dataset.load_subject(subject_dynamic_data, subject_id, st, end)
 
         if self.config.do_include_subject_id:
             out["subject_id"] = subject_id

@@ -141,7 +141,7 @@ def test_finetune_multiseed(tmp_path: Path, get_kwargs, meds_dir) -> None:  # no
     :param tmp_path: The temporary logging path.
     :param cfg_train: A DictConfig containing a valid training configuration.
     """
-    kwargs = get_kwargs(extra_overrides=["callbacks=tune_default", "hparams_search=ray_tune"])
+    kwargs = get_kwargs(extra_overrides=["callbacks=tune_default", "hparams_search=ray_tune", "trainer=ray"])
     cfg_pretrain = kwargs["cfg"]
     raises_value_error = kwargs["raises_value_error"]
     HydraConfig().set_config(cfg_pretrain)
@@ -152,7 +152,6 @@ def test_finetune_multiseed(tmp_path: Path, get_kwargs, meds_dir) -> None:  # no
     with open_dict(cfg_pretrain):
         cfg_pretrain.trainer.max_epochs = 1
         cfg_pretrain.paths.output_dir = str(pretrain_path)
-        cfg_pretrain.callbacks.model_checkpoint.save_top_k = -1
         cfg_pretrain.hparams_search.ray.num_samples = 2
         cfg_pretrain.hparams_search.scheduler.grace_period = 1
         cfg_pretrain.trainer.accelerator = "gpu"
@@ -179,7 +178,7 @@ def test_finetune_multiseed(tmp_path: Path, get_kwargs, meds_dir) -> None:  # no
         supervised_input_kwargs["early_fusion"] = None
         overrides, _, supervised = get_overrides_and_exceptions(**supervised_input_kwargs)
         cfg_finetune = create_cfg(
-            overrides=overrides + ["callbacks=tune_default", "hparams_search=ray_tune"],
+            overrides=overrides + ["callbacks=tune_default", "hparams_search=ray_tune", "trainer=ray"],
             meds_dir=meds_dir,
             config_name="finetune.yaml",
             supervised=supervised,
@@ -189,7 +188,6 @@ def test_finetune_multiseed(tmp_path: Path, get_kwargs, meds_dir) -> None:  # no
             cfg_finetune.pretrain_path = str(latest_pretrain_path.resolve())
             cfg_finetune.paths.output_dir = str(finetune_path)
             cfg_finetune.trainer.max_epochs = 2
-            cfg_finetune.callbacks.model_checkpoint.save_top_k = -1
             cfg_finetune.hparams_search.ray.num_samples = 2
             cfg_finetune.hparams_search.scheduler.grace_period = 1
             cfg_finetune.trainer.accelerator = "gpu"
@@ -207,7 +205,7 @@ def test_finetune_multiseed(tmp_path: Path, get_kwargs, meds_dir) -> None:  # no
 
         # multiseed finetune
         cfg_finetune = create_cfg(
-            overrides=overrides + ["callbacks=tune_default", "hparams_search=ray_multiseed"],
+            overrides=overrides + ["callbacks=tune_default", "hparams_search=ray_multiseed", "trainer=ray"],
             meds_dir=meds_dir,
             config_name="finetune.yaml",
             supervised=supervised,
@@ -216,7 +214,6 @@ def test_finetune_multiseed(tmp_path: Path, get_kwargs, meds_dir) -> None:  # no
             cfg_finetune.pretrain_path = str(latest_finetune_path.resolve())
             cfg_finetune.paths.output_dir = str(multiseed_finetune_path)
             cfg_finetune.trainer.max_epochs = 2
-            cfg_finetune.callbacks.model_checkpoint.save_top_k = -1
             cfg_finetune.hparams_search.ray.num_samples = 2
             cfg_finetune.trainer.accelerator = "gpu"
 

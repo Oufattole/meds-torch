@@ -5,3 +5,4 @@ name: multiwindow_pytorch_dataset
 
 subject_level_sampling: false
 raw_windows_fp: ???
+default_window_name: null
