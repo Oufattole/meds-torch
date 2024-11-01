@@ -110,13 +110,13 @@ class MEDSDataModule(LightningDataModule, Module):
 
         # load and split datasets only if not loaded already
         if stage == "test":
-            self.data_test = get_dataset(self.cfg, split="held_out")
+            self.data_test = get_dataset(self.cfg, split=self.split_names.test)
         elif stage == "validate":
-            self.data_val = get_dataset(self.cfg, split="tuning")
+            self.data_val = get_dataset(self.cfg, split=self.split_names.validate)
         else:
-            self.data_train = get_dataset(self.cfg, split="train")
-            self.data_val = get_dataset(self.cfg, split="tuning")
-            self.data_test = get_dataset(self.cfg, split="held_out")
+            self.data_train = get_dataset(self.cfg, split=self.split_names.train)
+            self.data_val = get_dataset(self.cfg, split=self.split_names.validate)
+            self.data_test = get_dataset(self.cfg, split=self.split_names.test)
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Create and return the train dataloader.
