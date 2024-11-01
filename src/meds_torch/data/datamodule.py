@@ -155,14 +155,6 @@ class MEDSDataModule(LightningDataModule, Module):
             **self.cfg.dataloader,
         )
 
-    def teardown(self, stage: str | None = None) -> None:
-        """Lightning hook for cleaning up after `trainer.fit()`, `trainer.validate()`,
-        `trainer.test()`, and `trainer.predict()`.
-
-        :param stage: The stage being torn down. Either `"fit"`, `"validate"`, `"test"`, or `"predict"`.
-            Defaults to ``None``.
-        """
-
     def state_dict(self) -> dict[Any, Any]:
         """Called when saving a checkpoint. Implement to generate and save the
         datamodule state.
