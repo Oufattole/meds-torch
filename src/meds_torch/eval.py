@@ -1,5 +1,4 @@
 from importlib.resources import files
-from pathlib import Path
 from typing import Any
 
 import hydra
@@ -34,8 +33,6 @@ def evaluate(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str
     Returns:
         Tuple[dict, dict] with metrics and dict with all instantiated objects.
     """
-    cfg.paths.time_output_dir = Path(cfg.paths.time_output_dir)
-    cfg.paths.time_output_dir.makedirs(exist_ok=True)
     assert cfg.ckpt_path
 
     log.info(f"Instantiating datamodule <{cfg.data._target_}>")

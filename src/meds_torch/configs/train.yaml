@@ -55,4 +55,4 @@ ckpt_path: null
 seed: null
 
 # When tuning, setting this to 0 will desable ray memory monitor, which often crashes
-ray_memory_monitor_refresh_ms: 0
+ray_memory_monitor_refresh_ms: "0"
