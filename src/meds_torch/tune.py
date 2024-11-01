@@ -20,7 +20,7 @@ from ray.train.torch import TorchTrainer
 from meds_torch.eval import evaluate
 from meds_torch.finetune import initialize_finetune_objects
 from meds_torch.train import initialize_train_objects
-from meds_torch.utils import RankedLogger, extras
+from meds_torch.utils import RankedLogger, extras, task_wrapper
 from meds_torch.utils.resolvers import setup_resolvers
 
 log = RankedLogger(__name__, rank_zero_only=True)
@@ -29,6 +29,7 @@ setup_resolvers()
 config_yaml = files("meds_torch").joinpath("configs/train.yaml")
 
 
+@task_wrapper
 def ray_tune_runner(cfg: DictConfig, train_func: Callable):
     def objective(config):
         setup_resolvers()

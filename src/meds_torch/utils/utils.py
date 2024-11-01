@@ -56,7 +56,7 @@ def task_wrapper(task_func: Callable) -> Callable:
 
     def wrap(cfg: DictConfig, **kwargs) -> tuple[dict[str, Any], dict[str, Any]]:
         cfg.paths.time_output_dir = Path(cfg.paths.time_output_dir)
-        cfg.paths.time_output_dir.mkdir(exist_ok=True)
+        cfg.paths.time_output_dir.mkdir(parents=True, exist_ok=True)
         OmegaConf.save(config=cfg, f=Path(cfg.paths.time_output_dir) / "hydra_config.yaml")
         # execute the task
         try:
