@@ -79,15 +79,17 @@ class MEDSDataModule(LightningDataModule, Module):
         return 10
 
     def prepare_data(self) -> None:
-        """Download data if needed. Lightning ensures that `self.prepare_data()` is called only within a
-        single process on CPU, so you can safely add your downloading logic within. In case of multi-node
-        training, the execution of this hook depends upon `self.prepare_data_per_node()`.
+        """Download data if needed. Lightning ensures that `self.prepare_data()` is
+        called only within a single process on CPU, so you can safely add your
+        downloading logic within. In case of multi-node training, the execution of this
+        hook depends upon `self.prepare_data_per_node()`.
 
         Do not use it to assign state (self.x = y).
         """
 
     def setup(self, stage: str | None = None) -> None:
-        """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
+        """Load data. Set variables: `self.data_train`, `self.data_val`,
+        `self.data_test`.
 
         This method is called by Lightning before `trainer.fit()`, `trainer.validate()`, `trainer.test()`, and
         `trainer.predict()`, so be careful not to execute things like random split twice! Also, it is called
@@ -107,11 +109,14 @@ class MEDSDataModule(LightningDataModule, Module):
             self.batch_size_per_device = self.hparams.cfg.dataloader.batch_size // self.trainer.world_size
 
         # load and split datasets only if not loaded already
-        self.data_train = get_dataset(self.cfg, split="train")
-        if stage != "train":  # TODO: remove this after we have more test data
-            self.data_val = get_dataset(self.cfg, split="tuning")
-        if stage in ["test", None]:
-            self.data_test = get_dataset(self.cfg, split="held_out")
+        if stage == "test":
+            self.data_test = get_dataset(self.cfg, split=self.cfg.split_names.test)
+        elif stage == "validate":
+            self.data_val = get_dataset(self.cfg, split=self.cfg.split_names.validate)
+        else:
+            self.data_train = get_dataset(self.cfg, split=self.cfg.split_names.train)
+            self.data_val = get_dataset(self.cfg, split=self.cfg.split_names.validate)
+            self.data_test = get_dataset(self.cfg, split=self.cfg.split_names.test)
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Create and return the train dataloader.
@@ -150,24 +155,17 @@ class MEDSDataModule(LightningDataModule, Module):
             **self.cfg.dataloader,
         )
 
-    def teardown(self, stage: str | None = None) -> None:
-        """Lightning hook for cleaning up after `trainer.fit()`, `trainer.validate()`, `trainer.test()`, and
-        `trainer.predict()`.
-
-        :param stage: The stage being torn down. Either `"fit"`, `"validate"`, `"test"`, or `"predict"`.
-            Defaults to ``None``.
-        """
-
     def state_dict(self) -> dict[Any, Any]:
-        """Called when saving a checkpoint. Implement to generate and save the datamodule state.
+        """Called when saving a checkpoint. Implement to generate and save the
+        datamodule state.
 
         :return: A dictionary containing the datamodule state that you want to save.
         """
         return {}
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
-        """Called when loading a checkpoint. Implement to reload datamodule state given datamodule
-        `state_dict()`.
+        """Called when loading a checkpoint. Implement to reload datamodule state given
+        datamodule `state_dict()`.
 
         :param state_dict: The datamodule state returned by `self.state_dict()`.
         """

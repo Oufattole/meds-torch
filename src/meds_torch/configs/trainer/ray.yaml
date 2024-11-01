@@ -1,8 +1,23 @@
-defaults:
-  - default
+_target_: lightning.pytorch.trainer.Trainer
 
-accelerator: gpu
-devices: 1
+accelerator: "auto"
+devices: "auto"
 
-plugins:
-  - __target__: ray.train.lightning.LightningEnvironment
+default_root_dir: ${paths.time_output_dir}
+
+min_epochs: 1 # prevents early stopping
+max_epochs: 2
+
+# mixed precision for extra speed-up
+# precision: 16
+
+# perform a validation loop every N training epochs
+check_val_every_n_epoch: 1
+
+# set True to to ensure deterministic results
+# makes training slower but gives more reproducibility than just setting seeds
+deterministic: False
+
+strategy:
+  _target_: ray.train.lightning.RayDDPStrategy
+  find_unused_parameters: True

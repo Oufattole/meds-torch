@@ -111,17 +111,19 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         This method processes the Parquet files for each shard in the dataset, extracting static data and
         creating various mappings and indices for efficient data access.
 
-        The method populates the following instance attributes: - self.static_dfs: Dictionary of static
-        DataFrames for each shard. - self.subj_indices: Mapping of subject IDs to their indices. -
-        self.subj_seq_bounds: Dictionary of sequence bounds for each subject. - self.index: List of
-        (subject_id, start, end) tuples for data access. - self.labels: Dictionary of task labels (if tasks
-        are specified).
+        The method populates the following instance attributes:
+        - self.static_dfs: Dictionary of static DataFrames for each shard.
+        - self.subj_indices: Mapping of subject IDs to their indices.
+        - self.subj_seq_bounds: Dictionary of sequence bounds for each subject.
+        - self.index: List of (subject_id, start, end) tuples for data access.
+        - self.labels: Dictionary of task labels (if tasks are specified).
 
-        If tasks are specified in the configuration, this method also processes the task labels and integrates
-        them with the static data.
+        If a task is specified in the configuration, this method also processes the task labels and
+        integrates them with the static data.
 
-        Raises:     ValueError: If duplicate subjects are found across shards or if                 required
-        task information is missing.     FileNotFoundError: If specified task files are not found.
+        Raises:
+            ValueError: If duplicate subjects are found across shards.
+            FileNotFoundError: If specified task files are not found.
         """
 
         schema_root = Path(self.config.schema_files_root)
@@ -210,18 +212,22 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         This method returns a dictionary corresponding to a single subject's data at the specified index. The
         data is not tensorized in this method, as that work is typically done in the collate function.
 
-        Args:     idx (int): The index of the data point to retrieve.
+        Args:
+            idx (int): The index of the data point to retrieve.
 
-        Returns:     dict: A dictionary containing the data for the specified index. The structure typically
-        includes:         - 'time_delta_days': List of time deltas between events.         -
-        'dynamic_indices': List of categorical metadata elements.         - 'dynamic_values': List of
-        numerical metadata elements.         - 'static_indices': List of static categorical metadata elements.
-        Additional keys may be present based on the dataset configuration.
+        Returns:
+            dict: A dictionary containing the data for the specified index. The structure typically includes:
+                - code: List of categorical metadata elements.
+                - mask: Mask of valid elements in the sequence, False means it is a padded element.
+                - numeric_value: List of dynamic numeric values.
+                - numeric_value_mask: Mask of numeric values (False means no numeric value was recorded)
+                - time_delta_days: List of dynamic time deltas between observations.
+                - static_indices(Optional): List of static MEDS codes.
+                - static_values(Optional): List of static MEDS numeric values.
+                - static_mask(Optional): List of static masks (True means the value is static).
 
-        Notes:     - The exact structure of the output dictionary depends on the dataset configuration and the
-        collate type specified.     - This method uses the SeedableMixin to ensure reproducibility in data
-        loading.     - The returned data is typically in a 'raw' format and may require further processing or
-        tensorization in the collate function.
+        Notes:
+            This method uses the SeedableMixin to ensure reproducibility in data loading.
         """
         return self._seeded_getitem(idx)
 
@@ -249,21 +255,27 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         This method retrieves and processes the data for a specific subject, applying various transformations
         and filters based on the dataset configuration.
 
-        Args:     subject_dynamic_data: The dynamic data for the subject.     subject_id (int): The ID of the
-        subject to load.     st (int): The start index of the sequence to load.     end (int): The end index
-        of the sequence to load.
+        Args:
+            subject_dynamic_data: The dynamic data for the subject.
+            subject_id (int): The ID of the subject to load.
+            st (int): The start index of the sequence to load.
+            end (int): The end index of the sequence to load.
 
-        Returns:     dict: A dictionary containing the processed data for the subject. The exact contents
-        depend on the dataset configuration but typically include:           - Static data (indices and
-        values)           - Dynamic data (time series data, event codes, etc.)           - Sequence
-        information (start and end indices, if configured)
+        Returns:
+            dict: A dictionary containing the processed data for the subject. The exact contents
+                depend on the dataset configuration but typically include:
+                - Static data (indices and values)
+                - Dynamic data (time series data, event codes, etc.)
+                - Sequence information (start and end indices, if configured)
 
-        Raises:     ValueError: If the sequence length is invalid or if there are inconsistencies in the data
-        shapes.
+        Raises:
+            ValueError: If the sequence length is invalid or if there are inconsistencies in the data shapes.
 
-        Notes:     - This method applies sequence length constraints and sampling strategies       as
-        specified in the dataset configuration.     - The method is decorated with @SeedableMixin.WithSeed to
-        ensure reproducibility.
+        Notes:
+            - This method applies sequence length constraints and sampling strategies as
+                specified in the dataset configuration.
+            - It handles different collate types (event_stream, triplet, etc.) differently.
+            - The method is decorated with @SeedableMixin.WithSeed to ensure reproducibility.
         """
         shard = self.subj_map[subject_id]
         subject_idx = self.subj_indices[subject_id]
@@ -369,23 +381,17 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
     @TimeableMixin.TimeAs
     def collate(self, batch: list[dict]) -> dict:
-        """Combine a batch of data points into a single, tensorized batch.
+        """Combines a batch of data points into a single, tensorized batch.
 
-        This method serves as the main collation function, handling different collation strategies based on
-        the dataset configuration. It delegates to specific collation methods depending on the collate_type
-        specified in the configuration.
+        The collated output is a fully tensorized and padded dictionary, ready for input into an
+        `input_encoder`. This method uses the JointNestedRaggedTensorDict API to collate and pad the data.
 
-        Args:     batch (list[dict]): A list of dictionaries, each representing a single data point as
-        returned by the __getitem__ method.
+        Args:
+            batch (list[dict]): A list of dictionaries, each representing a single sample as
+                returned by the __getitem__ method.
 
-        Returns:     dict: A dictionary containing the collated batch data. The exact structure depends on the
-        collation strategy used.
-
-        Raises:     NotImplementedError: If an unsupported collate type is specified in the configuration.
-
-        Notes:     - The method supports various collation strategies including triplet, triplet_prompt, eic.
-        - Each collation strategy is optimized for different model architectures and data representations.
-          - The collated output is fully tensorized and padded, ready for input into a PyTorch model.
+        Returns:
+            dict: A dictionary containing the collated batch data.
         """
 
         data = JointNestedRaggedTensorDict.vstack([item["dynamic"] for item in batch]).to_dense()
@@ -398,6 +404,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         # Add task labels to batch
         for k in batch[0].keys():
-            if k not in ("dynamic", "static_values", "static_indices"):
+            if k not in ("dynamic", "static_values", "static_indices", "static_mask"):
                 tensorized[k] = torch.Tensor([item[k] for item in batch])
         return tensorized

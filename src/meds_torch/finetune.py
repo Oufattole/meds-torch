@@ -1,6 +1,4 @@
-import os
 from importlib.resources import files
-from pathlib import Path
 from typing import Any
 
 import hydra
@@ -26,33 +24,24 @@ log = RankedLogger(__name__, rank_zero_only=True)
 config_yaml = files("meds_torch").joinpath("configs/finetune.yaml")
 
 
-@task_wrapper
-def finetune(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Trains the model. Can additionally evaluate on a testset, using best weights obtained during training.
-
-    This method is wrapped in optional @task_wrapper decorator, that controls the behavior during failure.
-    Useful for multiruns, saving info about the crash, etc.
+def initialize_finetune_objects(cfg: DictConfig, **kwargs) -> Trainer:
+    """Instantiates a Lightning Trainer object.
 
     :param cfg: A DictConfig configuration composed by Hydra.
-    :return: A tuple with metrics and dict with all instantiated objects.
+    :return: A Lightning Trainer object.
     """
     # load pretrained backbone and input encoder:
+    # set seed for random number generators in pytorch, numpy and python.random
     pretrain_cfg = OmegaConf.load(cfg.pretrain_yaml_path)
     # TODO this just adds backwards compatibility find a better way for loading pretrain_cfg
     # see: https://github.com/Oufattole/meds-torch/issues/47
     with open_dict(pretrain_cfg):
-        pretrain_cfg.model.max_seq_len = cfg.data.max_seq_len
-        pretrain_cfg.model.input_encoder.max_seq_len = cfg.data.max_seq_len
         pretrain_cfg.data.vocab_size = cfg.data.vocab_size
         pretrain_cfg.model.vocab_size = cfg.data.vocab_size
 
     pretrain_model: LightningModule = hydra.utils.instantiate(pretrain_cfg.model)
     ckpt = torch.load(cfg.pretrain_ckpt_path)
     pretrain_model.load_state_dict(ckpt["state_dict"])
-
-    # cache hydra config
-    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
-    OmegaConf.save(config=cfg, f=Path(cfg.paths.time_output_dir) / "hydra_config.yaml")
 
     # set seed for random number generators in pytorch, numpy and python.random
     if cfg.get("seed"):
@@ -87,7 +76,10 @@ def finetune(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     logger: list[Logger] = instantiate_loggers(cfg.get("logger"))
 
     log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
-    trainer: Trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger)
+    trainer_factory: Trainer = hydra.utils.instantiate(
+        cfg.trainer, callbacks=callbacks, logger=logger, _partial_=True
+    )
+    trainer = trainer_factory(**kwargs)
 
     object_dict = {
         "cfg": cfg,
@@ -97,6 +89,29 @@ def finetune(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
         "logger": logger,
         "trainer": trainer,
     }
+
+    return object_dict
+
+
+@task_wrapper
+def finetune(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Trains the model. Can additionally evaluate on a testset, using best weights
+    obtained during training.
+
+    This method is wrapped in optional @task_wrapper decorator, that controls the
+    behavior during failure. Useful for multiruns, saving info about the crash, etc.
+
+    Args:
+        cfg: A DictConfig configuration composed by Hydra.
+    Returns:
+        A tuple with metrics and dict with all instantiated objects.
+    """
+    object_dict = initialize_finetune_objects(cfg)
+
+    logger = object_dict["logger"]
+    trainer = object_dict["trainer"]
+    model = object_dict["model"]
+    datamodule = object_dict["datamodule"]
 
     if logger:
         log.info("Logging hyperparameters!")
@@ -129,12 +144,13 @@ def finetune(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
 def main(cfg: DictConfig) -> float | None:
     """Main entry point for training.
 
-    :param cfg: DictConfig configuration composed by Hydra.
-    :return: Optional[float] with optimized metric value.
+    Args:
+        cfg: DictConfig configuration composed by Hydra.
+    Returns:
+        Optional[float] with optimized metric value.
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
-    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
     extras(cfg)
 
     # train the model
