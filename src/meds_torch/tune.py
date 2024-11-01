@@ -129,7 +129,7 @@ def main(cfg: DictConfig) -> float | None:
     Returns:
         Optional[float] with optimized metric value.
     """
-    os.environ["RAY_memory_monitor_refresh_ms"] = "0"
+    os.environ["RAY_memory_monitor_refresh_ms"] = cfg.ray_memory_monitor_refresh_ms
     # apply extra utilities
     os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
     OmegaConf.save(config=cfg, f=Path(cfg.paths.time_output_dir) / "hydra_config.yaml")
