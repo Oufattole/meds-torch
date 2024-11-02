@@ -60,6 +60,8 @@ def pop_key(
                 [[0. , 0. ],
                  [0. , 0. ]]]], dtype=float32)
     """
+    # Reset the schema, sometimes the schema is incorrect if you don't do this
+    jnrt = JointNestedRaggedTensorDict(processed_tensors=jnrt.tensors)
     # Create two new dictionaries to hold the separated tensors
     remaining_tensors = {}
     popped_tensors = {}
@@ -99,12 +101,12 @@ def extract_nested_data(jnrt: JointNestedRaggedTensorDict, key: str) -> tuple[li
         - location_map is a dict mapping from position in extracted_data to original indices
 
     Examples:
-        >>> dummy_ecg = [[0.2, 0.3], [0.4, 0.9]]
+        >>> ecg_1 = [[0.2, 0.3], [0.4, 0.9]]
         >>> data = JointNestedRaggedTensorDict({
         ...     "subject_id": [1],
         ...     "time": [[0,1]],
         ...     "code": [[[1,2],[3]]],
-        ...     "ecg": [[[dummy_ecg,[[]]], [[[]]]]]
+        ...     "ecg": [[[ecg_1,[[]]], [[[]]]]]
         ... })
         >>> ts_data, ecgs, loc_map = extract_nested_data(data, "ecg")
         >>> len(ecgs)  # Number of non-empty ECGs
@@ -114,12 +116,12 @@ def extract_nested_data(jnrt: JointNestedRaggedTensorDict, key: str) -> tuple[li
                [0.4, 0.9]])
         >>> sorted(loc_map[0])  # Location should be a tuple of indices
         [0, 0, 0]
-        >>> dummy_ecg_2 = [[1.2, 1.3], [1.4, 1.9]]
+        >>> ecg_2 = [[1.2, 1.3], [1.4, 1.9]]
         >>> more_data = JointNestedRaggedTensorDict({
         ...     "subject_id": [1, 2],
         ...     "time": [[0,1], [0]],
         ...     "code": [[[1,2],[3]], [[4]]],
-        ...     "ecg": [[[dummy_ecg,[[]]], [[[]]]], [[dummy_ecg_2]]]
+        ...     "ecg": [[[ecg_1,[[]]], [[[]]]], [[ecg_2]]]
         ... })
         >>> ts_data, ecgs, loc_map = extract_nested_data(more_data, "ecg")
         >>> len(ecgs) # Still only one real ECG
@@ -130,6 +132,20 @@ def extract_nested_data(jnrt: JointNestedRaggedTensorDict, key: str) -> tuple[li
         >>> np.array(ecgs[1]).round(1)
         array([[1.2, 1.3],
                [1.4, 1.9]])
+        >>> data = JointNestedRaggedTensorDict({
+        ...     "subject_id": [1, 2, 3],
+        ...     "time": [[0,1], [0], [0]],
+        ...     "code": [[[1,2],[3]], [[4]], [[5]]],
+        ...     "ecg": [[[[[]],[[]]], [[[]]]], [[[[]]]], [[ecg_1]]]
+        ... })[:2]
+        >>> data = JointNestedRaggedTensorDict(processed_tensors=data.tensors)
+        >>> sorted(list(data.keys()))
+        ['code', 'ecg', 'subject_id', 'time']
+        >>> ts_data, ecgs, loc_map = extract_nested_data(data, "ecg")
+        >>> len(ecgs)  # No valid ECGs found
+        0
+        >>> len(loc_map)  # No locations mapped
+        0
     """
     extracted_data = []
     location_map = {}
@@ -249,43 +265,33 @@ def collate(batch: list[dict]) -> dict:
         >>> batch = [
         ...     {
         ...         "dynamic": JointNestedRaggedTensorDict({
-        ...             "subject_id": [1],
-        ...             "code": [[[1, 2], [3]]],
-        ...             "ecg": [[[ecg1, [[]]], [[[]]]]],
-        ...             "numeric_value": [[1.5, float('nan')]],
-        ...             "time_delta_days": [[2.5, float('nan')]]
+        ...             "code": [[1, 2], [3]],
+        ...             "ecg": [[ecg1, []], [[]]],
+        ...             "numeric_value": [[1.5, 2.5], [3.5]],
+        ...             "time_delta_days": [2.5, 4]
         ...         })
         ...     },
         ...     {
         ...         "dynamic": JointNestedRaggedTensorDict({
-        ...             "subject_id": [2],
-        ...             "code": [[[4]]],
-        ...             "ecg": [[[ecg2]]],
+        ...             "code": [[4]],
+        ...             "ecg": [[ecg2]],
         ...             "numeric_value": [[2.5]],
-        ...             "time_delta_days": [[3.0]]
+        ...             "time_delta_days": [3.0]
         ...         })
         ...     }
         ... ]
-        >>>
         >>> # Create dataset instance and collate batch
         >>> result = collate(batch)
-        >>>
         >>> # Check basic structure
         >>> for each in sorted(result.keys()): print(each)
         code
         dim2/mask
-        dim3/mask
         ecg
         ecg_location_map
         mask
         numeric_value
         numeric_value_mask
-        subject_id
         time_delta_days
-        >>>
-        >>> # Verify subject_id tensor
-        >>> result['subject_id'].tolist()
-        [[1], [2]]
         >>>
         >>> # Check ECG data extraction
         >>> len(result['ecg'])
@@ -305,22 +311,21 @@ def collate(batch: list[dict]) -> dict:
         >>>
         >>> # Verify numeric values and masks
         >>> result['numeric_value'].tolist()
-        [1.5, 0.0, 2.5]
+        [[[1.5, 2.5], [3.5, 0.0]], [[2.5, 0.0], [0.0, 0.0]]]
         >>> result['numeric_value_mask'].tolist()
-        [True, False, True]
+        [[[True, True], [True, True]], [[True, True], [True, True]]]
         >>>
         >>> # Verify time delta days
         >>> result['time_delta_days'].tolist()
-        [2.5, 0.0, 3.0]
+        [[2.5, 4.0], [3.0, 0.0]]
         >>>
         >>> # Test batch with no ECG data
         >>> batch_no_ecg = [
         ...     {
         ...         "dynamic": JointNestedRaggedTensorDict({
-        ...             "subject_id": [1],
-        ...             "code": [[[1]]],
+        ...             "code": [[1]],
         ...             "numeric_value": [[1.0]],
-        ...             "time_delta_days": [[1.0]]
+        ...             "time_delta_days": [1.0]
         ...         })
         ...     }
         ... ]
@@ -329,15 +334,16 @@ def collate(batch: list[dict]) -> dict:
         False
         >>>
         >>> # Test batch with empty ECG arrays
+        >>> data = JointNestedRaggedTensorDict({
+        ...     "subject_id": [1, 2, 3],
+        ...     "time_delta_days": [[0,1], [0], [0]],
+        ...     "code": [[[1,2],[3]], [[4]], [[5]]],
+        ...     "numeric_value": [[[1,2],[3]], [[4]], [[5]]],
+        ...     "ecg": [[[[[]],[[]]], [[[]]]], [[[[]]]], [[ecg1]]]
+        ... })[0]
         >>> batch_empty_ecg = [
         ...     {
-        ...         "dynamic": JointNestedRaggedTensorDict({
-        ...             "subject_id": [1],
-        ...             "code": [[[1]]],
-        ...             "ecg": [[[[]]]],
-        ...             "numeric_value": [[1.0]],
-        ...             "time_delta_days": [[1.0]]
-        ...         })
+        ...         "dynamic": data
         ...     }
         ... ]
         >>> result_empty_ecg = collate(batch_empty_ecg)
