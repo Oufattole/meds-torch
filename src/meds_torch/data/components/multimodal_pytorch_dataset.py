@@ -112,13 +112,22 @@ def extract_nested_data(jnrt: JointNestedRaggedTensorDict, key: str) -> tuple[li
                [0.4, 0.9]])
         >>> sorted(loc_map[0])  # Location should be a tuple of indices
         [0, 0, 0]
+        >>> dummy_ecg_2 = [[1.2, 1.3], [1.4, 1.9]]
         >>> more_data = JointNestedRaggedTensorDict({
         ...     "subject_id": [1, 2],
         ...     "time": [[0,1], [0]],
-        ...     "ecg": [[[dummy_ecg,[[]]], [[[]]]], [[[[]]]]]
+        ...     "code": [[[1,2],[3]], [[4]]],
+        ...     "ecg": [[[dummy_ecg,[[]]], [[[]]]], [[dummy_ecg_2]]]
         ... })
         >>> ecgs, loc_map = extract_nested_data(more_data, "ecg")
-
+        >>> len(ecgs) # Still only one real ECG
+        2
+        >>> np.array(ecgs[0]).round(1)
+        array([[0.2, 0.3],
+               [0.4, 0.9]])
+        >>> np.array(ecgs[1]).round(1)
+        array([[1.2, 1.3],
+               [1.4, 1.9]])
     """
     extracted_data = []
     location_map = {}
