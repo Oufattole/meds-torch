@@ -277,6 +277,11 @@ def extract_seq_of_subject_events(df: pl.LazyFrame) -> tuple[pl.LazyFrame, dict[
     version_base=None, config_path=str(PREPROCESS_CONFIG_YAML.parent), config_name=PREPROCESS_CONFIG_YAML.stem
 )
 def main(cfg: DictConfig):
+    hydra_loguru_init()
+    tokenize(cfg)
+
+
+def tokenize(cfg: DictConfig):
     """Main function for tokenizing MEDS datasets.
 
     Examples:
@@ -314,8 +319,8 @@ def main(cfg: DictConfig):
         ...         "do_overwrite": True
         ...     })
         ...
-        ...     # Run main
-        ...     main(cfg)
+        ...     # Run tokenize
+        ...     tokenize(cfg)
         ...
         ...     # Verify outputs
         ...     assert (Path(tmpdir) / "schemas" / "shard_0.parquet").exists()
@@ -344,10 +349,6 @@ def main(cfg: DictConfig):
         tensor([ 101, 2999,  102])
         tensor([  101, 22832,   102])
     """
-    try:
-        hydra_loguru_init()
-    except ValueError:
-        logger.warning("Failed to initialize loguru with hydra")
 
     logger.info(
         f"Running with config:\n{OmegaConf.to_yaml(cfg)}\n"

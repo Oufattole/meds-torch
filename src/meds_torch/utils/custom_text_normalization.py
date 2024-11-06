@@ -19,6 +19,7 @@ def normalize(
       - `time`
       - `code`
       - `numeric_value`
+      - `text_value`
 
     In addition, the `code_metadata` dataset should contain information about the codes in the MEDS dataset,
     including the mandatory columns:
@@ -71,6 +72,7 @@ def normalize(
         ...             datetime(2022, 10, 2),
         ...         ],
         ...         "code": ["lab//A", "lab//A", "dx//B", "lab//A", "dx//D", "lab//C", "lab//F"],
+        ...         "text_value": [None, "fever", None, None, "cough", None, None],
         ...         "numeric_value": [1, 3, None, 3, None, None, None],
         ...         "unit": ["mg/dL", "g/dL", None, "mg/dL", None, None, None],
         ...     },
@@ -78,6 +80,7 @@ def normalize(
         ...         "subject_id": pl.UInt32,
         ...         "time": pl.Datetime,
         ...         "code": pl.Utf8,
+        ...         "text_value": pl.String,
         ...         "numeric_value": pl.Float64,
         ...         "unit": pl.Utf8,
         ...    },
@@ -97,19 +100,19 @@ def normalize(
         ...     },
         ... )
         >>> normalize(MEDS_df.lazy(), code_metadata).collect()
-        shape: (6, 4)
-        ┌────────────┬─────────────────────┬──────┬───────────────┐
-        │ subject_id ┆ time                ┆ code ┆ numeric_value │
-        │ ---        ┆ ---                 ┆ ---  ┆ ---           │
-        │ u32        ┆ datetime[μs]        ┆ u32  ┆ f64           │
-        ╞════════════╪═════════════════════╪══════╪═══════════════╡
-        │ 1          ┆ 2021-01-01 00:00:00 ┆ 0    ┆ -2.0          │
-        │ 1          ┆ 2021-01-01 00:00:00 ┆ 0    ┆ 2.0           │
-        │ 1          ┆ 2021-01-02 00:00:00 ┆ 3    ┆ null          │
-        │ 2          ┆ 2022-10-02 00:00:00 ┆ 0    ┆ 2.0           │
-        │ 2          ┆ 2022-10-02 00:00:00 ┆ 2    ┆ null          │
-        │ 3          ┆ 2022-10-02 00:00:00 ┆ 5    ┆ null          │
-        └────────────┴─────────────────────┴──────┴───────────────┘
+        shape: (6, 5)
+        ┌────────────┬─────────────────────┬──────┬───────────────┬────────────┐
+        │ subject_id ┆ time                ┆ code ┆ numeric_value ┆ text_value │
+        │ ---        ┆ ---                 ┆ ---  ┆ ---           ┆ ---        │
+        │ u32        ┆ datetime[μs]        ┆ u32  ┆ f64           ┆ str        │
+        ╞════════════╪═════════════════════╪══════╪═══════════════╪════════════╡
+        │ 1          ┆ 2021-01-01 00:00:00 ┆ 0    ┆ -2.0          ┆ null       │
+        │ 1          ┆ 2021-01-01 00:00:00 ┆ 0    ┆ 2.0           ┆ fever      │
+        │ 1          ┆ 2021-01-02 00:00:00 ┆ 3    ┆ null          ┆ null       │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 0    ┆ 2.0           ┆ null       │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 2    ┆ null          ┆ null       │
+        │ 3          ┆ 2022-10-02 00:00:00 ┆ 5    ┆ null          ┆ null       │
+        └────────────┴─────────────────────┴──────┴───────────────┴────────────┘
         >>> MEDS_df = pl.DataFrame(
         ...     {
         ...         "subject_id": [1, 1, 1, 2, 2, 2, 3],
@@ -123,6 +126,7 @@ def normalize(
         ...             datetime(2022, 10, 2),
         ...         ],
         ...         "code": ["lab//A", "lab//A", "dx//B", "lab//A", "dx//D", "lab//C", "lab//F"],
+        ...         "text_value": [None, "fever", None, None, "cough", None, None],
         ...         "numeric_value": [1, 3, None, 3, None, None, None],
         ...         "unit": ["mg/dL", "g/dL", None, "mg/dL", None, None, None],
         ...     },
@@ -130,6 +134,7 @@ def normalize(
         ...         "subject_id": pl.UInt32,
         ...         "time": pl.Datetime,
         ...         "code": pl.Utf8,
+        ...         "text_value": pl.String,
         ...         "numeric_value": pl.Float64,
         ...         "unit": pl.Utf8,
         ...    },
@@ -151,19 +156,19 @@ def normalize(
         ...     },
         ... )
         >>> normalize(MEDS_df.lazy(), code_metadata, ["unit"]).collect()
-        shape: (6, 4)
-        ┌────────────┬─────────────────────┬──────┬───────────────┐
-        │ subject_id ┆ time                ┆ code ┆ numeric_value │
-        │ ---        ┆ ---                 ┆ ---  ┆ ---           │
-        │ u32        ┆ datetime[μs]        ┆ u32  ┆ f64           │
-        ╞════════════╪═════════════════════╪══════╪═══════════════╡
-        │ 1          ┆ 2021-01-01 00:00:00 ┆ 0    ┆ -2.0          │
-        │ 1          ┆ 2021-01-01 00:00:00 ┆ 1    ┆ 0.0           │
-        │ 1          ┆ 2021-01-02 00:00:00 ┆ 3    ┆ null          │
-        │ 2          ┆ 2022-10-02 00:00:00 ┆ 0    ┆ 2.0           │
-        │ 2          ┆ 2022-10-02 00:00:00 ┆ 2    ┆ null          │
-        │ 3          ┆ 2022-10-02 00:00:00 ┆ 5    ┆ null          │
-        └────────────┴─────────────────────┴──────┴───────────────┘
+        shape: (6, 5)
+        ┌────────────┬─────────────────────┬──────┬───────────────┬────────────┐
+        │ subject_id ┆ time                ┆ code ┆ numeric_value ┆ text_value │
+        │ ---        ┆ ---                 ┆ ---  ┆ ---           ┆ ---        │
+        │ u32        ┆ datetime[μs]        ┆ u32  ┆ f64           ┆ str        │
+        ╞════════════╪═════════════════════╪══════╪═══════════════╪════════════╡
+        │ 1          ┆ 2021-01-01 00:00:00 ┆ 0    ┆ -2.0          ┆ null       │
+        │ 1          ┆ 2021-01-01 00:00:00 ┆ 1    ┆ 0.0           ┆ fever      │
+        │ 1          ┆ 2021-01-02 00:00:00 ┆ 3    ┆ null          ┆ null       │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 0    ┆ 2.0           ┆ null       │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 2    ┆ null          ┆ null       │
+        │ 3          ┆ 2022-10-02 00:00:00 ┆ 5    ┆ null          ┆ null       │
+        └────────────┴─────────────────────┴──────┴───────────────┴────────────┘
     """
 
     if code_modifiers is None:

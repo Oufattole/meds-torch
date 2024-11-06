@@ -18,7 +18,7 @@ export MULTIMODAL_DIR=$(pwd)/tests/test_data/multimodal_triplet_tensors
 # ACES Task Variables
 export TASK_PATH=$(pwd)/tests/helpers/configs/aces_random_windows.yaml
 export TASK_OUTPUT_DIR=$(pwd)/tests/test_data/windows/
-export TASK_WINDOW_STATS_DIR=$(pwd)/tests/test_data/windows/
+export TASK_WINDOW_STATS_DIR=$(pwd)/tests/test_data/windows/raw/
 
 # Raw synthetic data CSVs to meds data using meds-transforms
 python tests/helpers/generate_synthetic_data.py
