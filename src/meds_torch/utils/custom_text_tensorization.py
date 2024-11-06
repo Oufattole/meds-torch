@@ -98,7 +98,6 @@ def convert_to_NRT(df: pl.LazyFrame) -> JointNestedRaggedTensorDict:
         if not v:
             raise ValueError(f"Column {k} is empty")
 
-    logger.warning(tensors_dict)
     return JointNestedRaggedTensorDict(tensors_dict)
 
 

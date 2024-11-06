@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-"""Transformations for normalizing MEDS datasets, across both categorical and continuous dimensions."""
+"""Transformations for normalizing MEDS datasets, across both categorical and continuous
+dimensions."""
 from pathlib import Path
 
 import hydra
@@ -114,7 +115,8 @@ def process_quantiles(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def add_custom_quantiles_column(code_metadata: pl.DataFrame, custom_quantiles: dict) -> pl.DataFrame:
-    """Add a custom_quantiles column to code_metadata DataFrame based on provided dictionary.
+    """Add a custom_quantiles column to code_metadata DataFrame based on provided
+    dictionary.
 
     Args:
         code_metadata: A Polars DataFrame containing code information
@@ -175,7 +177,8 @@ def add_custom_quantiles_column(code_metadata: pl.DataFrame, custom_quantiles: d
 def convert_to_discrete_quantiles(
     meds_data: pl.DataFrame, code_metadata: pl.DataFrame, custom_quantiles
 ) -> pl.DataFrame:
-    """Converts the numeric values in a MEDS dataset to discrete quantiles that are added to the code name.
+    """Converts the numeric values in a MEDS dataset to discrete quantiles that are
+    added to the code name.
 
     Returns:
         - A new DataFrame with the quantile values added to the code name.
@@ -286,7 +289,8 @@ def convert_to_discrete_quantiles(
 def convert_metadata_codes_to_discrete_quantiles(
     code_metadata: pl.DataFrame, custom_quantiles
 ) -> pl.DataFrame:
-    """Converts the numeric values in a MEDS dataset to discrete quantiles that are added to the code name.
+    """Converts the numeric values in a MEDS dataset to discrete quantiles that are
+    added to the code name.
 
     Returns:
         - A new DataFrame with the quantile values added to the code name.

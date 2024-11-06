@@ -1,8 +1,8 @@
-import os
 from importlib.resources import files
 from typing import Any
 
 import hydra
+import torch
 from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
@@ -25,11 +25,13 @@ config_yaml = files("meds_torch").joinpath("configs/eval.yaml")
 def evaluate(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str, Any]]:
     """Evaluates given checkpoint on a datamodule testset.
 
-    This method is wrapped in optional @task_wrapper decorator, that controls the behavior during failure.
-    Useful for multiruns, saving info about the crash, etc.
+    This method is wrapped in optional @task_wrapper decorator, that controls the
+    behavior during failure. Useful for multiruns, saving info about the crash, etc.
 
-    :param cfg: DictConfig configuration composed by Hydra.
-    :return: Tuple[dict, dict] with metrics and dict with all instantiated objects.
+    Args:
+        cfg: DictConfig configuration composed by Hydra.
+    Returns:
+        Tuple[dict, dict] with metrics and dict with all instantiated objects.
     """
     assert cfg.ckpt_path
 
@@ -39,6 +41,7 @@ def evaluate(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str
 
     log.info(f"Instantiating model <{cfg.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.model)
+    model.load_state_dict(torch.load(cfg.ckpt_path)["state_dict"])
 
     log.info("Instantiating loggers...")
     logger: list[Logger] = instantiate_loggers(cfg.get("logger"))
@@ -59,7 +62,7 @@ def evaluate(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str
         log_hyperparameters(object_dict)
 
     log.info("Starting testing!")
-    trainer.test(model=model, datamodule=datamodule, ckpt_path=cfg.ckpt_path)
+    trainer.test(model=model, datamodule=datamodule)
 
     # for predictions use trainer.predict(...)
     # predictions = trainer.predict(model=model, dataloaders=dataloaders, ckpt_path=cfg.ckpt_path)
@@ -77,7 +80,6 @@ def main(cfg: DictConfig) -> None:
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
-    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
     extras(cfg)
 
     evaluate(cfg)
