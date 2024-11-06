@@ -15,9 +15,6 @@ stages:
   - custom_text_tensorization
 
 stage_configs:
-  filter_subjects:
-    min_events_per_subject: 10
-    min_measurements_per_subject: 10
   fit_filter_and_occlude:
     _script: MEDS_transform-aggregate_code_metadata
     aggregations:
@@ -26,8 +23,6 @@ stage_configs:
       - values/sum
       - values/sum_sqd
       - values/n_occurrences
-  filter_measurements:
-    min_subjects_per_code: 10000
   fit_normalization:
     _script: MEDS_transform-aggregate_code_metadata
     aggregations:

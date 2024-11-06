@@ -239,7 +239,7 @@ def extract_seq_of_subject_events(df: pl.LazyFrame) -> tuple[pl.LazyFrame, dict[
         │ ---        ┆ ---             ┆ ---             ┆ ---             ┆ ---             │
         │ i64        ┆ list[f32]       ┆ list[list[i64]] ┆ list[list[f64]] ┆ list[list[f32]] │
         ╞════════════╪═════════════════╪═════════════════╪═════════════════╪═════════════════╡
-        │ 1          ┆ [NaN, 12.0]     ┆ [[101], [102]]  ┆ [[2.0], [3.0]]  ┆ [[0.0], [null]] │
+        │ 1          ┆ [NaN, 12.0]     ┆ [[101], [102]]  ┆ [[2.0], [3.0]]  ┆ [[0.0], [NaN]]  │
         │ 2          ┆ [NaN]           ┆ [[201]]         ┆ [[5.0]]         ┆ [[1.0]]         │
         └────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┘
         >>> sorted(text_mapping.keys())  # Check text mapping was created
@@ -259,7 +259,7 @@ def extract_seq_of_subject_events(df: pl.LazyFrame) -> tuple[pl.LazyFrame, dict[
         .agg(
             pl.col("code").name.keep(),
             fill_to_nans("numeric_value").name.keep(),
-            pl.col("modality_idx").name.keep() if "text_value" in df.columns else None,
+            fill_to_nans("modality_idx").name.keep() if "text_value" in df.columns else None,
         )
         .group_by("subject_id", maintain_order=True)
         .agg(
