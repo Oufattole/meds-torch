@@ -1,5 +1,5 @@
-_target_: meds_torch.data.datamodule.MEDSDataModule.initialize
-name: pytorch_dataset
+_target_: meds_torch.data.components.pytorch_dataset.PytorchDataset.initialize
+
 # Path params
 data_dir: ${paths.data_dir}
 meds_cohort_dir: ${paths.meds_cohort_dir}
@@ -34,11 +34,6 @@ min_seq_len: 1
 subsequence_sampling_strategy: random
 seq_padding_side: right
 text_max_seq_len: 8
-
-dataloader:
-  batch_size: 128 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
-  num_workers: 0
-  pin_memory: False
 
 vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.VOCAB_SPECIAL_TOKEN_ID_OFFSET}}
 eos_offset: 1
