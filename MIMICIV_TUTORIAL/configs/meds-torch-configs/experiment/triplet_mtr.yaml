@@ -18,7 +18,7 @@ tags:
   - "triplet"
   - "transformer_encoder"
   - "supervised"
-  - ${data.task_name}
+  - ${data.dataset.task_name}
 
 seed: 0
 

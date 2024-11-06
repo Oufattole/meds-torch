@@ -11,8 +11,8 @@ tasks_root: ${paths.meds_cohort_dir}/tasks
 # Task params
 task_root_dir: null
 task_name: null
-task_label_path: ${data.task_root_dir}/${data.task_name}.parquet
-task_info_path: ${data.task_root_dir}/${data.task_name}_info.json
+task_label_path: ${data.dataset.task_root_dir}/${data.dataset.task_name}.parquet
+task_info_path: ${data.dataset.task_root_dir}/${data.dataset.task_name}_info.json
 
 # Split params
 train_subset_size: null
@@ -29,14 +29,14 @@ num_value_code_quantiles: null
 
 # Sequence Params
 max_seq_len: 512
-_resolved_max_seq_len: ${resolve_max_seq_len:${data.max_seq_len}, ${data.postpend_eos_token}}
+_resolved_max_seq_len: ${resolve_max_seq_len:${data.dataset.max_seq_len}, ${data.dataset.postpend_eos_token}}
 min_seq_len: 1
 subsequence_sampling_strategy: random
 seq_padding_side: right
 text_max_seq_len: 8
 
-vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.VOCAB_SPECIAL_TOKEN_ID_OFFSET}}
+vocab_size: ${get_vocab_size:${data.dataset.code_metadata_fp}, ${data.dataset.VOCAB_SPECIAL_TOKEN_ID_OFFSET}}
 eos_offset: 1
-EOS_TOKEN_ID: ${get_eos_token_id:${data.vocab_size}, ${data.eos_offset}}
+EOS_TOKEN_ID: ${get_eos_token_id:${data.dataset.vocab_size}, ${data.dataset.eos_offset}}
 VOCAB_SPECIAL_TOKEN_ID_OFFSET: 1
 postpend_eos_token: ${model.backbone.postpend_eos_token}

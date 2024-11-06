@@ -3,6 +3,6 @@ defaults:
   - _self_
 _target_: meds_torch.data.components.random_windows_pytorch_dataset.RandomWindowPytorchDataset.initialize
 
-max_window_size: ${data._resolved_max_seq_len}
-min_window_size: ${data.min_seq_len}
+max_window_size: ${data.dataset._resolved_max_seq_len}
+min_window_size: ${data.dataset.min_seq_len}
 n_windows: 2

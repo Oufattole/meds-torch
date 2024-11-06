@@ -1,10 +1,10 @@
 _target_: meds_torch.input_encoder.text_encoder.TextCodeEncoder.initialize
 collate_style: text_code
-_resolved_max_seq_len: ${data._resolved_max_seq_len}
+_resolved_max_seq_len: ${data.dataset._resolved_max_seq_len}
 token_dim: ${model.token_dim}
-vocab_size: ${data.vocab_size}
+vocab_size: ${data.dataset.vocab_size}
 
-text_max_seq_len: ${data.text_max_seq_len}
+text_max_seq_len: ${data.dataset.text_max_seq_len}
 dropout: ${model.backbone.dropout}
 text_token_dim: 4
 text_n_layers: 4
@@ -15,8 +15,8 @@ auto_embedder:
   code_embedder:
     _target_: x_transformers.TransformerWrapper
     logits_dim: ${model.input_encoder.text_token_dim}
-    num_tokens: ${get_text_vocab_size:${data.tokenizer}}
-    max_seq_len: ${data.text_max_seq_len}
+    num_tokens: ${get_text_vocab_size:${data.dataset.tokenizer}}
+    max_seq_len: ${data.dataset.text_max_seq_len}
     emb_dropout: ${model.backbone.dropout}
     use_abs_pos_emb: false
     attn_layers:

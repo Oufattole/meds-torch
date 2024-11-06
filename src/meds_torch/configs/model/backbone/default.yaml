@@ -3,7 +3,7 @@ n_layers: 2
 dropout: 0
 token_dim: ${model.token_dim}
 _resolved_max_seq_len: ${model._resolved_max_seq_len}
-vocab_size: ${data.vocab_size}
+vocab_size: ${data.dataset.vocab_size}
 get_last_token: true
 use_cls_token: false
 postpend_eos_token: false

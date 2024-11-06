@@ -45,10 +45,17 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     if cfg.get("seed"):
         L.seed_everything(cfg.seed, workers=True)
 
-    log.info(f"Instantiating datamodule <{cfg.data._target_}>")
-    train_data = hydra.utils.instantiate(cfg.data, split='train')
+    # log.info(f"Instantiating training dataset <{cfg.data._target_}>")
+    # data_train = hydra.utils.instantiate(cfg.data, split='train')
+    
+    # log.info(f"Instantiating tuning dataset <{cfg.data._target_}>")
+    # data_val = hydra.utils.instantiate(cfg.data, split='tuning')
+    
+    # log.info(f"Instantiating held-out dataset <{cfg.data._target_}>")
+    # data_test = hydra.utils.instantiate(cfg.data, split='held_out')
 
-    datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data, train_data=train_data)
+    log.info(f"Instantiating datamodule <{cfg.data._target_}>")
+    datamodule: LightningDataModule = hydra.utils.instantiate( cfg.data)
 
     log.info(f"Instantiating model <{cfg.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.model)

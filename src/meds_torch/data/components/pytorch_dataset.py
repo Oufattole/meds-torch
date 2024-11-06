@@ -18,6 +18,7 @@ from nested_ragged_tensors.ragged_numpy import (
 )
 from omegaconf import DictConfig
 from transformers import AutoTokenizer
+from meds_torch.utils.module_class import Module
 
 IDX_COL = "_row_index"
 
@@ -346,7 +347,7 @@ def get_task_indices_and_labels(
     return indexes, labels
 
 
-class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
+class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin, Module):
     """A PyTorch Dataset class for handling complex, multi-modal medical data.
 
     This dataset is designed to work with data from the MEDS (Medical Event Data Set) format, supporting

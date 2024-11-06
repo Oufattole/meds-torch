@@ -14,17 +14,6 @@ from meds_torch.data.components.random_windows_pytorch_dataset import (
 from meds_torch.utils.module_class import Module
 
 
-def get_dataset(cfg: DictConfig, split) -> PytorchDataset:
-    if cfg.name == "multiwindow_pytorch_dataset":
-        return MultiWindowPytorchDataset(cfg, split)
-    elif cfg.name == "pytorch_dataset":
-        return PytorchDataset(cfg, split)
-    elif cfg.name == "random_windows_pytorch_dataset":
-        return RandomWindowPytorchDataset(cfg, split)
-    else:
-        raise NotImplementedError(f"{cfg.name} not implemented!")
-
-
 class MEDSDataModule(LightningDataModule, Module):
     """`LightningDataModule` for the MEDS pytorch dataset.
 
@@ -57,18 +46,20 @@ class MEDSDataModule(LightningDataModule, Module):
     def __init__(
         self,
         cfg: DictConfig = None,
+        data_train: Dataset | None = None,
+        data_val: Dataset | None = None,
+        data_test: Dataset | None = None,
     ) -> None:
         """Initialize a `MEDSDataModule`."""
         super().__init__()
         self.cfg = cfg
+        self.data_train = data_train
+        self.data_val = data_val
+        self.data_test = data_test
 
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(logger=False)
-
-        self.data_train: Dataset | None = None
-        self.data_val: Dataset | None = None
-        self.data_test: Dataset | None = None
 
     @property
     def num_classes(self) -> int:
@@ -105,13 +96,6 @@ class MEDSDataModule(LightningDataModule, Module):
                     f"the number of devices ({self.trainer.world_size})."
                 )
             self.batch_size_per_device = self.hparams.cfg.dataloader.batch_size // self.trainer.world_size
-
-        # load and split datasets only if not loaded already
-        self.data_train = get_dataset(self.cfg, split="train")
-        if stage != "train":  # TODO: remove this after we have more test data
-            self.data_val = get_dataset(self.cfg, split="tuning")
-        if stage in ["test", None]:
-            self.data_test = get_dataset(self.cfg, split="held_out")
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Create and return the train dataloader.

@@ -18,7 +18,7 @@ tags:
   - "text_code"
   - "transformer_encoder"
   - "supervised"
-  - ${data.task_name}
+  - ${data.dataset.task_name}
 
 tokenizer: "google-bert/bert-base-uncased"
 seed: 0

@@ -1,0 +1,22 @@
+defaults:
+  - _self_
+  - dataset: pytorch_dataset
+  - dataset@train: pytorch_dataset
+  - dataset@tuning: pytorch_dataset
+  - dataset@held_out: pytorch_dataset
+
+_target_: meds_torch.data.datamodule.MEDSDataModule.initialize
+
+dataloader:
+  batch_size: 128 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
+  num_workers: 0
+  pin_memory: False
+
+train: 
+  split: 'train'
+
+tuning: 
+  split: 'tuning'
+
+held_out: 
+  split: 'held_out'
