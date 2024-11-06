@@ -1,0 +1,38 @@
+defaults:
+  - _preprocess
+  - _self_
+input_dir: ${oc.env:MEDS_DIR}
+cohort_dir: ${oc.env:MODEL_DIR}
+stages:
+  - fit_filter_and_occlude
+  - filter_measurements
+  - filter_subjects
+  - occlude_outliers
+  - fit_normalization
+  - fit_vocabulary_indices
+  - custom_text_normalization
+  - custom_text_tokenization
+  - custom_text_tensorization
+
+stage_configs:
+  fit_filter_and_occlude:
+    _script: MEDS_transform-aggregate_code_metadata
+    aggregations:
+      - code/n_occurrences
+      - code/n_subjects
+      - values/sum
+      - values/sum_sqd
+      - values/n_occurrences
+  fit_normalization:
+    _script: MEDS_transform-aggregate_code_metadata
+    aggregations:
+      - code/n_occurrences
+      - code/n_subjects
+      - name: values/quantiles
+        quantiles: [0.25, 0.5, 0.75]
+  custom_text_normalization:
+    _script: "python -m meds_torch.utils.custom_text_normalization"
+  custom_text_tokenization:
+    _script: "python -m meds_torch.utils.custom_text_tokenization"
+  custom_text_tensorization:
+    _script: "python -m meds_torch.utils.custom_text_tensorization"
