@@ -10,6 +10,168 @@ from MEDS_transforms.mapreduce.mapper import map_over
 from omegaconf import DictConfig, OmegaConf
 
 
+def process_quantiles(df: pl.DataFrame) -> pl.DataFrame:
+    """Process quantiles in a DataFrame, using custom quantiles if available.
+
+    Args:
+        df: A Polars DataFrame containing columns for values/quantiles and optionally custom_quantiles
+
+    Returns:
+        A DataFrame with processed quantiles and updated code column
+
+    Examples:
+    >>> import polars as pl
+    >>> df = pl.DataFrame({
+    ...     "code": ["lab//A", "lab//B", "lab//C", "lab//D"],
+    ...     "numeric_value": [-1.0, 2.0, None, 0.0],
+    ...     "values/quantiles": [
+    ...         {"values/quantile/0.2": 0, "values/quantile/0.4": 1,
+    ...          "values/quantile/0.6": 2, "values/quantile/0.8": 3},
+    ...         {"values/quantile/0.2": 0, "values/quantile/0.4": 1,
+    ...          "values/quantile/0.6": 2, "values/quantile/0.8": 3},
+    ...         {"values/quantile/0.2": 0, "values/quantile/0.4": 1,
+    ...          "values/quantile/0.6": 2, "values/quantile/0.8": 3},
+    ...         {"values/quantile/0.2": 0, "values/quantile/0.4": 1,
+    ...          "values/quantile/0.6": 2, "values/quantile/0.8": 3}
+    ...     ],
+    ...     "custom_quantiles": [None,
+    ...         {"values/quantile/0.5": 1.5},
+    ...         None,
+    ...         None
+    ...     ],
+    ...     "code/vocab_index": [0, 1, 2, 3],
+    ... })
+    >>> result = process_quantiles(df)
+    >>> result.select(["code", "numeric_value"])
+    shape: (4, 2)
+    ┌──────────────┬───────────────┐
+    │ code         ┆ numeric_value │
+    │ ---          ┆ ---           │
+    │ str          ┆ f64           │
+    ╞══════════════╪═══════════════╡
+    │ lab//A//_Q_1 ┆ -1.0          │
+    │ lab//B//_Q_2 ┆ 2.0           │
+    │ lab//C       ┆ null          │
+    │ lab//D//_Q_1 ┆ 0.0           │
+    └──────────────┴───────────────┘
+    >>> # Test with only custom quantiles
+    >>> df_custom = pl.DataFrame({
+    ...     "code": ["lab//A", "lab//A", "lab//A"],
+    ...     "numeric_value": [-0.5, 1.0, 4.0],
+    ...     "values/quantiles": [
+    ...         {"values/quantile/0.2": 0, "values/quantile/0.4": 1,
+    ...          "values/quantile/0.6": 2, "values/quantile/0.8": 3},
+    ...         {"values/quantile/0.2": 0, "values/quantile/0.4": 1,
+    ...          "values/quantile/0.6": 2, "values/quantile/0.8": 3},
+    ...         {"values/quantile/0.2": 0, "values/quantile/0.4": 1,
+    ...          "values/quantile/0.6": 2, "values/quantile/0.8": 3},
+    ...     ],
+    ...     "custom_quantiles": [
+    ...         None,
+    ...         None,
+    ...         None,
+    ...     ],
+    ...     "code/vocab_index": [0, 0, 0],
+    ... })
+    >>> result_custom = process_quantiles(df_custom)
+    >>> result_custom.select(["code", "numeric_value"])
+    shape: (3, 2)
+    ┌──────────────┬───────────────┐
+    │ code         ┆ numeric_value │
+    │ ---          ┆ ---           │
+    │ str          ┆ f64           │
+    ╞══════════════╪═══════════════╡
+    │ lab//A//_Q_1 ┆ -0.5          │
+    │ lab//A//_Q_2 ┆ 1.0           │
+    │ lab//A//_Q_5 ┆ 4.0           │
+    └──────────────┴───────────────┘
+    """
+    # Use custom_quantiles if available, otherwise use values/quantiles
+    df = df.with_columns(
+        effective_quantiles=pl.when(pl.col("custom_quantiles").is_not_null())
+        .then(pl.col("custom_quantiles"))
+        .otherwise(pl.col("values/quantiles"))
+    )
+
+    # Unnest the effective_quantiles and calculate the quantile
+    quantile_columns = pl.selectors.starts_with("values/quantile/")
+    df = df.unnest("effective_quantiles").with_columns(
+        quantile=pl.when(pl.col("numeric_value").is_not_null()).then(
+            pl.sum_horizontal(quantile_columns.lt(pl.col("numeric_value"))).add(1)
+        )
+    )
+
+    # Create the new code with quantile information
+    code_quantile_concat = pl.concat_str(pl.col("code"), pl.lit("//_Q_"), pl.col("quantile"))
+    df = df.with_columns(
+        code=pl.when(pl.col("quantile").is_not_null()).then(code_quantile_concat).otherwise(pl.col("code"))
+    )
+
+    # Clean up intermediate columns
+    df = df.drop("quantile", "code/vocab_index", "values/quantiles", "custom_quantiles", quantile_columns)
+
+    return df
+
+
+def add_custom_quantiles_column(code_metadata: pl.DataFrame, custom_quantiles: dict) -> pl.DataFrame:
+    """Add a custom_quantiles column to code_metadata DataFrame based on provided dictionary.
+
+    Args:
+        code_metadata: A Polars DataFrame containing code information
+        custom_quantiles: A dictionary mapping codes to their custom quantile values
+
+    Returns:
+        A DataFrame with an added custom_quantiles column
+
+    Examples:
+    >>> import polars as pl
+    >>> code_metadata = pl.DataFrame({
+    ...     "code": ["lab//A", "lab//B", "lab//C"],
+    ...     "code/vocab_index": [0, 1, 2]
+    ... })
+    >>> custom_quantiles = {
+    ...     "lab//A": {"values/quantile/0.5": 1.5},
+    ...     "lab//B": {"values/quantile/0.5": 2.5}
+    ... }
+    >>> result = add_custom_quantiles_column(code_metadata, custom_quantiles)
+    >>> result
+    shape: (3, 3)
+    ┌────────┬──────────────────┬──────────────────┐
+    │ code   ┆ code/vocab_index ┆ custom_quantiles │
+    │ ---    ┆ ---              ┆ ---              │
+    │ str    ┆ i64              ┆ struct[1]        │
+    ╞════════╪══════════════════╪══════════════════╡
+    │ lab//A ┆ 0                ┆ {1.5}            │
+    │ lab//B ┆ 1                ┆ {2.5}            │
+    │ lab//C ┆ 2                ┆ null             │
+    └────────┴──────────────────┴──────────────────┘
+
+    >>> # Test with empty custom_quantiles
+    >>> result = add_custom_quantiles_column(code_metadata, {})
+    >>> result
+    shape: (3, 3)
+    ┌────────┬──────────────────┬──────────────────┐
+    │ code   ┆ code/vocab_index ┆ custom_quantiles │
+    │ ---    ┆ ---              ┆ ---              │
+    │ str    ┆ i64              ┆ null             │
+    ╞════════╪══════════════════╪══════════════════╡
+    │ lab//A ┆ 0                ┆ null             │
+    │ lab//B ┆ 1                ┆ null             │
+    │ lab//C ┆ 2                ┆ null             │
+    └────────┴──────────────────┴──────────────────┘
+    """
+    # Convert custom_quantiles dict to a Polars Series
+    if isinstance(custom_quantiles, DictConfig):
+        custom_quantiles = OmegaConf.to_container(custom_quantiles)
+    custom_quantiles_series = pl.Series(
+        name="custom_quantiles",
+        values=[custom_quantiles.get(code) if code is not None else None for code in code_metadata["code"]],
+    )
+
+    # Add the custom_quantiles column to code_metadata
+    return code_metadata.with_columns(custom_quantiles_series)
+
+
 def convert_to_discrete_quantiles(
     meds_data: pl.DataFrame, code_metadata: pl.DataFrame, custom_quantiles
 ) -> pl.DataFrame:
@@ -147,8 +309,8 @@ def convert_metadata_codes_to_discrete_quantiles(
     ...                 "values/quantile/0.6": 1, "values/quantile/0.8": 3},
     ...             {"values/quantile/0.2": -3, "values/quantile/0.4": -1,
     ...                 "values/quantile/0.6": 1, "values/quantile/0.8": 3},
-    ...             {"values/quantile/0.2": -3, "values/quantile/0.4": -1,
-    ...                 "values/quantile/0.6": 1, "values/quantile/0.8": 3},
+    ...             {"values/quantile/0.2": None, "values/quantile/0.4": None,
+    ...                 "values/quantile/0.6": None, "values/quantile/0.8": None},
     ...         ],
     ...     },
     ...     schema = {
@@ -166,24 +328,24 @@ def convert_metadata_codes_to_discrete_quantiles(
     >>> quantile_code_metadata = convert_metadata_codes_to_discrete_quantiles(
     ...    code_metadata, custom_quantiles)
     >>> quantile_code_metadata.sort("code/vocab_index")
-    shape: (27, 3)
-    ┌──────────────┬──────────────────┬─────────────────────┐
-    │ code         ┆ code/vocab_index ┆ values/quantiles    │
-    │ ---          ┆ ---              ┆ ---                 │
-    │ str          ┆ u32              ┆ struct[4]           │
-    ╞══════════════╪══════════════════╪═════════════════════╡
-    │ lab//A       ┆ 0                ┆ {-3.0,-1.0,1.0,3.0} │
-    │ lab//A//_Q_1 ┆ 1                ┆ {-3.0,-1.0,1.0,3.0} │
-    │ lab//A//_Q_2 ┆ 2                ┆ {-3.0,-1.0,1.0,3.0} │
-    │ lab//A//_Q_3 ┆ 3                ┆ {-3.0,-1.0,1.0,3.0} │
-    │ lab//A//_Q_4 ┆ 4                ┆ {-3.0,-1.0,1.0,3.0} │
-    │ …            ┆ …                ┆ …                   │
-    │ dx//D        ┆ 22               ┆ {-3.0,-1.0,1.0,3.0} │
-    │ dx//D//_Q_1  ┆ 23               ┆ {-3.0,-1.0,1.0,3.0} │
-    │ dx//D//_Q_2  ┆ 24               ┆ {-3.0,-1.0,1.0,3.0} │
-    │ dx//D//_Q_3  ┆ 25               ┆ {-3.0,-1.0,1.0,3.0} │
-    │ dx//D//_Q_4  ┆ 26               ┆ {-3.0,-1.0,1.0,3.0} │
-    └──────────────┴──────────────────┴─────────────────────┘
+    shape: (25, 3)
+    ┌──────────────┬──────────────────┬───────────────────────┐
+    │ code         ┆ code/vocab_index ┆ values/quantiles      │
+    │ ---          ┆ ---              ┆ ---                   │
+    │ str          ┆ u32              ┆ struct[4]             │
+    ╞══════════════╪══════════════════╪═══════════════════════╡
+    │ lab//A       ┆ 0                ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ lab//A//_Q_1 ┆ 1                ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ lab//A//_Q_2 ┆ 2                ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ lab//A//_Q_3 ┆ 3                ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ lab//A//_Q_4 ┆ 4                ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ …            ┆ …                ┆ …                     │
+    │ lab//F//_Q_2 ┆ 20               ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ lab//F//_Q_3 ┆ 21               ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ lab//F//_Q_4 ┆ 22               ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ lab//F//_Q_5 ┆ 23               ┆ {-3.0,-1.0,1.0,3.0}   │
+    │ dx//D        ┆ 24               ┆ {null,null,null,null} │
+    └──────────────┴──────────────────┴───────────────────────┘
     """
     # Step 1: Add custom_quantiles column to code_metadata
     final_metadata_columns = code_metadata.columns
@@ -195,97 +357,131 @@ def convert_metadata_codes_to_discrete_quantiles(
     return quantile_code_metadata.select(final_metadata_columns)
 
 
-def add_custom_quantiles_column(code_metadata: pl.DataFrame, custom_quantiles: dict) -> pl.DataFrame:
-    # Convert custom_quantiles dict to a Polars Series
-    if isinstance(custom_quantiles, DictConfig):
-        custom_quantiles = OmegaConf.to_container(custom_quantiles)
-    custom_quantiles_series = pl.Series(
-        name="custom_quantiles",
-        values=[custom_quantiles.get(code) if code is not None else None for code in code_metadata["code"]],
-    )
-
-    # Add the custom_quantiles column to code_metadata
-    return code_metadata.with_columns(custom_quantiles_series)
-
-
-def process_quantiles(df: pl.DataFrame) -> pl.DataFrame:
-    # Use custom_quantiles if available, otherwise use values/quantiles
-    df = df.with_columns(
-        effective_quantiles=pl.when(pl.col("custom_quantiles").is_not_null())
-        .then(pl.col("custom_quantiles"))
-        .otherwise(pl.col("values/quantiles"))
-    )
-
-    # Unnest the effective_quantiles and calculate the quantile
-    quantile_columns = pl.selectors.starts_with("values/quantile/")
-    df = df.unnest("effective_quantiles").with_columns(
-        quantile=pl.when(pl.col("numeric_value").is_not_null()).then(
-            pl.sum_horizontal(quantile_columns.lt(pl.col("numeric_value"))).add(1)
-        )
-    )
-
-    # Create the new code with quantile information
-    code_quantile_concat = pl.concat_str(pl.col("code"), pl.lit("//_Q_"), pl.col("quantile"))
-    df = df.with_columns(
-        code=pl.when(pl.col("quantile").is_not_null()).then(code_quantile_concat).otherwise(pl.col("code"))
-    )
-
-    # Clean up intermediate columns
-    df = df.drop("quantile", "code/vocab_index", "values/quantiles", "custom_quantiles", quantile_columns)
-
-    return df
-
-
 def generate_quantile_code_metadata(code_metadata: pl.DataFrame) -> pl.DataFrame:
-    # Step 1: Determine the number of quantiles for each code
-    num_quantiles = len(code_metadata.schema["values/quantiles"].fields)
-    if isinstance(code_metadata.schema["custom_quantiles"], pl.Struct):
-        num_custom_quantiles = len(code_metadata.schema["custom_quantiles"].fields)
-        num_quantiles_expr = (
-            pl.when(pl.col("custom_quantiles").is_not_null())
-            .then(pl.lit(num_custom_quantiles) + 1)
-            .otherwise(pl.lit(num_quantiles) + 1)
-        )
-    else:
-        num_quantiles_expr = pl.lit(num_quantiles)
+    """Modifies the code_metadata DataFrame to include quantile codes.
 
-    code_metadata = code_metadata.with_columns(num_quantiles_expr.alias("num_quantiles"))
+    Args:
+        code_metadata (pl.DataFrame): Current code metadata DataFrame
+
+    Returns:
+        pl.DataFrame: dataframe where we duplicate rows for each quantile code.
+
+    Examples:
+    >>> from datetime import datetime
+    >>> code_metadata = pl.DataFrame(
+    ...     {
+    ...         "code": ["lab//A", "lab//C", "dx//B", "dx//E", "lab//F", "dx//D"],
+    ...         "code/vocab_index": [0, 1, 2, 3, 4, 5],
+    ...         "values/quantiles": [ # [[-3,-1,1,3], [-3,-1,1,3], [], [-3,-1,1,3], [-3,-1,1,3], [-3,-1,1,3]],
+    ...             {"values/quantile/0.2": -3, "values/quantile/0.4": -1,
+    ...                 "values/quantile/0.6": 1, "values/quantile/0.8": 3},
+    ...             {"values/quantile/0.2": -3, "values/quantile/0.4": -1,
+    ...                 "values/quantile/0.6": 1, "values/quantile/0.8": 3},
+    ...             {"values/quantile/0.2": None, "values/quantile/0.4": None,
+    ...                 "values/quantile/0.6": None, "values/quantile/0.8": None},
+    ...             {"values/quantile/0.2": -3, "values/quantile/0.4": -1,
+    ...                 "values/quantile/0.6": 1, "values/quantile/0.8": 3},
+    ...             {"values/quantile/0.2": -3, "values/quantile/0.4": -1,
+    ...                 "values/quantile/0.6": 1, "values/quantile/0.8": 3},
+    ...             {"values/quantile/0.2": None, "values/quantile/0.4": None,
+    ...                 "values/quantile/0.6": None, "values/quantile/0.8": None},
+    ...         ],
+    ...     },
+    ...     schema = {
+    ...         "code": pl.Utf8,
+    ...         "code/vocab_index": pl.UInt32,
+    ...         "values/quantiles": pl.Struct([
+    ...             pl.Field("values/quantile/0.2", pl.Float64),
+    ...             pl.Field("values/quantile/0.4", pl.Float64),
+    ...             pl.Field("values/quantile/0.6", pl.Float64),
+    ...             pl.Field("values/quantile/0.8", pl.Float64),
+    ...         ]), # pl.List(pl.Float64),
+    ...     },
+    ... )
+    >>> quantile_code_metadata = generate_quantile_code_metadata(code_metadata)
+    >>> quantile_code_metadata.sort("code/vocab_index")
+    shape: (26, 3)
+    ┌──────────────────┬───────────────────────┬──────────────┐
+    │ code/vocab_index ┆ values/quantiles      ┆ code         │
+    │ ---              ┆ ---                   ┆ ---          │
+    │ u32              ┆ struct[4]             ┆ str          │
+    ╞══════════════════╪═══════════════════════╪══════════════╡
+    │ 0                ┆ {-3.0,-1.0,1.0,3.0}   ┆ lab//A       │
+    │ 1                ┆ {-3.0,-1.0,1.0,3.0}   ┆ lab//A//_Q_1 │
+    │ 2                ┆ {-3.0,-1.0,1.0,3.0}   ┆ lab//A//_Q_2 │
+    │ 3                ┆ {-3.0,-1.0,1.0,3.0}   ┆ lab//A//_Q_3 │
+    │ 4                ┆ {-3.0,-1.0,1.0,3.0}   ┆ lab//A//_Q_4 │
+    │ …                ┆ …                     ┆ …            │
+    │ 21               ┆ {-3.0,-1.0,1.0,3.0}   ┆ lab//F//_Q_2 │
+    │ 22               ┆ {-3.0,-1.0,1.0,3.0}   ┆ lab//F//_Q_3 │
+    │ 23               ┆ {-3.0,-1.0,1.0,3.0}   ┆ lab//F//_Q_4 │
+    │ 24               ┆ {-3.0,-1.0,1.0,3.0}   ┆ lab//F//_Q_5 │
+    │ 25               ┆ {null,null,null,null} ┆ dx//D        │
+    └──────────────────┴───────────────────────┴──────────────┘
+    """
+    # Step 1: Get the number of quantiles
+    quantile_fields = code_metadata.schema["values/quantiles"].fields
+    num_bins = len(quantile_fields) + 1  # Add 1 for n+1 bins
+    codes_per_entry = num_bins + 1  # Add 1 for the original code
+
+    # Get first quantile name
+    first_quantile = quantile_fields[0].name
+    is_null_quantile = code_metadata.select(pl.col("values/quantiles").struct.field(first_quantile).is_null())
+
+    # Determine number of bins per row
+    codes_per_entry_expr = pl.when(is_null_quantile).then(1).otherwise(codes_per_entry)
+
+    # If custom quantiles exist, update the expression
+    if "custom_quantiles" in code_metadata.columns and isinstance(
+        code_metadata.schema["custom_quantiles"], pl.Struct
+    ):
+        custom_bins = len(code_metadata.schema["custom_quantiles"].fields) + 2
+        codes_per_entry_expr = (
+            pl.when(pl.col("custom_quantiles").is_not_null())
+            .then(custom_bins + 2)
+            .otherwise(codes_per_entry_expr)
+        )
+
+    code_metadata = code_metadata.with_columns(codes_per_entry_expr.alias("codes_per_entry_expr"))
 
     # Step 2: Generate rows for each code and its quantiles
     expanded_metadata = (
         code_metadata.select(
-            pl.col("code").repeat_by(pl.col("num_quantiles")),
-            pl.col("code/vocab_index").repeat_by(pl.col("num_quantiles")).alias("base_index"),
+            pl.col("code").repeat_by(pl.col("codes_per_entry_expr")),
+            pl.col("code/vocab_index").repeat_by(pl.col("codes_per_entry_expr")).alias("base_index"),
             pl.exclude("code", "code/vocab_index"),
         )
         .explode(["code", "base_index"])
         .with_row_index()
     )
 
-    # Step 3: Generate quantile indices and adjust vocab indices
+    # Step 3: Generate binned code vocab indices and adjust vocab indices
     offset = (
         expanded_metadata.group_by("code", maintain_order=True)
-        .agg(pl.col("base_index").first(), pl.col("num_quantiles").first())
-        .select(pl.col("code"), pl.col("num_quantiles").cum_sum().alias("offset") - pl.col("num_quantiles"))
+        .agg(pl.col("base_index").first(), pl.col("codes_per_entry_expr").first())
+        .select(
+            pl.col("code"),
+            pl.col("codes_per_entry_expr").cum_sum().alias("offset") - pl.col("codes_per_entry_expr"),
+        )
     )
     expanded_metadata = expanded_metadata.join(offset, on="code", how="left")
     assert expanded_metadata["base_index"].is_sorted()
     expanded_metadata = expanded_metadata.with_columns((pl.col("index") - pl.col("offset")).alias("quantile"))
     expanded_metadata = expanded_metadata.rename({"index": "code/vocab_index"}).drop(
-        "custom_quantiles", "num_quantiles", "offset"
+        "codes_per_entry_expr", "offset"
     )
+    if "custom_quantiles" in expanded_metadata.columns:
+        expanded_metadata = expanded_metadata.drop("custom_quantiles")
 
     # Step 4: Generate quantile codes
     expanded_metadata = expanded_metadata.with_columns(
-        quantile_code=pl.when(pl.col("quantile") != 0)
+        binned_code=pl.when(pl.col("quantile") != 0)
         .then(pl.concat_str(pl.col("code"), pl.lit("//_Q_"), pl.col("quantile").cast(pl.Utf8)))
         .otherwise(pl.col("code"))
     )
 
     # Step 5: Select and rename final columns
-    final_metadata = expanded_metadata.drop("base_index", "code", "quantile").rename(
-        {"quantile_code": "code"}
-    )
+    final_metadata = expanded_metadata.drop("base_index", "code", "quantile").rename({"binned_code": "code"})
 
     return final_metadata
 
@@ -406,30 +602,34 @@ def quantile_normalize(
         │ lab//F ┆ 5                ┆ {-3.0,-1.0,1.0,3.0}   │
         └────────┴──────────────────┴───────────────────────┘
         >>> quantile_normalize(MEDS_df.lazy(), code_metadata).collect().sort("subject_id", "time", "code")
-        shape: (4, 4)
+        shape: (6, 4)
         ┌────────────┬─────────────────────┬──────┬───────────────┐
         │ subject_id ┆ time                ┆ code ┆ numeric_value │
         │ ---        ┆ ---                 ┆ ---  ┆ ---           │
         │ u32        ┆ datetime[μs]        ┆ u32  ┆ f64           │
         ╞════════════╪═════════════════════╪══════╪═══════════════╡
         │ 1          ┆ 2021-01-01 00:00:00 ┆ 3    ┆ 1.0           │
-        │ 1          ┆ 2021-01-02 00:00:00 ┆ 8    ┆ null          │
-        │ 2          ┆ 2022-10-02 00:00:00 ┆ 4    ┆ null          │
-        │ 3          ┆ 2022-10-02 00:00:00 ┆ 16   ┆ null          │
+        │ 1          ┆ 2021-01-01 00:00:00 ┆ 4    ┆ 3.0           │
+        │ 1          ┆ 2021-01-02 00:00:00 ┆ 12   ┆ null          │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 4    ┆ 3.0           │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 6    ┆ null          │
+        │ 3          ┆ 2022-10-02 00:00:00 ┆ 19   ┆ null          │
         └────────────┴─────────────────────┴──────┴───────────────┘
         >>> custom_quantiles = {"lab//A": {"values/quantile/0.5": 2}}
         >>> quantile_normalize(MEDS_df.lazy(), code_metadata, custom_quantiles=custom_quantiles
         ...     ).collect().sort("subject_id", "time", "code")
-        shape: (4, 4)
+        shape: (6, 4)
         ┌────────────┬─────────────────────┬──────┬───────────────┐
         │ subject_id ┆ time                ┆ code ┆ numeric_value │
         │ ---        ┆ ---                 ┆ ---  ┆ ---           │
         │ u32        ┆ datetime[μs]        ┆ u32  ┆ f64           │
         ╞════════════╪═════════════════════╪══════╪═══════════════╡
         │ 1          ┆ 2021-01-01 00:00:00 ┆ 1    ┆ 1.0           │
-        │ 1          ┆ 2021-01-02 00:00:00 ┆ 7    ┆ null          │
-        │ 2          ┆ 2022-10-02 00:00:00 ┆ 2    ┆ null          │
-        │ 3          ┆ 2022-10-02 00:00:00 ┆ 17   ┆ null          │
+        │ 1          ┆ 2021-01-01 00:00:00 ┆ 2    ┆ 3.0           │
+        │ 1          ┆ 2021-01-02 00:00:00 ┆ 11   ┆ null          │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 2    ┆ 3.0           │
+        │ 2          ┆ 2022-10-02 00:00:00 ┆ 5    ┆ null          │
+        │ 3          ┆ 2022-10-02 00:00:00 ┆ 18   ┆ null          │
         └────────────┴─────────────────────┴──────┴───────────────┘
     """
     # TODO: add support for original values/mean and values/std normalization of continuous values
