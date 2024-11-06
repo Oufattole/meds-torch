@@ -1,6 +1,4 @@
-import os
 from importlib.resources import files
-from pathlib import Path
 from typing import Any
 
 import hydra
@@ -108,10 +106,6 @@ def finetune(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     Returns:
         A tuple with metrics and dict with all instantiated objects.
     """
-    # cache hydra config
-    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
-    OmegaConf.save(config=cfg, f=Path(cfg.paths.time_output_dir) / "hydra_config.yaml")
-
     object_dict = initialize_finetune_objects(cfg)
 
     logger = object_dict["logger"]
@@ -157,7 +151,6 @@ def main(cfg: DictConfig) -> float | None:
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
-    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
     extras(cfg)
 
     # train the model

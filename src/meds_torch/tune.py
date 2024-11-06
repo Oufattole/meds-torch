@@ -20,7 +20,7 @@ from ray.train.torch import TorchTrainer
 from meds_torch.eval import evaluate
 from meds_torch.finetune import initialize_finetune_objects
 from meds_torch.train import initialize_train_objects
-from meds_torch.utils import RankedLogger, extras
+from meds_torch.utils import RankedLogger, extras, task_wrapper
 from meds_torch.utils.resolvers import setup_resolvers
 
 log = RankedLogger(__name__, rank_zero_only=True)
@@ -29,6 +29,7 @@ setup_resolvers()
 config_yaml = files("meds_torch").joinpath("configs/train.yaml")
 
 
+@task_wrapper
 def ray_tune_runner(cfg: DictConfig, train_func: Callable):
     def objective(config):
         setup_resolvers()
@@ -129,10 +130,8 @@ def main(cfg: DictConfig) -> float | None:
     Returns:
         Optional[float] with optimized metric value.
     """
-    os.environ["RAY_memory_monitor_refresh_ms"] = "0"
+    os.environ["RAY_memory_monitor_refresh_ms"] = cfg.ray_memory_monitor_refresh_ms
     # apply extra utilities
-    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
-    OmegaConf.save(config=cfg, f=Path(cfg.paths.time_output_dir) / "hydra_config.yaml")
     extras(cfg)
 
     if cfg.best_config_path:
@@ -146,12 +145,6 @@ def main(cfg: DictConfig) -> float | None:
     else:
         logger.info("No best config provided")
 
-    # Run Ray Tune optimization
-    with open_dict(cfg):
-        # Manually resolve the path to avoid issues with Ray Tune
-        # see https://github.com/Oufattole/meds-torch/issues/41
-        cfg.paths.time_output_dir = str(Path(cfg.paths.time_output_dir))
-
     analysis, best_trial = ray_tune_runner(cfg, train_func=train_func)
     ray.shutdown()
 
@@ -161,7 +154,7 @@ def main(cfg: DictConfig) -> float | None:
             filter_metric=cfg.hparams_search.optimized_metric, filter_mode=cfg.hparams_search.direction
         )
     )
-    results_df.write_parquet(Path(cfg.paths.time_output_dir) / "sweep_results.parquet")
+    results_df.write_parquet(cfg.paths.time_output_dir / "sweep_results.parquet")
 
     best_model_path = (
         Path(
@@ -172,11 +165,11 @@ def main(cfg: DictConfig) -> float | None:
         / "checkpoint.ckpt"
     )
 
-    checkpoint_dir = Path(cfg.paths.time_output_dir) / "checkpoints"
+    checkpoint_dir = cfg.paths.time_output_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(best_model_path, checkpoint_dir / "best_model.ckpt")
 
-    with open(Path(cfg.paths.time_output_dir) / "best_config.json", "w") as outfile:
+    with open(cfg.paths.time_output_dir / "best_config.json", "w") as outfile:
         json.dump(best_trial.config, outfile)
 
     # Generate summary of results
@@ -216,7 +209,7 @@ def main(cfg: DictConfig) -> float | None:
             summary_df = summary_df.with_columns(pl.Series(values).alias(key))
 
     logger.info(summary_df)
-    summary_df.write_parquet(Path(cfg.paths.time_output_dir) / "sweep_results_summary.parquet")
+    summary_df.write_parquet(cfg.paths.time_output_dir / "sweep_results_summary.parquet")
 
     return best_trial
 
