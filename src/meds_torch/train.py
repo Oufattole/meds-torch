@@ -46,7 +46,9 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
         L.seed_everything(cfg.seed, workers=True)
 
     log.info(f"Instantiating datamodule <{cfg.data._target_}>")
-    datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data)
+    train_data = hydra.utils.instantiate(cfg.data, split='train')
+
+    datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data, train_data=train_data)
 
     log.info(f"Instantiating model <{cfg.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.model)

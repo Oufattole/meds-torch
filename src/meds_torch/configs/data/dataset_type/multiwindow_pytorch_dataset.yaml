@@ -1,7 +1,0 @@
-defaults:
-  - pytorch_dataset
-  - _self_
-name: multiwindow_pytorch_dataset
-
-subject_level_sampling: false
-raw_windows_fp: ???

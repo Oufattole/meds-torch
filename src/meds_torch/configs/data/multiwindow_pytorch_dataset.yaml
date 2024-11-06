@@ -1,0 +1,8 @@
+defaults:
+  - pytorch_dataset
+  - _self_
+_target_: meds_torch.data.components.multiwindow_pytorch_dataset.MultiWindowPytorchDataset.initialize
+
+
+subject_level_sampling: false
+raw_windows_fp: ???
