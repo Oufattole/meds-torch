@@ -33,29 +33,20 @@ def convert_to_NRT(df: pl.LazyFrame) -> JointNestedRaggedTensorDict:
         >>> df = pl.DataFrame({
         ...     "subject_id": [1, 2],
         ...     "time_delta_days": [[float("nan"), 12.0], [float("nan")]],
-        ...     "code": [[[101.0, 102.0], [103.0]], [[201.0, 202.0]]],
+        ...     "code": [[[101, 102], [103]], [[201, 202]]],
+        ...     "modality_idx": [[[0., float("nan")], [2.]], [[float("nan"), float("nan")]]],
         ...     "numeric_value": [[[2.0, 3.0], [4.0]], [[6.0, 7.0]]]
         ... })
-        >>> df
-        shape: (2, 4)
-        ┌────────────┬─────────────────┬───────────────────────────┬─────────────────────┐
-        │ subject_id ┆ time_delta_days ┆ code                      ┆ numeric_value       │
-        │ ---        ┆ ---             ┆ ---                       ┆ ---                 │
-        │ i64        ┆ list[f64]       ┆ list[list[f64]]           ┆ list[list[f64]]     │
-        ╞════════════╪═════════════════╪═══════════════════════════╪═════════════════════╡
-        │ 1          ┆ [NaN, 12.0]     ┆ [[101.0, 102.0], [103.0]] ┆ [[2.0, 3.0], [4.0]] │
-        │ 2          ┆ [NaN]           ┆ [[201.0, 202.0]]          ┆ [[6.0, 7.0]]        │
-        └────────────┴─────────────────┴───────────────────────────┴─────────────────────┘
         >>> nrt = convert_to_NRT(df.lazy())
         >>> for k, v in sorted(list(nrt.to_dense().items())):
         ...     print(k)
         ...     print(v)
         code
-        [[[101. 102.]
-          [103.   0.]]
+        [[[101 102]
+          [103   0]]
         <BLANKLINE>
-         [[201. 202.]
-          [  0.   0.]]]
+         [[201 202]
+          [  0   0]]]
         dim1/mask
         [[ True  True]
          [ True False]]
@@ -65,6 +56,12 @@ def convert_to_NRT(df: pl.LazyFrame) -> JointNestedRaggedTensorDict:
         <BLANKLINE>
          [[ True  True]
           [False False]]]
+        modality_idx
+        [[[ 0. nan]
+          [ 2.  0.]]
+        <BLANKLINE>
+         [[nan nan]
+          [ 0.  0.]]]
         numeric_value
         [[[2. 3.]
           [4. 0.]]
@@ -88,7 +85,9 @@ def convert_to_NRT(df: pl.LazyFrame) -> JointNestedRaggedTensorDict:
     time_delta_col = time_delta_cols[0]
 
     tensors_dict = (
-        df.select(time_delta_col, "code", "numeric_value", "text_value").collect().to_dict(as_series=False)
+        df.select(time_delta_col, "code", "numeric_value", pl.col("modality_idx"))
+        .collect()
+        .to_dict(as_series=False)
     )
 
     if all((not v) for v in tensors_dict.values()):

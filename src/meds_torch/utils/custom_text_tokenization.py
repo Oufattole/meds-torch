@@ -95,10 +95,10 @@ def split_static_and_dynamic(df: pl.LazyFrame) -> tuple[pl.LazyFrame, pl.LazyFra
         ┌────────────┬─────────────────────┬──────┬───────────────┬────────────┬──────────────┐
         │ subject_id ┆ time                ┆ code ┆ numeric_value ┆ text_value ┆ modality_idx │
         │ ---        ┆ ---                 ┆ ---  ┆ ---           ┆ ---        ┆ ---          │
-        │ i64        ┆ datetime[μs]        ┆ i64  ┆ f64           ┆ str        ┆ u32          │
+        │ i64        ┆ datetime[μs]        ┆ i64  ┆ f64           ┆ str        ┆ f32          │
         ╞════════════╪═════════════════════╪══════╪═══════════════╪════════════╪══════════════╡
-        │ 1          ┆ 2021-01-01 00:00:00 ┆ 101  ┆ 2.0           ┆ fever      ┆ 1            │
-        │ 2          ┆ 2021-01-02 00:00:00 ┆ 201  ┆ 4.0           ┆ cough      ┆ 0            │
+        │ 1          ┆ 2021-01-01 00:00:00 ┆ 101  ┆ 2.0           ┆ fever      ┆ 1.0          │
+        │ 2          ┆ 2021-01-02 00:00:00 ┆ 201  ┆ 4.0           ┆ cough      ┆ 0.0          │
         └────────────┴─────────────────────┴──────┴───────────────┴────────────┴──────────────┘
     """
     static = df.filter(pl.col("time").is_null()).drop("time")
@@ -111,6 +111,7 @@ def split_static_and_dynamic(df: pl.LazyFrame) -> tuple[pl.LazyFrame, pl.LazyFra
                 pl.when(pl.col("text_value").is_not_null())
                 .then(pl.col("text_value").rank("dense") - 1)
                 .otherwise(None)
+                .cast(pl.Float32)
                 .alias("modality_idx")
             ]
         )
@@ -155,7 +156,7 @@ def tokenize_text_values(df: pl.DataFrame) -> dict[str, dict]:
     text_df = df.filter(pl.col("text_value").is_not_null())
 
     for row in text_df.iter_rows(named=True):
-        key = f"{row['modality_idx']}"
+        key = f"{round(row['modality_idx'])}"
         tokens = TOKENIZER(row["text_value"], return_tensors="pt")
         text_mapping[key] = tokens["input_ids"].squeeze()
 
@@ -228,7 +229,7 @@ def extract_seq_of_subject_events(df: pl.LazyFrame) -> tuple[pl.LazyFrame, dict[
         ...             None, datetime(2021, 1, 2)],
         ...     "code": [100, 101, 102, 200, 201],
         ...     "numeric_value": [1.0, 2.0, 3.0, 4.0, 5.0],
-        ...     "text_value": [None, "fever", "cough", None, "pain"]
+        ...     "text_value": [None, "fever", None, None, "pain"]
         ... }).lazy()
         >>> result_df, text_mapping = extract_seq_of_subject_events(df)
         >>> result_df.collect()
@@ -236,13 +237,13 @@ def extract_seq_of_subject_events(df: pl.LazyFrame) -> tuple[pl.LazyFrame, dict[
         ┌────────────┬─────────────────┬─────────────────┬─────────────────┬─────────────────┐
         │ subject_id ┆ time_delta_days ┆ code            ┆ numeric_value   ┆ modality_idx    │
         │ ---        ┆ ---             ┆ ---             ┆ ---             ┆ ---             │
-        │ i64        ┆ list[f32]       ┆ list[list[i64]] ┆ list[list[f64]] ┆ list[list[u32]] │
+        │ i64        ┆ list[f32]       ┆ list[list[i64]] ┆ list[list[f64]] ┆ list[list[f32]] │
         ╞════════════╪═════════════════╪═════════════════╪═════════════════╪═════════════════╡
-        │ 1          ┆ [NaN, 12.0]     ┆ [[101], [102]]  ┆ [[2.0], [3.0]]  ┆ [[1], [0]]      │
-        │ 2          ┆ [NaN]           ┆ [[201]]         ┆ [[5.0]]         ┆ [[2]]           │
+        │ 1          ┆ [NaN, 12.0]     ┆ [[101], [102]]  ┆ [[2.0], [3.0]]  ┆ [[0.0], [null]] │
+        │ 2          ┆ [NaN]           ┆ [[201]]         ┆ [[5.0]]         ┆ [[1.0]]         │
         └────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┘
         >>> sorted(text_mapping.keys())  # Check text mapping was created
-        ['0', '1', '2']
+        ['0', '1']
     """
     _, dynamic = split_static_and_dynamic(df)
 
