@@ -2,8 +2,8 @@ subjects:
   subject_id_col: MRN
   eye_color:
     code:
-      - EYE_COLOR
-      - col(eye_color)
+    - EYE_COLOR
+    - col(eye_color)
     time: null
     _metadata:
       demo_metadata:
@@ -15,23 +15,24 @@ subjects:
   dob:
     code: DOB
     time: col(dob)
-    time_format: "%m/%d/%Y"
+    time_format: '%m/%d/%Y'
 admit_vitals:
   admissions:
     code:
-      - ADMISSION
-      - col(department)
+    - ADMISSION
+    - col(department)
     time: col(admit_date)
-    time_format: "%m/%d/%Y, %H:%M:%S"
+    time_format: '%m/%d/%Y, %H:%M:%S'
   discharge:
     code: DISCHARGE
     time: col(disch_date)
-    time_format: "%m/%d/%Y, %H:%M:%S"
+    time_format: '%m/%d/%Y, %H:%M:%S'
   HR:
     code: HR
     time: col(vitals_date)
-    time_format: "%m/%d/%Y, %H:%M:%S"
+    time_format: '%m/%d/%Y, %H:%M:%S'
     numeric_value: HR
+    text_value: col(HR_text)
     _metadata:
       input_metadata:
         description:
@@ -43,7 +44,7 @@ admit_vitals:
   temp:
     code: TEMP
     time: col(vitals_date)
-    time_format: "%m/%d/%Y, %H:%M:%S"
+    time_format: '%m/%d/%Y, %H:%M:%S'
     numeric_value: temp
     _metadata:
       input_metadata:

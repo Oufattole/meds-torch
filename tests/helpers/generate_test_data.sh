@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 
-# This makes the script fail if any internal script fails
+# Make sure to have meds-torch installed in your environment pior to running this script
+# run this script in interactive mode with `bash -i tests/helpers/generate_test_data.sh`
+# This script assumes meds-torch is in the `meds-torch` conda environment
 set -e
+# change the environment depending on your setup
+conda activate meds-torch
 
 # MEDS Cohort Variables
 export RAW_COHORT=$(pwd)/tests/test_data/raw_cohort
@@ -13,7 +17,7 @@ export MULTIMODAL_DIR=$(pwd)/tests/test_data/multimodal_triplet_tensors
 
 # ACES Task Variables
 export TASK_PATH=$(pwd)/tests/helpers/configs/aces_random_windows.yaml
-export TASK_OUTPUT_FP=$(pwd)/tests/test_data/windows/raw_windows.parquet
+export TASK_OUTPUT_DIR=$(pwd)/tests/test_data/windows/
 export TASK_WINDOW_STATS_DIR=$(pwd)/tests/test_data/windows/
 
 # Raw synthetic data CSVs to meds data using meds-transforms
@@ -41,11 +45,13 @@ MEDS_transform-runner "pipeline_config_fp=$PIPELINE_CONFIG_FP"
 
 # Extract Pre event and post event windows using ACES -- allowing temporal contrastive learning
 # methods via the multiwindow_pytorch_dataset class
-# aces-cli \
-#     data.path="${MEDS_DIR}/**/*.parquet" \
-#     data.standard="meds" \
-#     cohort_dir=$MEDS_DIR \
-#     config_path=raw_windows \
-#     config_path=$TASK_PATH \
-#     output_filepath=$TASK_OUTPUT_FP
-#     window_stats_dir=$TASK_WINDOW_STATS_DIR
+conda create -n aces python=3.12 -y
+conda activate aces
+pip install es-aces==0.5.1
+aces-cli \
+    data.path="${MEDS_DIR}/data/**/*.parquet" \
+    data.standard="meds" \
+    cohort_dir=$TASK_OUTPUT_DIR \
+    cohort_name=random_windows \
+    config_path=$TASK_PATH \
+    window_stats_dir=$TASK_WINDOW_STATS_DIR
