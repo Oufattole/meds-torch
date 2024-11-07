@@ -122,7 +122,7 @@ def subsample_subject_data(
         cum_lens = subject_data.tensors["dim1/bounds"]
 
         subject_data = subject_data.flatten()
-        seq_len = len(subject_data)
+        seq_len = len(subject_data.tensors["dim0/code"])
         if seq_len > max_seq_len:
             match sampling_strategy:
                 case SubsequenceSamplingStrategy.RANDOM:
