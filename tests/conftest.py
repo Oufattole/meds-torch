@@ -75,7 +75,7 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml", supervised=F
 
             # Additional settings for specific fixtures
             if "data=multiwindow_pytorch_dataset" in overrides:
-                cfg.data.raw_windows_fp = str(meds_dir / "windows" / "raw_windows.parquet")
+                cfg.data.raw_windows_fp = str(meds_dir / "windows" / "raw" / "random_windows.parquet")
                 cfg.model.pre_window_name = "pre"
                 cfg.model.post_window_name = "post"
                 cfg.model.input_window_name = "pre"
