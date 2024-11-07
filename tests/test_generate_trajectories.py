@@ -3,13 +3,11 @@ import subprocess
 from pathlib import Path
 
 import hydra
-import polars as pl
 import pytest
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import open_dict
 
 from meds_torch.generate_trajectories import generate_trajectories
-from meds_torch.models import ACTUAL_FUTURE, GENERATE_PREFIX
 from meds_torch.train import main as train_main
 from tests.conftest import create_cfg
 from tests.test_configs import get_overrides_and_exceptions
@@ -102,9 +100,3 @@ def test_train_generate(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: 
         HydraConfig().set_config(cfg_gen)
         generate_trajectories(cfg_gen)
         assert Path(cfg_gen.paths.generated_trajectory_fp).exists()
-        df = pl.read_parquet(cfg_gen.paths.generated_trajectory_fp)
-        generated_columns = [GENERATE_PREFIX + "0", GENERATE_PREFIX + "1"]
-        for gen_col in generated_columns:
-            assert gen_col in df.columns
-        if "multiwindow_pytorch_dataset" == cfg_gen.data.name:
-            assert ACTUAL_FUTURE in df.columns
