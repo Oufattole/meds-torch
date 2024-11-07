@@ -47,6 +47,7 @@ def validate_generated_data(df):
         pyarrow.Table: Validated data cast to the correct schema with ordered columns
 
     Example:
+    >>> import polars as pl
     >>> from datetime import datetime
     >>> df = pl.DataFrame({
     ...                    'time_delta_days': [0.0, 0.0, 5.2091e-9],

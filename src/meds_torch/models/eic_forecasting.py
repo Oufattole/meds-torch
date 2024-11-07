@@ -426,7 +426,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         ┌─────────────────┬──────┬───────────────┬────────────┬─────────────────────┐
         │ time_delta_days ┆ code ┆ numeric_value ┆ subject_id ┆ prediction_time     │
         │ ---             ┆ ---  ┆ ---           ┆ ---        ┆ ---                 │
-        │ f32             ┆ i64  ┆ f32           ┆ str        ┆ datetime[μs]        │
+        │ f32             ┆ i64  ┆ f32           ┆ i64        ┆ datetime[μs]        │
         ╞═════════════════╪══════╪═══════════════╪════════════╪═════════════════════╡
         │ 0.0             ┆ 0    ┆ NaN           ┆ 1          ┆ 1997-01-01 00:00:00 │
         │ 0.0             ┆ 2    ┆ 0.375         ┆ 1          ┆ 1997-01-01 00:00:00 │
