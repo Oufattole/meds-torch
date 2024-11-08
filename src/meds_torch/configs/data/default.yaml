@@ -1,9 +1,9 @@
 defaults:
-  - _self_
   - dataset: pytorch_dataset
   - dataset@train: pytorch_dataset
   - dataset@tuning: pytorch_dataset
   - dataset@held_out: pytorch_dataset
+  - _self_ # must be at the bottom to overwrite split in data@split
 
 _target_: meds_torch.data.datamodule.MEDSDataModule.initialize
 

@@ -1,5 +1,6 @@
 _target_: meds_torch.data.components.pytorch_dataset.PytorchDataset.initialize
- 
+split: train 
+
 # Path params
 data_dir: ${paths.data_dir}
 meds_cohort_dir: ${paths.meds_cohort_dir}

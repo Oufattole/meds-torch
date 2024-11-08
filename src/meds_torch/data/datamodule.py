@@ -46,16 +46,13 @@ class MEDSDataModule(LightningDataModule, Module):
     def __init__(
         self,
         cfg: DictConfig = None,
-        data_train: Dataset | None = None,
-        data_val: Dataset | None = None,
-        data_test: Dataset | None = None,
     ) -> None:
         """Initialize a `MEDSDataModule`."""
         super().__init__()
         self.cfg = cfg
-        self.data_train = data_train
-        self.data_val = data_val
-        self.data_test = data_test
+        self.data_train = self.cfg.train
+        self.data_val = self.cfg.tuning
+        self.data_test = self.cfg.held_out
 
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt

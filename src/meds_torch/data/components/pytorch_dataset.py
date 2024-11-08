@@ -412,12 +412,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin, Mod
                     return task_type, (col if normalize_fn is None else normalize_fn(col))
         raise TypeError(f"Can't process label of {dtype} type!")
 
-    def __init__(self, cfg: DictConfig, split: str):
+    def __init__(self, cfg: DictConfig):
         super().__init__()
 
         self.config = cfg
-        self.split = split
-
+        self.split = cfg.split
+        
         logger.info("Scanning code metadata")
         self.code_metadata = pl.scan_parquet(self.config.code_metadata_fp)
 
