@@ -1,14 +1,206 @@
-import datetime
+from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 import torch
+from dateutil.relativedelta import relativedelta
 from loguru import logger
 from mixins import SeedableMixin, TimeableMixin
 from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 from omegaconf import DictConfig
+
+
+@dataclass
+class DummyConfig:
+    """Dummy configuration for testing MEDS dataset"""
+
+    schema_files_root: str
+    task_label_path: str
+    data_dir: str
+    task_name: str = "dummy_task"
+    max_seq_len: int = 10
+    do_prepend_static_data: bool = True
+    postpend_eos_token: bool = True
+    do_flatten_tensors: bool = True
+    EOS_TOKEN_ID: int = 5
+    do_include_subject_id: bool = True
+    do_include_subsequence_indices: bool = True
+    do_include_start_time_min: bool = True
+    do_include_prediction_time: bool = True
+    subsequence_sampling_strategy: str = "from_start"
+
+
+def create_dummy_dataset(
+    base_dir: str | Path, n_subjects: int = 3, split: str = "train", seed: int | None = 42
+) -> DummyConfig:
+    """Creates a dummy MEDS dataset for testing purposes.
+
+    Args:
+        base_dir: Directory where the dummy dataset will be created
+        n_subjects: Number of test subjects to generate
+        split: Dataset split to create ('train', 'validation', or 'test')
+        seed: Random seed for reproducible data generation
+
+    Returns:
+        DummyConfig object with paths to the created dataset files
+
+    Examples:
+        >>> from pprint import pprint
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     config = create_dummy_dataset(tmp_dir)
+        ...     # Verify directory structure
+        ...     data_dir = Path(tmp_dir)
+        ...     print(sorted(str(p.relative_to(tmp_dir))
+        ...           for p in data_dir.glob("**/*")
+        ...           if p.is_file()))
+        ['data/train/shard_0.nrt', 'schema/train/shard_0.parquet', 'task_labels.parquet']
+
+        >>> # Test creating dataset with different parameters
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     config = create_dummy_dataset(
+        ...         tmp_dir, n_subjects=2, split='validation', seed=123
+        ...     )
+        ...     # Verify static data
+        ...     static_df = pl.read_parquet(
+        ...         Path(config.schema_files_root) / "validation/shard_0.parquet"
+        ...     )
+        ...     print(f"Number of subjects: {len(static_df)}")
+        ...     print(f"Columns: {static_df.columns}")
+        Number of subjects: 2
+        Columns: ['subject_id', 'start_time', 'time', 'code', 'numeric_value']
+
+        >>> # Test loading dynamic data
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     config = create_dummy_dataset(tmp_dir)
+        ...     dynamic_data = JointNestedRaggedTensorDict(
+        ...         tensors_fp=Path(tmp_dir) / "data/train/shard_0.nrt")
+        ...     print(f"Dynamic data length: {len(dynamic_data)}")
+        ...     print("Available features:")
+        ...     for feature in sorted(dynamic_data.tensors.keys()): print(f"\t{feature}")
+        Dynamic data length: 3
+        Available features:
+            dim1/bounds
+            dim1/time_delta_days
+            dim2/bounds
+            dim2/code
+            dim2/numeric_value
+        >>> # Test loading static data and task labels
+        >>> # Notice that the first index in the dynamic data corresponds to the first row in the static data,
+        >>> # and that the second index in the dynamic data corresponds to the second row in the static data
+        >>> # and so on.
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     config = create_dummy_dataset(tmp_dir)
+        ...     print(pl.read_parquet(Path(tmp_dir) / "schema/train/shard_0.parquet"))
+        ...     print(pl.read_parquet(Path(tmp_dir) / "task_labels.parquet"))
+        ...     pprint(config)
+        shape: (3, 5)
+        ┌────────────┬─────────────────────┬─────────────────────────────────┬───────────┬─────────────────┐
+        │ subject_id ┆ start_time          ┆ time                            ┆ code      ┆ numeric_value   │
+        │ ---        ┆ ---                 ┆ ---                             ┆ ---       ┆ ---             │
+        │ i64        ┆ datetime[μs]        ┆ list[datetime[μs]]              ┆ list[i64] ┆ list[f64]       │
+        ╞════════════╪═════════════════════╪═════════════════════════════════╪═══════════╪═════════════════╡
+        │ 0          ┆ 1995-01-01 00:00:00 ┆ [1995-01-01 00:00:00, 1996-01-… ┆ [1, 2, 3] ┆ [0.1, 0.2, 0.3] │
+        │ 1          ┆ 1995-01-01 00:00:00 ┆ [1995-01-01 00:00:00, 1996-01-… ┆ [1, 2, 3] ┆ [0.1, 0.2, 0.3] │
+        │ 2          ┆ 1995-01-01 00:00:00 ┆ [1995-01-01 00:00:00, 1996-01-… ┆ [1, 2, 3] ┆ [0.1, 0.2, 0.3] │
+        └────────────┴─────────────────────┴─────────────────────────────────┴───────────┴─────────────────┘
+        shape: (3, 3)
+        ┌────────────┬─────────────────────┬───────────────┐
+        │ subject_id ┆ prediction_time     ┆ boolean_value │
+        │ ---        ┆ ---                 ┆ ---           │
+        │ i64        ┆ datetime[μs]        ┆ i64           │
+        ╞════════════╪═════════════════════╪═══════════════╡
+        │ 0          ┆ 1998-01-01 00:00:00 ┆ 0             │
+        │ 1          ┆ 1998-01-01 00:00:00 ┆ 1             │
+        │ 2          ┆ 1998-01-01 00:00:00 ┆ 0             │
+        └────────────┴─────────────────────┴───────────────┘
+        DummyConfig(schema_files_root='.../schema',
+                    task_label_path='.../task_labels.parquet',
+                    data_dir='...',
+                    task_name='dummy_task',
+                    max_seq_len=10,
+                    do_prepend_static_data=True,
+                    postpend_eos_token=True,
+                    do_flatten_tensors=True,
+                    EOS_TOKEN_ID=5,
+                    do_include_subject_id=True,
+                    do_include_subsequence_indices=True,
+                    do_include_start_time_min=True,
+                    do_include_prediction_time=True,
+                    subsequence_sampling_strategy='from_start')
+    """
+    if seed is not None:
+        np.random.seed(seed)
+
+    base_dir = Path(base_dir)
+
+    # Create directories
+    schema_dir = base_dir / "schema" / split
+    schema_dir.mkdir(parents=True, exist_ok=True)
+    base_dir.joinpath("data").mkdir(exist_ok=True)
+
+    # Create static data
+    base_datetime = datetime(1995, 1, 1)
+    static_data = []
+    for subject_id in range(n_subjects):
+        static_data.append(
+            {
+                "subject_id": subject_id,
+                "start_time": base_datetime,
+                "time": pl.Series(
+                    [
+                        base_datetime,
+                        base_datetime + relativedelta(years=1),
+                        base_datetime + relativedelta(years=2),
+                        base_datetime + relativedelta(years=3),
+                        base_datetime + relativedelta(years=4),
+                    ]
+                ),
+                "code": pl.Series([1, 2, 3]),
+                "numeric_value": pl.Series([0.1, 0.2, 0.3]),
+            }
+        )
+    static_df = pl.DataFrame(static_data)
+    static_df.write_parquet(schema_dir / "shard_0.parquet", use_pyarrow=True)
+
+    # Create dynamic data with consistent sequence lengths
+    subject_dynamic_data = []
+    for subject_id in range(n_subjects):
+        dynamic_data = JointNestedRaggedTensorDict(
+            raw_tensors={
+                "code": [[0, 1, 2], [1, 3], [2, 3, 4], [1], [4]],
+                "numeric_value": [[1.0, np.nan, 3.0], [np.nan, 5.0], [6.0, np.nan, 8.0], [np.nan], [10.0]],
+                "time_delta_days": [0, 1, 2, 3, 4],
+            }
+        )
+        subject_dynamic_data.append(dynamic_data)
+    dynamic_data = JointNestedRaggedTensorDict.vstack(subject_dynamic_data)
+
+    nrt_output_dir = base_dir / "data" / split
+    nrt_output_dir.mkdir(parents=True, exist_ok=True)
+    dynamic_data.save(nrt_output_dir / "shard_0.nrt")
+
+    # Create task labels
+    task_df = pl.DataFrame(
+        {
+            "subject_id": list(range(n_subjects)),
+            "prediction_time": [base_datetime + relativedelta(years=3)] * n_subjects,
+            "boolean_value": [i % 2 for i in range(n_subjects)],
+        }
+    )
+
+    task_fp = base_dir / "task_labels.parquet"
+    task_df.write_parquet(task_fp, use_pyarrow=True)
+
+    return DummyConfig(
+        schema_files_root=str(base_dir / "schema"),
+        task_label_path=str(task_fp),
+        data_dir=str(base_dir),
+    )
+
 
 BINARY_LABEL_COL = "boolean_value"
 
@@ -122,7 +314,7 @@ def subsample_subject_data(
         cum_lens = subject_data.tensors["dim1/bounds"]
 
         subject_data = subject_data.flatten()
-        seq_len = len(subject_data.tensors["dim0/code"])
+        seq_len = len(subject_data)
         if seq_len > max_seq_len:
             match sampling_strategy:
                 case SubsequenceSamplingStrategy.RANDOM:
@@ -172,11 +364,51 @@ def get_task_indices_and_labels(
     computes the index of the last event at `prediction_time`.
 
     Parameters:
-    - task_df_joint (DataFrame): A DataFrame resulting from the merge_task_with_static function.
+        - task_df_joint (DataFrame): A DataFrame resulting from the merge_task_with_static function.
 
     Returns:
-    - list: list of index tuples of format (subject_id, start_idx, end_idx).
-    - dict: dictionary of task names to lists of labels in the same order as the indexes.
+        - list: list of index tuples of format (subject_id, start_idx, end_idx).
+        - dict: dictionary of task names to lists of labels in the same order as the indexes.
+
+    Examples:
+    >>> import tempfile
+    >>> with tempfile.TemporaryDirectory() as tmp_dir:
+    ...     config = create_dummy_dataset(tmp_dir)
+    ...     shard = "train/shard_0"
+    ...     task_df = pl.read_parquet(Path(config.data_dir) / "task_labels.parquet")
+    ...     static_dfs = {"shard_0": pl.read_parquet(Path(config.data_dir) / "schema/train/shard_0.parquet")}
+    >>> task_df
+    shape: (3, 3)
+    ┌────────────┬─────────────────────┬───────────────┐
+    │ subject_id ┆ prediction_time     ┆ boolean_value │
+    │ ---        ┆ ---                 ┆ ---           │
+    │ i64        ┆ datetime[μs]        ┆ i64           │
+    ╞════════════╪═════════════════════╪═══════════════╡
+    │ 0          ┆ 1998-01-01 00:00:00 ┆ 0             │
+    │ 1          ┆ 1998-01-01 00:00:00 ┆ 1             │
+    │ 2          ┆ 1998-01-01 00:00:00 ┆ 0             │
+    └────────────┴─────────────────────┴───────────────┘
+    >>> static_dfs["shard_0"]
+    shape: (3, 5)
+    ┌────────────┬─────────────────────┬─────────────────────────────────┬───────────┬─────────────────┐
+    │ subject_id ┆ start_time          ┆ time                            ┆ code      ┆ numeric_value   │
+    │ ---        ┆ ---                 ┆ ---                             ┆ ---       ┆ ---             │
+    │ i64        ┆ datetime[μs]        ┆ list[datetime[μs]]              ┆ list[i64] ┆ list[f64]       │
+    ╞════════════╪═════════════════════╪═════════════════════════════════╪═══════════╪═════════════════╡
+    │ 0          ┆ 1995-01-01 00:00:00 ┆ [1995-01-01 00:00:00, 1996-01-… ┆ [1, 2, 3] ┆ [0.1, 0.2, 0.3] │
+    │ 1          ┆ 1995-01-01 00:00:00 ┆ [1995-01-01 00:00:00, 1996-01-… ┆ [1, 2, 3] ┆ [0.1, 0.2, 0.3] │
+    │ 2          ┆ 1995-01-01 00:00:00 ┆ [1995-01-01 00:00:00, 1996-01-… ┆ [1, 2, 3] ┆ [0.1, 0.2, 0.3] │
+    └────────────┴─────────────────────┴─────────────────────────────────┴───────────┴─────────────────┘
+    >>>
+    >>> # Run the function
+    >>> BINARY_LABEL_COL = "boolean_value"  # Define the constant used in the function
+    >>> indices, labels = get_task_indices_and_labels(task_df, static_dfs)
+    >>>
+    >>> # Check the results
+    >>> print(indices)  # Only subjects 1 and 2 should be present (inner join)
+    [(0, 4), (1, 4), (2, 4)]
+    >>> print(labels)  # Labels for subjects 1 and 2
+    [0, 1, 0]
     """
 
     static_df = pl.concat(static_dfs.values()).select("subject_id", "time")
@@ -216,7 +448,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
     Attributes:
         config (DictConfig): The dataset configuration.
-        split (str): The current data split. code_metadata (pl.LazyFrame): Metadata for event codes.
+        split (str): The current data split.
         static_dfs (dict): Dictionary of static DataFrames for each data shard.
         subj_indices (dict): Mapping of subject IDs to their indices in the dataset.
         subj_seq_bounds (dict): Sequence bounds (start, end) for each subject.
@@ -228,6 +460,45 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
     __len__(): Returns the number of items in the dataset.
     __getitem__(idx): Retrieves a single data point.
     collate(batch): Collates a batch of data points based on the specified collation strategy.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>>
+        >>> # Test initialization without task
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     config = create_dummy_dataset(tmp_dir)
+        ...     # Remove task path to test taskless initialization
+        ...     config.task_label_path = None
+        ...     config.task_name = None
+        ...     dataset = PytorchDataset(config, split='train')
+        ...     print(f"Dataset size: {len(dataset)}")
+        ...     print(f"Has task: {dataset.has_task}")
+        ...     # Test data loading
+        ...     sample = dataset[0]
+        ...     print("Sample keys:")
+        ...     for key in sample.keys(): print(f"\t{key}")
+        Dataset size: 3
+        Has task: False
+        Sample keys:
+              static_indices
+              static_values
+              start_idx
+              end_idx
+              dynamic
+              start_time
+              prediction_time
+              subject_id
+        >>> # Test initialization with task
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     config = create_dummy_dataset(tmp_dir)
+        ...     dataset = PytorchDataset(config, split='train')
+        ...     print(f"Dataset size: {len(dataset)}")
+        ...     print(f"Has task: {dataset.has_task}")
+        ...     print(f"First subject label: {dataset.labels[0]}")  # Subject IDs start at 1
+        Dataset size: 3
+        Has task: True
+        First subject label: 0
     """
 
     def __init__(self, cfg: DictConfig, split: str):
@@ -235,9 +506,6 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         self.config = cfg
         self.split = split
-
-        logger.info("Scanning code metadata")
-        self.code_metadata = pl.scan_parquet(self.config.code_metadata_fp)
 
         logger.info("Reading subject schema and static data")
         self.read_subject_descriptors()
@@ -370,8 +638,65 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
     @TimeableMixin.TimeAs
     def load_subject_dynamic_data(self, idx: int):
-        """Loads and returns the dynamic data slice for a given subject index, with subject ID and time
-        range."""
+        """Loads and returns the dynamic data slice for a given subject index, with subject ID and time range.
+
+        Args:
+            idx (int): Index of the subject in the dataset index
+
+        Returns:
+            tuple: (subject_dynamic_data, subject_id, st, end) where:
+                - subject_dynamic_data is a JointNestedRaggedTensorDict containing the dynamic data
+                - subject_id is the ID of the subject
+                - st is the start time index
+                - end is the end time index
+
+        Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> import polars as pl
+        >>> from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
+
+        >>> # Create a test dataset and initialize the PytorchDataset
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     config = create_dummy_dataset(tmp_dir)
+        ...     dataset = PytorchDataset(config, split='train')
+        ...
+        ...     # Test loading dynamic data for first subject
+        ...     dynamic_data, subject_id, st, end = dataset.load_subject_dynamic_data(0)
+        ...     print(f"Subject ID: {subject_id}")
+        ...     print(f"Time range: {st} to {end}")
+        ...     print(f"Dynamic data keys: {sorted(dynamic_data.tensors.keys())}")
+        Subject ID: 0
+        Time range: 0 to 4
+        Dynamic data keys: ['dim0/time_delta_days', 'dim1/bounds', 'dim1/code', 'dim1/numeric_value']
+
+        >>> # Test loading dynamic data for second subject
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     config = create_dummy_dataset(tmp_dir)
+        ...     dataset = PytorchDataset(config, split='train')
+        ...
+        ...     # Load second subject
+        ...     dynamic_data, subject_id, st, end = dataset.load_subject_dynamic_data(1)
+        ...     print(f"Subject ID: {subject_id}")
+        ...     print(f"Time range: {st} to {end}")
+        ...     # Verify data structure
+        ...     print(f"Has numeric values: {'dim1/numeric_value' in dynamic_data.tensors}")
+        ...     print(f"Has time deltas: {'dim0/time_delta_days' in dynamic_data.tensors}")
+        Subject ID: 1
+        Time range: 0 to 4
+        Has numeric values: True
+        Has time deltas: True
+
+        >>> # Test error case with invalid index
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     config = create_dummy_dataset(tmp_dir)
+        ...     dataset = PytorchDataset(config, split='train')
+        ...     try:
+        ...         dynamic_data = dataset.load_subject_dynamic_data(999)  # Invalid index
+        ...     except IndexError as e:
+        ...         print("Caught expected IndexError")
+        Caught expected IndexError
+        """
         subject_id, st, end = self.index[idx]
         shard = self.subj_map[subject_id]
         subject_idx = self.subj_indices[subject_id]
@@ -389,30 +714,88 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
     ) -> dict[str, list[float]]:
         """Load and process data for a single subject.
 
-        This method retrieves and processes the data for a specific subject, applying various transformations
-        and filters based on the dataset configuration.
-
         Args:
             subject_dynamic_data: The dynamic data for the subject.
             subject_id (int): The ID of the subject to load.
-            st (int): The start index of the sequence to load.
-            end (int): The end index of the sequence to load.
+            global_st (int): The start index of the sequence to load.
+            global_end (int): The end index of the sequence to load.
 
         Returns:
-            dict: A dictionary containing the processed data for the subject. The exact contents
-                depend on the dataset configuration but typically include:
-                - Static data (indices and values)
-                - Dynamic data (time series data, event codes, etc.)
-                - Sequence information (start and end indices, if configured)
+            dict: A dictionary containing the processed data for the subject.
 
-        Raises:
-            ValueError: If the sequence length is invalid or if there are inconsistencies in the data shapes.
+        Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> import polars as pl
+        >>> import numpy as np
+        >>> from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 
-        Notes:
-            - This method applies sequence length constraints and sampling strategies as
-                specified in the dataset configuration.
-            - It handles different collate types (event_stream, triplet, etc.) differently.
-            - The method is decorated with @SeedableMixin.WithSeed to ensure reproducibility.
+        >>> # Test basic subject loading
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     config = create_dummy_dataset(tmp_dir)
+        ...     dataset = PytorchDataset(config, split='train')
+        ...
+        ...     # First get the dynamic data using load_subject_dynamic_data
+        ...     dynamic_data, subject_id, st, end = dataset.load_subject_dynamic_data(0)
+        ...
+        ...     # Then load the complete subject data
+        ...     subject_data = dataset.load_subject(dynamic_data, subject_id, st, end)
+        ...
+        ...     # Verify the returned data structure
+        ...     print("Keys in subject data:")
+        ...     for key in sorted(subject_data.keys()): print(f"{key}")
+        ...     print()
+        ...     print(f"Has static indices: {len(subject_data['static_indices']) > 0}")
+        ...     print(f"Has dynamic data: {isinstance(subject_data['dynamic'], JointNestedRaggedTensorDict)}")
+        ...     print(f"Has prediction time: {'prediction_time' in subject_data}")
+        Keys in subject data:
+        dynamic
+        end_idx
+        prediction_time
+        start_idx
+        start_time
+        static_indices
+        static_values
+        <BLANKLINE>
+        Has static indices: True
+        Has dynamic data: True
+        Has prediction time: True
+
+        >>> # Test with different configuration settings
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     # Create config with modified settings
+        ...     config = create_dummy_dataset(tmp_dir)
+        ...     config.do_prepend_static_data = False
+        ...     config.postpend_eos_token = False
+        ...     config.do_include_start_time_min = False
+        ...
+        ...     dataset = PytorchDataset(config, split='train')
+        ...     dynamic_data, subject_id, st, end = dataset.load_subject_dynamic_data(0)
+        ...     subject_data = dataset.load_subject(dynamic_data, subject_id, st, end)
+        ...
+        ...     # Verify the modified behavior
+        ...     print(f"Contains start time: {'start_time' in subject_data}")
+        ...     dynamic_tensors = subject_data['dynamic'].tensors
+        ...     has_eos = np.any(dynamic_tensors['dim0/code'] == config.EOS_TOKEN_ID)
+        ...     print(f"Contains EOS token: {has_eos}")
+        Contains start time: False
+        Contains EOS token: False
+
+        >>> # Test with maximum sequence length constraint
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     config = create_dummy_dataset(tmp_dir)
+        ...     config.max_seq_len = 5  # Set small max sequence length
+        ...
+        ...     dataset = PytorchDataset(config, split='train')
+        ...     dynamic_data, subject_id, st, end = dataset.load_subject_dynamic_data(0)
+        ...     subject_data = dataset.load_subject(dynamic_data, subject_id, st, end)
+        ...
+        ...     # Verify sequence length constraints
+        ...     dynamic_len = len(subject_data['dynamic'].tensors['dim0/code'])
+        ...     print(f"Dynamic sequence length: {dynamic_len}")
+        ...     print(f"Respects max length: {dynamic_len <= config.max_seq_len}")
+        Dynamic sequence length: 5
+        Respects max length: True
         """
         shard = self.subj_map[subject_id]
         subject_idx = self.subj_indices[subject_id]
@@ -530,7 +913,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         # Add task labels to batch
         for k in batch[0].keys():
             if k not in ("dynamic", "static_values", "static_indices", "static_mask"):
-                if isinstance(batch[0][k], datetime.datetime):
+                if isinstance(batch[0][k], datetime):
                     tensorized[k] = [item[k] for item in batch]
                 else:
                     tensorized[k] = torch.Tensor([item[k] for item in batch])
