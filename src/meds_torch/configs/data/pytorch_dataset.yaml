@@ -8,6 +8,10 @@ cache_dir: ${paths.data_dir}/.pytorch_dataset_cache_dir/
 code_metadata_fp: ${paths.data_dir}/metadata/codes.parquet
 schema_files_root: ${paths.data_dir}/tokenization/schemas
 tasks_root: ${paths.meds_cohort_dir}/tasks
+split_names:
+    train: train # training data is in ${paths.data_dir}/${split_names.train}**/*.nrt
+    validate: tuning # tuning data is in ${paths.data_dir}/${split_names.validate}/**/*.nrt
+    test: held_out # held_out data is in ${paths.data_dir}/${split_names.test}/**/*.nrt
 
 # Prediction params
 predict_dataset: val # train, val, or test, which dataset to predict on
@@ -38,6 +42,7 @@ min_seq_len: 1
 subsequence_sampling_strategy: random
 seq_padding_side: right
 text_max_seq_len: 8
+do_flatten_tensors: true
 
 # Data Loader params
 dataloader:
