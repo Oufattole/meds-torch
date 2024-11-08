@@ -47,7 +47,6 @@ def get_kwargs(request, meds_dir) -> dict:
     return helper
 
 
-@pytest.mark.slow
 def test_train_generate(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: F811
     """Tests training and evaluation by training for 1 epoch with `train.py` then evaluating with `eval.py`.
 

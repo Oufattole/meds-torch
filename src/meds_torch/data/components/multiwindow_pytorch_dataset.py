@@ -19,6 +19,126 @@ from meds_torch.data.components.pytorch_dataset import (
 )
 
 
+def fuse_window_data(windows_data: dict, windows_to_fuse: list[str], fused_window_name: str) -> dict:
+    """Fuse multiple windows into a single window, tracking the lengths of original windows.
+
+    Warning:
+        - This function assumes that the static data is not prepended to the dynamic data
+        - We also assume that static data is the same for all time windows, as it is invariant
+            to time windows.
+
+    Args:
+        windows_data (dict): Dictionary containing data from multiple windows to be fused
+        windows_to_fuse (list[str]): List of window names to fuse in specified order
+        fused_window_name (str): Name for the resulting fused window
+
+    Returns:
+        dict: Fused window data with length tracking information
+
+    Raises:
+        ValueError: If fusion configuration is invalid or data type is unsupported
+
+    Example:
+    >>> import torch
+    >>> # Create mock data with different types
+    >>> windows_data = {
+    ...     "pre": {
+    ...         # 1D tensor
+    ...         "static_values": torch.tensor([1.0, 2.0]),
+    ...         # 2D tensor (batch_size=2, seq_len=3, features=2)
+    ...         "embeddings": torch.ones(2, 3, 2),
+    ...         # List
+    ...         "codes": ["A", "B", "C"],
+    ...     },
+    ...     "post": {
+    ...         "static_values": torch.tensor([3.0, 4.0]),
+    ...         "embeddings": torch.ones(2, 2, 2) * 2,
+    ...         "codes": ["D", "E"],
+    ...     }
+    ... }
+    >>> # Fuse windows
+    >>> fused = fuse_window_data(
+    ...     windows_data,
+    ...     windows_to_fuse=["pre", "post"],
+    ...     fused_window_name="fused"
+    ... )
+    Traceback (most recent call last):
+    ...
+    ValueError: Unsupported data type <class 'list'> for key codes
+    >>> # Remove the list keys
+    >>> del windows_data['pre']['codes']
+    >>> del windows_data['post']['codes']
+    >>> fused = fuse_window_data(
+    ...     windows_data,
+    ...     windows_to_fuse=["pre", "post"],
+    ...     fused_window_name="fused"
+    ... )
+    >>> # Check lengths tracking
+    >>> fused["LENGTHS//static_values"]  # Two windows should select just the first one
+    [2, 2]
+    >>> fused["LENGTHS//embeddings"]  # Two windows with sequence lengths 3 and 2
+    [3, 2]
+    >>> # Check only first window's static values (as static data is the same across all windows)
+    >>> torch.equal(fused["static_values"], torch.tensor([1.0, 2.0]))
+    True
+    >>> # Check 2D tensor concatenation along sequence dimension
+    >>> torch.equal(fused["embeddings"],
+    ...            torch.cat([torch.ones(2, 3, 2),
+    ...                      torch.ones(2, 2, 2) * 2], dim=1))
+    True
+    >>> # Test error handling
+    >>> fuse_window_data(windows_data, ["nonexistent"], "fused")
+    Traceback (most recent call last):
+    ...
+    ValueError: Window nonexistent specified in windows_to_fuse not found in data
+    >>> # Test error when no fused_window_name
+    >>> fuse_window_data(windows_data, ["pre", "post"], None)
+    Traceback (most recent call last):
+    ...
+    ValueError: fused_window_name must not be empty
+    """
+    if not fused_window_name:
+        raise ValueError("fused_window_name must not be empty")
+
+    fused_window = {}
+    lengths_tracking = {}
+
+    # Process each window in the specified order
+    for window in windows_to_fuse:
+        if window not in windows_data:
+            raise ValueError(f"Window {window} specified in windows_to_fuse not found in data")
+
+        window_data = windows_data[window]
+
+        # Process each key in the window data
+        for key, data in window_data.items():
+            # Initialize containers in fused window
+            if key not in fused_window:
+                lengths_tracking[f"LENGTHS//{key}"] = []
+
+            if not isinstance(data, torch.Tensor):
+                raise ValueError(f"Unsupported data type {type(data)} for key {key}")
+            # TODO(Oufattole): perform a single concatenation here for efficiency
+            logger.warning(f"key: {key} of type: {type(data)} handled as tensor")
+            concat_dim = int(len(data.shape) > 1)
+            lengths_tracking[f"LENGTHS//{key}"].append(data.shape[concat_dim])
+            if key not in fused_window:
+                fused_window[key] = data
+            else:  # 2D or higher tensor
+                if not key.startswith("static_"):
+                    fused_window[key] = torch.cat([fused_window[key], data], dim=concat_dim)
+
+    # Convert lists to tensors where appropriate
+    for key, value in fused_window.items():
+        if isinstance(value, list) and value and isinstance(value[0], torch.Tensor):
+            fused_window[key] = torch.cat(value)
+
+    # Add lengths tracking to the fused window
+    fused_window.update(lengths_tracking)
+
+    return fused_window
+
+
 @dataclass
 class DummyMultiWindowConfig(DummyConfig):
     """Configuration for MultiWindow dataset"""
@@ -31,6 +151,7 @@ class DummyMultiWindowConfig(DummyConfig):
     max_windows_per_subject: int | None = None  # Maximum number of windows per subject
     subject_level_sampling: bool = True  # Whether to sample windows at subject level
     default_window_name: str = None
+    early_fusion_windows: bool = False  # Whether to fuse windows
 
 
 def create_dummy_multiwindow_dataset(
@@ -424,10 +545,17 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                     out[key] = [item[key] for item in batch]
                 else:
                     out[key] = torch.Tensor([item[key] for item in batch])
-        # Move the default window data to the top level
+        # Fuse windows
+        if self.config.early_fusion_windows:
+            if self.config.do_prepend_static_data:
+                raise ValueError("early fusion of windows with do_prepend_static_data is not supported.")
+            out[self.config.early_fusion_window_name] = fuse_window_data(
+                out, self.config.early_fusion_windows, self.config.early_fusion_window_name
+            )
         if self.config.default_window_name:
             for key in out[self.config.default_window_name].keys():
                 out[key] = out[self.config.default_window_name][key]
+
         return out
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
@@ -473,7 +601,6 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
             subject_data = self.index[idx]
             num_windows = len(subject_data[f"{self.window_cols[0]}.start_idx"])
             selected_window_idx = np.random.choice(num_windows)
-            subject_id = subject_data["subject_id"]
             windows = {
                 col: [
                     subject_data[f"{col}.start_idx"][selected_window_idx],
@@ -488,7 +615,7 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
                 col: [subject_data[f"{col}.start_idx"], subject_data[f"{col}.end_idx"]]
                 for col in self.window_cols
             }
-            subject_id = subject_data["subject_id"]
+        subject_id = subject_data["subject_id"]
 
         shard = self.pytorch_dataset.subj_map[subject_id]
         subject_idx = self.pytorch_dataset.subj_indices[subject_id]

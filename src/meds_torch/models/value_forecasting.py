@@ -4,7 +4,7 @@ from loguru import logger
 from omegaconf import DictConfig
 from torch import nn
 
-from meds_torch.models import BACKBONE_EMBEDDINGS_KEY, MODEL_LOSS_KEY
+from meds_torch.models import BACKBONE_EMBEDDINGS_KEY, MODEL_BATCH_LOSS_KEY
 from meds_torch.models.base_model import BaseModule
 
 
@@ -39,7 +39,7 @@ class ValueForecastingModule(BaseModule):
 
     def forward(self, batch):
         forecast_window_data = batch[self.cfg.forecast_window_name]
-        batch = self.model(self.input_encoder(batch[self.cfg.input_window_name]))
+        batch[self.cfg.input_window_name] = self.model(self.input_encoder(batch[self.cfg.input_window_name]))
 
         numeric_values = forecast_window_data["numeric_value"]
         codes = forecast_window_data["code"]
@@ -75,23 +75,24 @@ class ValueForecastingModule(BaseModule):
             # Set the 0 index to zero to ignore mask tokens
             value_target[:, 0] = 0
 
-        value_forecast = self.value_projection(batch[BACKBONE_EMBEDDINGS_KEY])
-        presence_forecast = self.presence_projection(batch[BACKBONE_EMBEDDINGS_KEY])
+        value_forecast = self.value_projection(batch[self.cfg.input_window_name][BACKBONE_EMBEDDINGS_KEY])
+        presence_forecast = self.presence_projection(
+            batch[self.cfg.input_window_name][BACKBONE_EMBEDDINGS_KEY]
+        )
 
         value_loss = self.value_criterion(value_forecast, value_target)
         presence_loss = self.presence_criterion(presence_forecast, presence_target)
         loss = value_loss + presence_loss
 
-        output = batch
-        output["MODEL//VALUE_TARGET"] = value_target
-        output["MODEL//PRESENCE_TARGET"] = presence_target
-        output["MODEL//VALUE_FORECAST"] = value_forecast
-        output["MODEL//PRESENCE_FORECAST"] = presence_forecast
-        output["MODEL//VALUE_LOSS"] = value_loss
-        output["MODEL//PRESENCE_LOSS"] = presence_loss
-        output[MODEL_LOSS_KEY] = loss
+        batch["MODEL//VALUE_TARGET"] = value_target
+        batch["MODEL//PRESENCE_TARGET"] = presence_target
+        batch["MODEL//VALUE_FORECAST"] = value_forecast
+        batch["MODEL//PRESENCE_FORECAST"] = presence_forecast
+        batch["MODEL//VALUE_LOSS"] = value_loss
+        batch["MODEL//PRESENCE_LOSS"] = presence_loss
+        batch[MODEL_BATCH_LOSS_KEY] = loss
 
-        return output
+        return batch
 
     def training_step(self, batch):
         output = self.forward(batch)
@@ -99,8 +100,8 @@ class ValueForecastingModule(BaseModule):
         self.train_presence_mse(output["MODEL//PRESENCE_FORECAST"], output["MODEL//PRESENCE_TARGET"])
         self.train_value_mse(output["MODEL//VALUE_FORECAST"], output["MODEL//VALUE_TARGET"])
 
-        self.log("train/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
-        return output[MODEL_LOSS_KEY]
+        self.log("train/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def validation_step(self, batch):
         output = self.forward(batch)
@@ -108,8 +109,8 @@ class ValueForecastingModule(BaseModule):
         self.val_presence_mse(output["MODEL//PRESENCE_FORECAST"], output["MODEL//PRESENCE_TARGET"])
         self.val_value_mse(output["MODEL//VALUE_FORECAST"], output["MODEL//VALUE_TARGET"])
 
-        self.log("val/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
-        return output[MODEL_LOSS_KEY]
+        self.log("val/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def test_step(self, batch):
         output = self.forward(batch)
@@ -117,9 +118,9 @@ class ValueForecastingModule(BaseModule):
         self.test_presence_mse(output["MODEL//PRESENCE_FORECAST"], output["MODEL//PRESENCE_TARGET"])
         self.test_value_mse(output["MODEL//VALUE_FORECAST"], output["MODEL//VALUE_TARGET"])
 
-        self.log("test/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
+        self.log("test/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
 
-        return output[MODEL_LOSS_KEY]
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def on_train_epoch_end(self):
         self.log(

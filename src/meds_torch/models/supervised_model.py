@@ -1,21 +1,17 @@
-import dataclasses
-
 import torch
 import torchmetrics
 from loguru import logger
 from omegaconf import DictConfig
 from torch import nn
 
-from meds_torch.models import BACKBONE_EMBEDDINGS_KEY
+from meds_torch.models import (
+    BACKBONE_EMBEDDINGS_KEY,
+    MODEL_BATCH_LOSS_KEY,
+    MODEL_EMBEDDINGS_KEY,
+    MODEL_LOGITS_KEY,
+    MODEL_PRED_PROBA_KEY,
+)
 from meds_torch.models.base_model import BaseModule
-from meds_torch.models.utils import OutputBase
-
-
-@dataclasses.dataclass
-class SupervisedOutput(OutputBase):
-    embeddings: torch.Tensor
-    logits: torch.Tensor
-    loss: torch.Tensor
 
 
 class SupervisedModule(BaseModule):
@@ -45,7 +41,7 @@ class SupervisedModule(BaseModule):
 
         self.criterion = torch.nn.BCEWithLogitsLoss()
 
-    def forward(self, batch) -> OutputBase:
+    def forward(self, batch) -> dict:
         batch = self.input_encoder(batch)
         batch = self.model(batch)
         embeddings = batch[BACKBONE_EMBEDDINGS_KEY]
@@ -53,24 +49,26 @@ class SupervisedModule(BaseModule):
         if self.cfg.get_representations:
             loss = None
         else:
-            loss = self.criterion(logits.squeeze(), batch[self.task_name].float())
-        return SupervisedOutput(
-            embeddings=embeddings,  # TODO: Add embeddings
-            logits=logits,
-            loss=loss,
-        )
+            loss = self.criterion(logits.squeeze(dim=-1), batch[self.task_name].float())
+        batch[MODEL_EMBEDDINGS_KEY] = embeddings
+        batch[MODEL_LOGITS_KEY] = logits
+        batch[MODEL_PRED_PROBA_KEY] = torch.sigmoid(logits)
+        batch[MODEL_BATCH_LOSS_KEY] = loss
+        return batch
 
     def training_step(self, batch):
-        output: SupervisedOutput = self.forward(batch)
+        output = self.forward(batch)
         # logs metrics for each training_step, and the average across the epoch
-        self.train_acc.update(output.logits.squeeze(), batch[self.task_name].float())
-        self.train_auc.update(output.logits.squeeze(), batch[self.task_name].float())
-        self.train_apr.update(output.logits.squeeze(), batch[self.task_name].int())
-        self.log("train/step_loss", output.loss, on_step=True, batch_size=self.cfg.batch_size)
-        self.log("train/loss", output.loss, on_epoch=True, batch_size=self.cfg.batch_size)
+        self.train_acc.update(output[MODEL_LOGITS_KEY].squeeze(), batch[self.task_name].float())
+        self.train_auc.update(output[MODEL_LOGITS_KEY].squeeze(), batch[self.task_name].float())
+        self.train_apr.update(output[MODEL_LOGITS_KEY].squeeze(), batch[self.task_name].int())
+        self.log(
+            "train/step_loss", output[MODEL_BATCH_LOSS_KEY], on_step=True, batch_size=self.cfg.batch_size
+        )
+        self.log("train/loss", output[MODEL_BATCH_LOSS_KEY], on_epoch=True, batch_size=self.cfg.batch_size)
 
-        assert not torch.isnan(output.loss), "Loss is NaN"
-        return output.loss
+        assert not torch.isnan(output[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def on_train_epoch_end(self):
         self.log(
@@ -93,19 +91,19 @@ class SupervisedModule(BaseModule):
         )
 
     def validation_step(self, batch):
-        output: OutputBase = self.forward(batch)
+        output = self.forward(batch)
         # logs metrics for each training_step, and the average across the epoch
-        self.val_acc.update(output.logits.squeeze(), batch[self.task_name].float())
-        self.val_auc.update(output.logits.squeeze(), batch[self.task_name].float())
-        self.val_apr.update(output.logits.squeeze(), batch[self.task_name].int())
+        self.val_acc.update(output[MODEL_LOGITS_KEY].squeeze(), batch[self.task_name].float())
+        self.val_auc.update(output[MODEL_LOGITS_KEY].squeeze(), batch[self.task_name].float())
+        self.val_apr.update(output[MODEL_LOGITS_KEY].squeeze(), batch[self.task_name].int())
 
         self.log(
             "val/loss",
-            output.loss,
+            output[MODEL_BATCH_LOSS_KEY],
             on_epoch=True,
             batch_size=self.cfg.batch_size,
         )
-        return output.loss
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def on_validation_epoch_end(self):
         self.log(
@@ -136,14 +134,14 @@ class SupervisedModule(BaseModule):
         )
 
     def test_step(self, batch, batch_idx):
-        output: OutputBase = self.forward(batch)
+        output = self.forward(batch)
         # logs metrics for each training_step, and the average across the epoch
-        self.test_acc.update(output.logits.squeeze(), batch[self.task_name].float())
-        self.test_auc.update(output.logits.squeeze(), batch[self.task_name].float())
-        self.test_apr.update(output.logits.squeeze(), batch[self.task_name].int())
+        self.test_acc.update(output[MODEL_LOGITS_KEY].squeeze(), batch[self.task_name].float())
+        self.test_auc.update(output[MODEL_LOGITS_KEY].squeeze(), batch[self.task_name].float())
+        self.test_apr.update(output[MODEL_LOGITS_KEY].squeeze(), batch[self.task_name].int())
 
-        self.log("test/loss", output.loss, batch_size=self.cfg.batch_size)
-        return output.loss
+        self.log("test/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def on_test_epoch_end(self):
         self.log(

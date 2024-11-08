@@ -9,7 +9,7 @@ from omegaconf import DictConfig
 
 from meds_torch.utils import (
     RankedLogger,
-    extras,
+    configure_logging,
     instantiate_loggers,
     log_hyperparameters,
     task_wrapper,
@@ -76,11 +76,12 @@ def evaluate(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str
 def main(cfg: DictConfig) -> None:
     """Main entry point for evaluation.
 
-    :param cfg: DictConfig configuration composed by Hydra.
+    Args:
+        cfg (DictConfig): configuration composed by Hydra.
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
-    extras(cfg)
+    configure_logging(cfg)
 
     evaluate(cfg)
 

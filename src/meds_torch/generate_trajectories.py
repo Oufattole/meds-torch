@@ -16,7 +16,7 @@ from meds_torch.models import ACTUAL_FUTURE, GENERATE_PREFIX, INPUT_DATA
 from meds_torch.schemas.generate_analysis_schema import validate_generated_data
 from meds_torch.utils import (
     RankedLogger,
-    extras,
+    configure_logging,
     instantiate_loggers,
     log_hyperparameters,
     task_wrapper,
@@ -80,19 +80,22 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     input_df = input_df.with_columns(pl.lit(INPUT_DATA).alias("TRAJECTORY_TYPE"))
     dfs = {INPUT_DATA: input_df}
     if cfg.actual_future_name:
-        actual_tensors = [batch[cfg.actual_future_name] for batch in predictions]
-        actual_df = model.to_meds(actual_tensors, model.metadata_df)
+        actual_trajectories = [batch[cfg.actual_future_name] for batch in predictions]
+        for i in range(len(actual_trajectories)):
+            actual_trajectories[i]["subject_id"] = predictions[i]["subject_id"]
+            actual_trajectories[i]["prediction_time"] = predictions[i]["prediction_time"]
+        actual_df = model.to_meds(actual_trajectories, model.metadata_df)
         actual_df = actual_df.with_columns(pl.lit(ACTUAL_FUTURE).alias("TRAJECTORY_TYPE"))
         dfs[ACTUAL_FUTURE] = actual_df
 
     # Extract generated trajectories
     generated_trajectory_keys = [key for key in predictions[0].keys() if key.startswith(GENERATE_PREFIX)]
     for gen_key in generated_trajectory_keys:
-        gen_traj = [pred[gen_key] for pred in predictions]
-        for i in range(len(gen_traj)):
-            gen_traj[i]["subject_id"] = predictions[i]["subject_id"]
-            gen_traj[i]["prediction_time"] = predictions[i]["prediction_time"]
-        gen_df = model.to_meds(gen_traj, model.metadata_df)
+        gen_trajectories = [pred[gen_key] for pred in predictions]
+        for i in range(len(gen_trajectories)):
+            gen_trajectories[i]["subject_id"] = predictions[i]["subject_id"]
+            gen_trajectories[i]["prediction_time"] = predictions[i]["prediction_time"]
+        gen_df = model.to_meds(gen_trajectories, model.metadata_df)
         gen_df = gen_df.with_columns(pl.lit(gen_key).alias("TRAJECTORY_TYPE"))
         dfs[gen_key] = gen_df
 
@@ -110,12 +113,13 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
 def main(cfg: DictConfig) -> None:
     """Main entry point for evaluation.
 
-    :param cfg: DictConfig configuration composed by Hydra.
+    Args:
+        cfg (DictConfig):  configuration composed by Hydra.
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
     os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
-    extras(cfg)
+    configure_logging(cfg)
 
     generate_trajectories(cfg)
 

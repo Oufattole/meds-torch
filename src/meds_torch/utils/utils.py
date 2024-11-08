@@ -11,12 +11,16 @@ from meds_torch.utils import pylogger, rich_utils
 log = pylogger.RankedLogger(__name__, rank_zero_only=True)
 
 
-def extras(cfg: DictConfig) -> None:
+def configure_logging(cfg: DictConfig) -> None:
     """Applies optional utilities before the task is started.
 
-    Utilities:     - Ignoring python warnings     - Setting tags from command line     - Rich config printing
+    Utilities:
+        - Ignoring python warnings
+        - Setting tags from command line
+        - Rich config printing
 
-    :param cfg: A DictConfig object containing the config tree.
+    Args:
+        cfg (DictConfig): A DictConfig object containing the config tree.
     """
     # return if no `extras` config
     if not cfg.get("extras"):

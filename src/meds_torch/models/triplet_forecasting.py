@@ -17,7 +17,7 @@ from x_transformers.autoregressive_wrapper import (
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.input_encoder.triplet_encoder import TripletEncoder
 from meds_torch.input_encoder.triplet_prompt_encoder import TripletPromptEncoder
-from meds_torch.models import BACKBONE_TOKENS_KEY, MODEL_LOSS_KEY
+from meds_torch.models import BACKBONE_TOKENS_KEY, MODEL_BATCH_LOSS_KEY
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
 
@@ -179,7 +179,7 @@ class TripletForecastingModule(BaseModule):
 
         total_loss = code_loss + numeric_value_loss + time_loss
 
-        batch[MODEL_LOSS_KEY] = total_loss
+        batch[MODEL_BATCH_LOSS_KEY] = total_loss
         batch[numeric_VALUE_LOSS] = numeric_value_loss
         batch[CODE_LOSS] = code_loss
         batch[TIME_LOSS] = time_loss
@@ -218,25 +218,25 @@ class TripletForecastingModule(BaseModule):
         self.log(split + "/code_loss", batch[CODE_LOSS])
         self.log(split + "/numeric_value_loss", batch[numeric_VALUE_LOSS])
         self.log(split + "/time_loss", batch[TIME_LOSS])
-        self.log(split + "/loss", batch[MODEL_LOSS_KEY])
+        self.log(split + "/loss", batch[MODEL_BATCH_LOSS_KEY])
 
     def training_step(self, batch):
         batch = self(batch)
-        assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
+        assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "train")
-        return batch[MODEL_LOSS_KEY]
+        return batch[MODEL_BATCH_LOSS_KEY]
 
     def validation_step(self, batch):
         batch = self(batch)
-        assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
+        assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "val")
-        return batch[MODEL_LOSS_KEY]
+        return batch[MODEL_BATCH_LOSS_KEY]
 
     def test_step(self, batch):
         batch = self(batch)
-        assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
+        assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "test")
-        return batch[MODEL_LOSS_KEY]
+        return batch[MODEL_BATCH_LOSS_KEY]
 
     @torch.no_grad()
     @eval_decorator

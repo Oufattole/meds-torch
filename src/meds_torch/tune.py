@@ -20,7 +20,7 @@ from ray.train.torch import TorchTrainer
 from meds_torch.eval import evaluate
 from meds_torch.finetune import initialize_finetune_objects
 from meds_torch.train import initialize_train_objects
-from meds_torch.utils import RankedLogger, extras, task_wrapper
+from meds_torch.utils import RankedLogger, configure_logging, task_wrapper
 from meds_torch.utils.resolvers import setup_resolvers
 
 log = RankedLogger(__name__, rank_zero_only=True)
@@ -132,7 +132,7 @@ def main(cfg: DictConfig) -> float | None:
     """
     os.environ["RAY_memory_monitor_refresh_ms"] = cfg.ray_memory_monitor_refresh_ms
     # apply extra utilities
-    extras(cfg)
+    configure_logging(cfg)
 
     if cfg.best_config_path:
         if not Path(cfg.best_config_path).exists():
