@@ -62,15 +62,22 @@ def fuse_window_data(windows_data: dict, windows_to_fuse: list[str], fused_windo
     ...     windows_to_fuse=["pre", "post"],
     ...     fused_window_name="fused"
     ... )
+    Traceback (most recent call last):
+    ...
+    ValueError: Unsupported data type <class 'list'> for key codes
+    >>> # Remove the list keys
+    >>> del windows_data['pre']['codes']
+    >>> del windows_data['post']['codes']
+    >>> fused = fuse_window_data(
+    ...     windows_data,
+    ...     windows_to_fuse=["pre", "post"],
+    ...     fused_window_name="fused"
+    ... )
     >>> # Check lengths tracking
     >>> fused["LENGTHS//static_values"]  # Two windows should select just the first one
     [2, 2]
     >>> fused["LENGTHS//embeddings"]  # Two windows with sequence lengths 3 and 2
     [3, 2]
-    >>> fused["LENGTHS//codes"]  # List lengths: 3 and 2
-    [3, 2]
-    >>> fused["LENGTHS//scalar"]  # Scalar values: count as length 1 each
-    [1]
     >>> # Check only first window's static values (as static data is the same across all windows)
     >>> torch.equal(fused["static_values"], torch.tensor([1.0, 2.0]))
     True
@@ -79,10 +86,6 @@ def fuse_window_data(windows_data: dict, windows_to_fuse: list[str], fused_windo
     ...            torch.cat([torch.ones(2, 3, 2),
     ...                      torch.ones(2, 2, 2) * 2], dim=1))
     True
-    >>> fused["codes"]  # Lists are concatenated
-    ['A', 'B', 'C', 'D', 'E']
-    >>> fused["scalar"]  # First scalar value is kept
-    42
     >>> # Test error handling
     >>> fuse_window_data(windows_data, ["nonexistent"], "fused")
     Traceback (most recent call last):
@@ -113,25 +116,17 @@ def fuse_window_data(windows_data: dict, windows_to_fuse: list[str], fused_windo
             if key not in fused_window:
                 lengths_tracking[f"LENGTHS//{key}"] = []
 
+            if not isinstance(data, torch.Tensor):
+                raise ValueError(f"Unsupported data type {type(data)} for key {key}")
             # TODO(Oufattole): perform a single concatenation here for efficiency
-            match data:
-                case torch.Tensor():
-                    # For tensors, concatenate along the appropriate dimension
-                    logger.warning(f"key: {key} of type: {type(data)} handled as tensor")
-                    concat_dim = int(len(data.shape) > 1)
-                    lengths_tracking[f"LENGTHS//{key}"].append(data.shape[concat_dim])
-                    if key not in fused_window:
-                        fused_window[key] = data
-                    else:  # 2D or higher tensor
-                        if not key.startswith("static_"):
-                            fused_window[key] = torch.cat([fused_window[key], data], dim=concat_dim)
-                case list():
-                    # For lists, extend the fused window list
-                    logger.warning(f"key: {key} of type: {type(data)} handled as list")
-                    fused_window.setdefault(key, []).extend(data)
-                    lengths_tracking[f"LENGTHS//{key}"].append(len(data))
-                case _:
-                    raise ValueError(f"Unsupported data type {type(data)} for key {key}")
+            logger.warning(f"key: {key} of type: {type(data)} handled as tensor")
+            concat_dim = int(len(data.shape) > 1)
+            lengths_tracking[f"LENGTHS//{key}"].append(data.shape[concat_dim])
+            if key not in fused_window:
+                fused_window[key] = data
+            else:  # 2D or higher tensor
+                if not key.startswith("static_"):
+                    fused_window[key] = torch.cat([fused_window[key], data], dim=concat_dim)
 
     # Convert lists to tensors where appropriate
     for key, value in fused_window.items():
