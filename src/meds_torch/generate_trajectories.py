@@ -16,7 +16,7 @@ from meds_torch.models import ACTUAL_FUTURE, GENERATE_PREFIX, INPUT_DATA
 from meds_torch.schemas.generate_analysis_schema import validate_generated_data
 from meds_torch.utils import (
     RankedLogger,
-    extras,
+    configure_logging,
     instantiate_loggers,
     log_hyperparameters,
     task_wrapper,
@@ -110,12 +110,13 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
 def main(cfg: DictConfig) -> None:
     """Main entry point for evaluation.
 
-    :param cfg: DictConfig configuration composed by Hydra.
+    Args:
+        cfg (DictConfig):  configuration composed by Hydra.
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
     os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
-    extras(cfg)
+    configure_logging(cfg)
 
     generate_trajectories(cfg)
 

@@ -25,7 +25,7 @@ from meds_torch.models import (
 from meds_torch.schemas.predict_schema import validate_prediction_data
 from meds_torch.utils import (
     RankedLogger,
-    extras,
+    configure_logging,
     instantiate_loggers,
     log_hyperparameters,
     task_wrapper,
@@ -76,14 +76,14 @@ def process_tensor_batches(predictions: list[dict[str, Any]], key: str) -> list[
     >>> result[0]
     [1.0, 2.0]
     >>> # 3D tensor example
-    >>> batch1 = {'tokens': torch.tensor([[[1., 2.], [3., 4.]], [[5., 6.], [7., 8.]]])}
+    >>> batch1 = {'tokens': torch.tensor([[[1.], [3.]]])}
     >>> batch2 = {'tokens': torch.tensor([[[9., 10.], [11., 12.]], [[13., 14.], [15., 16.]]])}
     >>> predictions = [batch1, batch2]
     >>> result = process_tensor_batches(predictions, 'tokens')
     >>> len(result)
-    4
+    3
     >>> result[0]
-    [[1.0, 2.0], [3.0, 4.0]]
+    [[1.0], [3.0]]
     """
     flattened_data = []
 
@@ -271,12 +271,13 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
 def main(cfg: DictConfig) -> None:
     """Main entry point for evaluation.
 
-    :param cfg: DictConfig configuration composed by Hydra.
+    Args:
+        cfg (DictConfig): configuration composed by Hydra.
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
     os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
-    extras(cfg)
+    configure_logging(cfg)
 
     predict(cfg)
 

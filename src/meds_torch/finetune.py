@@ -10,7 +10,7 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 
 from meds_torch.utils import (
     RankedLogger,
-    extras,
+    configure_logging,
     get_metric_value,
     instantiate_callbacks,
     instantiate_loggers,
@@ -151,7 +151,7 @@ def main(cfg: DictConfig) -> float | None:
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
-    extras(cfg)
+    configure_logging(cfg)
 
     # train the model
     metric_dict, _ = finetune(cfg)
