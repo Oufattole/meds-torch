@@ -155,6 +155,22 @@ class MEDSDataModule(LightningDataModule, Module):
             **self.cfg.dataloader,
         )
 
+    def predict_dataloader(self) -> DataLoader[Any]:
+        """Create and return the predict dataloader.
+
+        :return: The predict dataloader.
+        """
+        if self.cfg.predict_dataset == "train":
+            return self.train_dataloader()
+        elif self.cfg.predict_dataset == "val":
+            return self.val_dataloader()
+        elif self.cfg.predict_dataset == "test":
+            return self.test_dataloader()
+        else:
+            raise NotImplementedError(
+                f"{self.cfg.predict_dataset} not implemented! Use 'train', 'val', or 'test'."
+            )
+
     def state_dict(self) -> dict[Any, Any]:
         """Called when saving a checkpoint. Implement to generate and save the
         datamodule state.

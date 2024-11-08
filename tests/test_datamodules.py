@@ -109,6 +109,8 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
         )
         assert subject_data[SUPERVISED_TASK_NAME] == pyd.labels[index]
         # Check the supervised task matches the target indices
+        # The task is a deterministic function of the codes in this case
+        # so we can check the codes themeselves are loaded correctly via this check.
         data_label = bool(
             functools.reduce(
                 operator.or_, [subject_data["dynamic"].tensors["dim0/code"] == t for t in target_indices]
@@ -281,8 +283,8 @@ def test_random_window_batch_sizes(meds_dir):
 
     rwd = RandomWindowPytorchDataset(cfg.data, split="train")
 
-    batch = rwd.collate([rwd[i] for i in range(4)])
-    assert len(batch["window_0"]["mask"]) == 4
+    batch = rwd.collate([rwd[i] for i in range(len(rwd))])
+    assert len(batch["window_0"]["mask"]) == len(rwd)
 
     # Check that window sizes are within the specified range
     window_sizes = batch["window_0"]["mask"].sum(dim=1)

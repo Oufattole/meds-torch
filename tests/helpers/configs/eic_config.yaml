@@ -39,3 +39,5 @@ stage_configs:
         values/quantile/2: 1
         values/quantile/3: 30
         values/quantile/4: 365
+  tokenization:
+    _script: "python -m meds_torch.utils.custom_tokenization"
