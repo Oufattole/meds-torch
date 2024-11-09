@@ -19,10 +19,12 @@ from meds_torch.models import (
     MODEL_BATCH_LOSS_KEY,
     MODEL_LOGITS_SEQUENCE_KEY,
     MODEL_LOSS_KEY,
+    MODEL_PRED_PROBA_KEY,
     MODEL_TOKENS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
+from meds_torch.models.zero_shot_labeler.utils import TrajectoryBatch
 
 CODE_LOGITS = "MODEL//CODE_LOGITS"
 
@@ -481,6 +483,75 @@ class EicForecastingModule(BaseModule, TimeableMixin):
             dfs.append(df)
         return pl.concat(dfs)
 
+    @classmethod
+    def to_trajectory_batch(
+        cls,
+        code,
+        mask,
+        metadata_df,
+        code_to_time_map: torch.Tensor = None,
+        code_to_numeric_value_map: torch.Tensor = None,
+    ):
+        """Convert the model output to MEDS format.
+
+        Args:
+            code (torch.Tensor): Tensor of shape (batch_size, sequence_length) containing event codes
+            mask (torch.Tensor): Tensor of shape (batch_size, sequence_length) indicates valid
+                measurements/codes
+            metadata_df: Polars DataFrame containing code metadata (includes 'code' column)
+
+        Returns:
+            pl.DataFrame: MEDS format DataFrame with columns:
+                - time_index: Time in years starting from 0
+                - code: The medical code
+                - value: Always 1.0 (presence indicator)
+                - sample_id: ID of the generated sample
+
+        Time will start from 0, and is measured in years.
+
+        Example:
+        >>> from datetime import datetime
+        >>> metadata_df = pl.DataFrame({
+        ...     "code": ["A", "A//_Q_1", "A//_Q_2", "A//_Q_3", "A//_Q_4", "TIME//DELTA//TOKEN//_Q_17"],
+        ...     "code/vocab_index": [0, 1, 2, 3, 4, 5],
+        ...     'values/min': [0, 0, 0, 0, 0, None],
+        ...     'values/max': [4, 4, 4, 4, 4, None],
+        ...     "values/quantiles": [
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': None, 'values/quantile/0.5': None,
+        ...          'values/quantile/0.75': None},
+        ...     ],
+        ... })
+        >>> code = torch.tensor([[0, 2, 5, 5], [2, 3, 4, 5], [5, 5, 0, 1]])
+        >>> mask = torch.tensor([[1, 1, 1, 1], [1, 1, 1, 0], [1, 1, 1, 0]])
+        >>> from pprint import pprint, pformat
+        >>> EicForecastingModule.to_trajectory_batch(code, mask, metadata_df)
+        TrajectoryBatch(time=tensor([[0., 0., 1., 2.],
+                [0., 0., 0., 1.],
+                [1., 2., 2., 2.]]), code=tensor([[0, 2, 5, 5],
+                [2, 3, 4, 5],
+                [5, 5, 0, 1]]), mask=tensor([[1, 1, 1, 1],
+                [1, 1, 1, 0],
+                [1, 1, 1, 0]]), numeric_value=tensor([[   nan, 0.3750,    nan,    nan],
+                [0.3750, 0.6250, 0.8750,    nan],
+                [   nan,    nan,    nan, 0.1250]]), numeric_value_mask=tensor([[ True, False,  True,  True],
+                [False, False, False,  True],
+                [ True,  True,  True, False]]))
+        """
+        if not code_to_time_map:
+            code_to_time_map = cls.get_code_to_time_map(metadata_df)
+        if not code_to_numeric_value_map:
+            code_to_numeric_value_map = cls.get_code_to_numeric_value_map(metadata_df)
+        # Initialize lists to store the DataFrame rows
+        time = torch.cumsum(code_to_time_map[code], dim=1)
+        numeric_value = code_to_numeric_value_map[code]
+        numeric_value_mask = numeric_value.isnan()
+        return TrajectoryBatch(time, code, mask, numeric_value, numeric_value_mask)
+
     @torch.no_grad()
     @eval_decorator
     @TimeableMixin.TimeAs
@@ -543,5 +614,12 @@ class EicForecastingModule(BaseModule, TimeableMixin):
                 "time_delta_days": time_deltas.cpu(),
             }
             input_batch[GENERATE_PREFIX + str(i)] = generated_data
+
+            if self.cfg.zero_shot_labeler:
+                trajectory_batch = self.to_trajectory_batch(
+                    generated_data["code"], generated_data["mask"], self.metadata_df
+                )
+                input_batch.set_default(MODEL_PRED_PROBA_KEY, torch.zeros_like(out.shape[0]))
+                input_batch[MODEL_PRED_PROBA_KEY] += self.zero_shot_labeler(trajectory_batch)
 
         return input_batch

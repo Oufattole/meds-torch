@@ -2,31 +2,11 @@ from dataclasses import dataclass
 
 import torch
 
-
-@dataclass
-class TrajectoryBatch:
-    """
-    Initialize a batch of trajectories.
-
-    Args:
-        time (torch.Tensor): Tensor of shape (batch_size, sequence_length) containing days after prediction
-            time. Values must be monotonically increasing within each sequence.
-        code (torch.Tensor): Tensor of shape (batch_size, sequence_length) containing event codes
-        mask (torch.Tensor): Tensor of shape (batch_size, sequence_length) indicates valid measurements/codes
-        numeric_value (torch.Tensor): Tensor of shape (batch_size, sequence_length) containing numeric values
-        numeric_value_mask (torch.Tensor): Tensor of shape (batch_size, sequence_length) indicating valid
-            numeric values
-    """
-
-    time: torch.Tensor
-    code: torch.Tensor
-    mask: torch.Tensor
-    numeric_value: torch.Tensor
-    numeric_value_mask: torch.Tensor
+from meds_torch.models.zero_shot_labeler.utils import TrajectoryBatch
 
 
 @dataclass
-class TimeToEventLabeler:
+class TaskLabeler:
     """
     Initialize a time to event labeler.
 
@@ -53,7 +33,7 @@ class TimeToEventLabeler:
         # >>> numeric_value = torch.ones_like(time)
         # >>> numeric_value_mask = torch.ones_like(time, dtype=torch.bool)
         # >>> batch = TrajectoryBatch(time, code, mask, numeric_value, numeric_value_mask)
-        # >>> labeler = TimeToEventLabeler(target_codes=[100], time_length=15.0)
+        # >>> labeler = TaskLabeler(target_codes=[100], time_length=15.0)
         # >>> labels, unknown = labeler(batch)
         # >>> print(labels.tolist())  # Only first sequence has event
         # [[1.0], [0.0], [0.0]]
@@ -82,7 +62,7 @@ class TimeToEventLabeler:
         ... ])
         >>> numeric_value_mask = torch.ones_like(time, dtype=torch.bool)
         >>> batch = TrajectoryBatch(time, code, mask, numeric_value, numeric_value_mask)
-        >>> labeler = TimeToEventLabeler(target_codes=[100, 101], time_length=30.0, min_time=5.0,
+        >>> labeler = TaskLabeler(target_codes=[100, 101], time_length=30.0, min_time=5.0,
         ...                             numeric_value_min=5.0, numeric_value_max=10.0)
         >>> labels, unknown = labeler(batch)
         >>> print(labels.tolist())  # Only first sequence has valid event
