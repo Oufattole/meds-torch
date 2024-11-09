@@ -1,3 +1,6 @@
+from dataclasses import dataclass, field
+from typing import Any
+
 import numpy as np
 import polars as pl
 import torch
@@ -24,7 +27,82 @@ from meds_torch.models import (
 )
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
+from meds_torch.models.zero_shot_labeler.time_to_event_labeler import TaskLabeler
 from meds_torch.models.zero_shot_labeler.utils import TrajectoryBatch
+
+# Create dummy components for testing
+
+
+class DummyModel:
+    cfg = DictConfig(dict(token_emb=None))
+
+    def __call__(self, batch):
+        # Simulate backbone output
+        B, S = batch[INPUT_ENCODER_TOKENS_KEY].shape
+        return {BACKBONE_TOKENS_KEY: torch.randn(B, S, 32)}
+
+
+class DummyCodeHead:
+    def __call__(self, x):
+        # Convert embeddings to logits
+        B, S, _ = x.shape
+        return torch.randn(B, S, 10)  # 10 possible codes
+
+
+class DummyEncoder:
+    def __call__(self, batch):
+        # Add encoder fields to batch
+        batch[INPUT_ENCODER_TOKENS_KEY] = batch["code"]
+        batch[INPUT_ENCODER_MASK_KEY] = torch.ones_like(batch["mask"]).bool()
+        return batch
+
+
+class DummyOptimizer:
+    def __init__(self, params):
+        self.params = list(params)
+
+    def step(self):
+        pass
+
+    def zero_grad(self):
+        pass
+
+
+class DummyScheduler:
+    def step(self):
+        pass
+
+    def get_last_lr(self):
+        return [0.001]
+
+
+@dataclass
+class DummyConfig:
+    code_metadata_fp: str
+    backbone: DummyModel = field(default_factory=DummyModel)
+    vocab_size: int = 10
+    num_samples: int = 2
+    max_seq_len: int = 10
+    temperature: float = 1.0
+    eos_token_id: int = 9
+    zero_shot_labeler: TaskLabeler | None = None
+    optimizer: dict[str:Any] = field(
+        default_factory=lambda: {
+            "_target_": "meds_torch.models.eic_forecasting.DummyOptimizer",
+            "_partial_": True,
+        }
+    )
+    scheduler: dict[str:Any] = field(
+        default_factory=lambda: {
+            "_target_": "meds_torch.models.eic_forecasting.DummyScheduler",
+            "_partial_": True,
+        }
+    )
+    input_encoder: dict[str:Any] = field(
+        default_factory=lambda: {"_target_": "meds_torch.models.eic_forecasting.DummyEncoder"}
+    )
+    compile: bool = False
+
 
 CODE_LOGITS = "MODEL//CODE_LOGITS"
 
@@ -171,15 +249,102 @@ class NextTokenPredictionMetric(Metric):
 
 
 class EicForecastingModule(BaseModule, TimeableMixin):
-    """EIC token based GPT Forecasting Model."""
+    """EIC token based GPT Forecasting Model.
+
+    This model has three main capabilities:
+    1. Autoregressive training (learning to predict next tokens)
+    2. Data generation (creating synthetic medical event sequences)
+    3. Zero-shot prediction (using generated sequences for prediction)
+
+    Args:
+        cfg (DictConfig): Configuration object containing:
+            - vocab_size: Size of the vocabulary
+            - num_samples: Number of sequences to generate (0 for training only)
+            - max_seq_len: Maximum sequence length
+            - temperature: Sampling temperature for generation
+            - eos_token_id: End of sequence token ID
+            - zero_shot_labeler: Optional function for zero-shot prediction
+            - code_metadata_fp: Path to code metadata file
+
+    Examples:
+    >>> import tempfile
+    >>> from hydra.utils import instantiate
+    >>> # Create temporary metadata file
+    >>> temp_file = tempfile.NamedTemporaryFile(suffix='.parquet')
+    >>> metadata_df = pl.DataFrame({
+    ...     "code": ["A", "B", "TIME//DELTA//TOKEN//_Q_17", "C"],
+    ...     "code/vocab_index": [0, 1, 2, 3],
+    ...     "values/min": [0.0, 1.0, None, 2.0],
+    ...     "values/max": [1.0, 2.0, None, 3.0],
+    ...     "values/quantiles": [
+    ...         {"values/quantile/0.5": 0.5},
+    ...         {"values/quantile/0.5": 1.5},
+    ...         {"values/quantile/0.5": None},
+    ...         {"values/quantile/0.5": 2.5},
+    ...     ]
+    ... })
+    >>> metadata_df.write_parquet(temp_file.name)
+    >>> # Create config
+    >>> cfg = {
+    ...     "code_metadata_fp": temp_file.name,
+    ...     "backbone": {"_target_": "meds_torch.models.eic_forecasting.DummyModel"},
+    ...     "vocab_size": 10,
+    ...     "num_samples": 2,
+    ...     "max_seq_len": 10,
+    ...     "temperature": 1.0,
+    ...     "eos_token_id": 9,
+    ...     "zero_shot_labeler": None,
+    ...     "optimizer": {
+    ...         "_target_": "meds_torch.models.eic_forecasting.DummyOptimizer",
+    ...         "_partial_": True
+    ...     },
+    ...     "scheduler": {
+    ...         "_target_": "meds_torch.models.eic_forecasting.DummyScheduler",
+    ...         "_partial_": True
+    ...     },
+    ...     "input_encoder": {"_target_": "meds_torch.models.eic_forecasting.DummyEncoder"},
+    ...     "code_head": {"_target_": "meds_torch.models.eic_forecasting.DummyCodeHead"},
+    ...     "compile": False
+    ... }
+    >>> cfg = instantiate(OmegaConf.create(cfg))
+    >>>
+    >>> # Test workflow 1: Data generation
+    >>> model = EicForecastingModule(cfg)
+    >>>
+    >>> # Create input batch
+    >>> batch = {
+    ...     'code': torch.tensor([[0, 1, 2], [1, 2, 3]]),
+    ...     'mask': torch.ones(2, 3).bool()
+    ... }
+    >>>
+    >>> # Test generation
+    >>> output = model.forward(batch)
+    >>> print(f"Generated sequences shape: {output['GENERATE_0']['code'].shape}")
+    >>>
+    >>> # Test workflow 2: Zero-shot prediction
+    >>> cfg.zero_shot_labeler = lambda x: torch.tensor([0.7, 0.3])
+    >>> model = EicForecastingModule(cfg)
+    >>> output = model.forward(batch)
+    >>> print(f"Zero-shot predictions shape: {output['model_pred_proba'].shape}")
+    >>>
+    >>> # Test workflow 3: Autoregressive training
+    >>> cfg.num_samples = 0  # Disable generation
+    >>> model = EicForecastingModule(cfg)
+    >>> loss = model.training_step(batch)
+    >>> print(f"Training loss: {loss.item():.2f}")
+    >>> temp_file.close()
+    Generated sequences shape: torch.Size([2, 7])
+    Zero-shot predictions shape: torch.Size([2])
+    Training loss: -0.00
+    """
 
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
-        if not isinstance(self.model, AUTOREGRESSIVE_MODELS):
+        if not isinstance(self.model, AUTOREGRESSIVE_MODELS + (DummyModel,)):
             raise ValueError(
                 f"Unsupported model type: {type(self.model)}, choose one from {AUTOREGRESSIVE_MODELS}"
             )
-        if not isinstance(self.input_encoder, EicEncoder):
+        if not isinstance(self.input_encoder, (EicEncoder, DummyEncoder)):
             raise NotImplementedError(f"Unsupported input encoder type: {type(self.input_encoder)}")
         self.code_head = self.cfg.code_head
 
