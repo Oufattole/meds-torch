@@ -1,6 +1,3 @@
-from dataclasses import dataclass, field
-from typing import Any
-
 import numpy as np
 import polars as pl
 import torch
@@ -9,9 +6,8 @@ import torch.utils
 from loguru import logger
 from mixins import TimeableMixin
 from omegaconf import DictConfig
-from torchmetrics import Metric
+from torchmetrics import Metric, MetricCollection
 from torchmetrics.classification import MulticlassAccuracy, MulticlassAUROC
-from x_transformers import AutoregressiveWrapper
 from x_transformers.autoregressive_wrapper import eval_decorator
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
@@ -27,7 +23,6 @@ from meds_torch.models import (
 )
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
-from meds_torch.models.zero_shot_labeler.time_to_event_labeler import TaskLabeler
 from meds_torch.models.zero_shot_labeler.utils import TrajectoryBatch
 
 # Create dummy components for testing
@@ -41,12 +36,17 @@ class DummyModel:
         B, S = batch[INPUT_ENCODER_TOKENS_KEY].shape
         return {BACKBONE_TOKENS_KEY: torch.randn(B, S, 32)}
 
+    def generate(self, prompts, prompt_lengths, mask, **kwargs):
+        B, S = prompts.shape
+        out = torch.randint(0, 4, (B, S))
+        return out
+
 
 class DummyCodeHead:
     def __call__(self, x):
         # Convert embeddings to logits
         B, S, _ = x.shape
-        return torch.randn(B, S, 10)  # 10 possible codes
+        return torch.randn(B, S, 4)  # 4 possible codes
 
 
 class DummyEncoder:
@@ -74,34 +74,6 @@ class DummyScheduler:
 
     def get_last_lr(self):
         return [0.001]
-
-
-@dataclass
-class DummyConfig:
-    code_metadata_fp: str
-    backbone: DummyModel = field(default_factory=DummyModel)
-    vocab_size: int = 10
-    num_samples: int = 2
-    max_seq_len: int = 10
-    temperature: float = 1.0
-    eos_token_id: int = 9
-    zero_shot_labeler: TaskLabeler | None = None
-    optimizer: dict[str:Any] = field(
-        default_factory=lambda: {
-            "_target_": "meds_torch.models.eic_forecasting.DummyOptimizer",
-            "_partial_": True,
-        }
-    )
-    scheduler: dict[str:Any] = field(
-        default_factory=lambda: {
-            "_target_": "meds_torch.models.eic_forecasting.DummyScheduler",
-            "_partial_": True,
-        }
-    )
-    input_encoder: dict[str:Any] = field(
-        default_factory=lambda: {"_target_": "meds_torch.models.eic_forecasting.DummyEncoder"}
-    )
-    compile: bool = False
 
 
 CODE_LOGITS = "MODEL//CODE_LOGITS"
@@ -183,7 +155,7 @@ class NextTokenPredictionMetric(Metric):
         top_n_accuracy (dict): A dictionary of MulticlassAccuracy metrics for each n in top_n.
     """
 
-    def __init__(self, vocab_size: int, dist_sync_on_step=False):
+    def __init__(self, vocab_size: int, top_k_acc: list[int], dist_sync_on_step=False):
         """
         Initialize the NextTokenPredictionMetric.
 
@@ -197,9 +169,10 @@ class NextTokenPredictionMetric(Metric):
         self.vocab_size = vocab_size
 
         self.auroc = MulticlassAUROC(num_classes=vocab_size, average="weighted", thresholds=100)
-        self.top_1_accuracy = MulticlassAccuracy(num_classes=vocab_size, top_k=1)
-        self.top_5_accuracy = MulticlassAccuracy(num_classes=vocab_size, top_k=5)
-        self.top_10_accuracy = MulticlassAccuracy(num_classes=vocab_size, top_k=10)
+        self.top_k_acc = top_k_acc
+        self.accuracy_metrics = MetricCollection(
+            {f"top_{k}_accuracy": MulticlassAccuracy(num_classes=vocab_size, top_k=k) for k in top_k_acc}
+        )
 
     def update(self, logits: torch.Tensor, targets: torch.Tensor, mask: torch.Tensor):
         """
@@ -228,9 +201,7 @@ class NextTokenPredictionMetric(Metric):
         self.auroc.update(flat_logits, flat_targets)
 
         # Update top-n accuracy
-        self.top_1_accuracy.update(flat_logits, flat_targets)
-        self.top_5_accuracy.update(flat_logits, flat_targets)
-        self.top_10_accuracy.update(flat_logits, flat_targets)
+        self.accuracy_metrics.update(flat_logits, flat_targets)
 
     def compute(self):
         """
@@ -242,9 +213,7 @@ class NextTokenPredictionMetric(Metric):
         results = {
             "auroc": self.auroc.compute(),
         }
-        results["top_1_accuracy"] = self.top_1_accuracy.compute()
-        results["top_5_accuracy"] = self.top_5_accuracy.compute()
-        results["top_10_accuracy"] = self.top_10_accuracy.compute()
+        results.update(self.accuracy_metrics.compute())
         return results
 
 
@@ -261,8 +230,6 @@ class EicForecastingModule(BaseModule, TimeableMixin):
             - vocab_size: Size of the vocabulary
             - num_samples: Number of sequences to generate (0 for training only)
             - max_seq_len: Maximum sequence length
-            - temperature: Sampling temperature for generation
-            - eos_token_id: End of sequence token ID
             - zero_shot_labeler: Optional function for zero-shot prediction
             - code_metadata_fp: Path to code metadata file
 
@@ -288,11 +255,9 @@ class EicForecastingModule(BaseModule, TimeableMixin):
     >>> cfg = {
     ...     "code_metadata_fp": temp_file.name,
     ...     "backbone": {"_target_": "meds_torch.models.eic_forecasting.DummyModel"},
-    ...     "vocab_size": 10,
+    ...     "vocab_size": 4,
     ...     "num_samples": 2,
     ...     "max_seq_len": 10,
-    ...     "temperature": 1.0,
-    ...     "eos_token_id": 9,
     ...     "zero_shot_labeler": None,
     ...     "optimizer": {
     ...         "_target_": "meds_torch.models.eic_forecasting.DummyOptimizer",
@@ -304,9 +269,10 @@ class EicForecastingModule(BaseModule, TimeableMixin):
     ...     },
     ...     "input_encoder": {"_target_": "meds_torch.models.eic_forecasting.DummyEncoder"},
     ...     "code_head": {"_target_": "meds_torch.models.eic_forecasting.DummyCodeHead"},
-    ...     "compile": False
+    ...     "compile": False,
+    ...     "top_k_acc": [1],
     ... }
-    >>> cfg = instantiate(OmegaConf.create(cfg))
+    >>> cfg = instantiate(cfg)
     >>>
     >>> # Test workflow 1: Data generation
     >>> model = EicForecastingModule(cfg)
@@ -319,23 +285,20 @@ class EicForecastingModule(BaseModule, TimeableMixin):
     >>>
     >>> # Test generation
     >>> output = model.forward(batch)
-    >>> print(f"Generated sequences shape: {output['GENERATE_0']['code'].shape}")
-    >>>
+    >>> print(f"Generated sequences shape: {output['GENERATE//0']['code'].shape}")
+    Generated sequences shape: torch.Size([2, 3])
     >>> # Test workflow 2: Zero-shot prediction
     >>> cfg.zero_shot_labeler = lambda x: torch.tensor([0.7, 0.3])
     >>> model = EicForecastingModule(cfg)
     >>> output = model.forward(batch)
-    >>> print(f"Zero-shot predictions shape: {output['model_pred_proba'].shape}")
-    >>>
+    >>> print(f"Zero-shot predictions shape: {output[MODEL_PRED_PROBA_KEY].shape}")
+    Zero-shot predictions shape: torch.Size([2])
     >>> # Test workflow 3: Autoregressive training
     >>> cfg.num_samples = 0  # Disable generation
     >>> model = EicForecastingModule(cfg)
     >>> loss = model.training_step(batch)
-    >>> print(f"Training loss: {loss.item():.2f}")
+    >>> assert loss.isfinite().all()
     >>> temp_file.close()
-    Generated sequences shape: torch.Size([2, 7])
-    Zero-shot predictions shape: torch.Size([2])
-    Training loss: -0.00
     """
 
     def __init__(self, cfg: DictConfig):
@@ -351,9 +314,9 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         num_future_codes = self.cfg.get("num_future_codes", None)
         if num_future_codes is not None:
             logger.info(f"Using {num_future_codes} future codes for forecasting")
-        self.train_next_token_metric = NextTokenPredictionMetric(vocab_size=self.cfg.vocab_size)
-        self.val_next_token_metric = NextTokenPredictionMetric(vocab_size=self.cfg.vocab_size)
-        self.test_next_token_metric = NextTokenPredictionMetric(vocab_size=self.cfg.vocab_size)
+        self.train_next_token_metric = NextTokenPredictionMetric(self.cfg.vocab_size, self.cfg.top_k_acc)
+        self.val_next_token_metric = NextTokenPredictionMetric(self.cfg.vocab_size, self.cfg.top_k_acc)
+        self.test_next_token_metric = NextTokenPredictionMetric(self.cfg.vocab_size, self.cfg.top_k_acc)
 
         self.metadata_df = pl.read_parquet(self.cfg.code_metadata_fp)
 
@@ -733,9 +696,6 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         else:
             prompts, mask = input_batch[INPUT_ENCODER_TOKENS_KEY], input_batch[INPUT_ENCODER_MASK_KEY]
 
-        # Compute bounds
-        model = AutoregressiveWrapper(self.model.model)
-
         # Calculate actual lengths of prompts using the mask
         prompt_lengths = mask.sum(dim=1)
 
@@ -752,18 +712,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         self.time_quantile_map = torch.cat([self.time_quantile_map, torch.zeros(1)])
 
         for i in range(self.cfg.num_samples):
-            out = model.generate(
-                prompts,
-                self.cfg.max_seq_len,
-                prompt_lens=prompt_lengths,
-                temperature=self.cfg.temperature,
-                eos_token=self.cfg.eos_token_id,
-                context_mask=mask,
-                **kwargs,
-            )[
-                :, prompts.shape[1] :
-            ]  # Remove the prompt
-
+            out = self.model.generate(prompts, prompt_lengths, mask, **kwargs)
             out_mask = torch.ones_like(out).bool()
 
             # Store generated data
@@ -784,7 +733,8 @@ class EicForecastingModule(BaseModule, TimeableMixin):
                 trajectory_batch = self.to_trajectory_batch(
                     generated_data["code"], generated_data["mask"], self.metadata_df
                 )
-                input_batch.set_default(MODEL_PRED_PROBA_KEY, torch.zeros_like(out.shape[0]))
-                input_batch[MODEL_PRED_PROBA_KEY] += self.zero_shot_labeler(trajectory_batch)
-
+                input_batch.setdefault(MODEL_PRED_PROBA_KEY, torch.zeros(prompts.shape[0]))
+                input_batch[MODEL_PRED_PROBA_KEY] += self.cfg.zero_shot_labeler(trajectory_batch)
+        if MODEL_PRED_PROBA_KEY in input_batch:
+            input_batch[MODEL_PRED_PROBA_KEY] /= self.cfg.num_samples
         return input_batch
