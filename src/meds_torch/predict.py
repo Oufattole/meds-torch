@@ -1,14 +1,14 @@
 import os
+from dataclasses import dataclass
 from importlib.resources import files
 from itertools import chain
 from pathlib import Path
 from typing import Any
 
 import hydra
-import loguru
 import numpy as np
 import polars as pl
-import pyarrow as pa
+import pyarrow.parquet as pq
 import torch
 from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
@@ -43,6 +43,37 @@ MODEL_KEY_TO_PREDICT_SCHEMA_NAME = {
     MODEL_TOKENS_KEY: "tokens",
     MODEL_LOSS_KEY: "loss",
 }
+
+
+# Create dummy config
+@dataclass
+class DummyTrainer:
+    logger: list[Logger] | None = None
+    task_name: str = "test_task"
+
+    def predict(self, model, dataloaders):
+        return [
+            {
+                "subject_id": [1, 2],
+                "prediction_time": ["2020-01-01", "2020-01-02"],
+                "boolean_value": [0, 1],
+                MODEL_PRED_PROBA_KEY: [0.2, 0.8],
+                self.task_name: [1, 1],
+            }
+        ]
+
+
+@dataclass
+class DummyModel(LightningModule):
+    def load_state_dict(self, state_dict):
+        pass
+
+
+@dataclass
+class DummyDataModule(LightningDataModule):
+    task_name: str
+    do_include_subject_id: bool
+    do_include_prediction_time: bool
 
 
 def process_tensor_batches(predictions: list[dict[str, Any]], key: str) -> list[torch.Tensor | np.ndarray]:
@@ -188,6 +219,51 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
         cfg: DictConfig configuration composed by Hydra.
     Returns:
         Tuple[dict, dict] with metrics and dict with all instantiated objects.
+
+    Examples:
+    >>> import tempfile
+    >>> from omegaconf import DictConfig
+    >>> _ = pl.Config.set_tbl_width_chars(106)
+    >>> # Create temporary checkpoint file
+    >>> with tempfile.TemporaryDirectory() as tmp_dir:
+    ...     ckpt_path = Path(tmp_dir) / "model.ckpt"
+    ...     torch.save({"state_dict": {}}, ckpt_path)
+    ...
+    ...     # Create config
+    ...     cfg = {
+    ...         "ckpt_path": str(ckpt_path),
+    ...         "model": {"_target_": "meds_torch.predict.DummyModel"},
+    ...         "data": {
+    ...             "_target_": "meds_torch.predict.DummyDataModule",
+    ...             "task_name": "test_task",
+    ...             "do_include_subject_id": True,
+    ...             "do_include_prediction_time": True
+    ...         },
+    ...         "paths": {
+    ...             "predict_fp": str(Path(tmp_dir) / "predictions.parquet"),
+    ...             "time_output_dir": tmp_dir
+    ...         },
+    ...         "trainer": {"_target_": "meds_torch.predict.DummyTrainer"},
+    ...         "logger": None
+    ...     }
+    ...     cfg = DictConfig(cfg)
+    ...
+    ...     # Run prediction
+    ...     predict(cfg)
+    ...
+    ...     # Verify outputs
+    ...     assert Path(cfg.paths.predict_fp).exists()
+    ...     print(pl.read_parquet(cfg.paths.predict_fp))
+    shape: (2, 5)
+    ┌────────────┬─────────────────────┬───────────────┬─────────────────────────┬───────────────────────────┐
+    │ subject_id ┆ prediction_time     ┆ boolean_value ┆ predicted_boolean_value ┆ predicted_boolean_probabi │
+    │ ---        ┆ ---                 ┆ ---           ┆ ---                     ┆ lity                      │
+    │ i64        ┆ datetime[μs]        ┆ bool          ┆ bool                    ┆ ---                       │
+    │            ┆                     ┆               ┆                         ┆ f64                       │
+    ╞════════════╪═════════════════════╪═══════════════╪═════════════════════════╪═══════════════════════════╡
+    │ 1          ┆ 2020-01-01 00:00:00 ┆ true          ┆ false                   ┆ 0.2                       │
+    │ 2          ┆ 2020-01-02 00:00:00 ┆ true          ┆ true                    ┆ 0.8                       │
+    └────────────┴─────────────────────┴───────────────┴─────────────────────────┴───────────────────────────┘
     """
     assert cfg.ckpt_path
     if not cfg.data.do_include_subject_id:
@@ -263,8 +339,7 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
 
     Path(cfg.paths.predict_fp).parent.mkdir(parents=True, exist_ok=True)
     validated_table = validate_prediction_data(predict_df)
-    pa.parquet.write_table(validated_table, cfg.paths.predict_fp)
-    loguru.logger.info(pl.from_arrow(validated_table).head())
+    pq.write_table(validated_table, cfg.paths.predict_fp)
 
 
 @hydra.main(version_base="1.3", config_path=str(config_yaml.parent.resolve()), config_name=config_yaml.stem)
