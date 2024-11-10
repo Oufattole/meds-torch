@@ -36,7 +36,7 @@ class DummyModel:
         B, S = batch[INPUT_ENCODER_TOKENS_KEY].shape
         return {BACKBONE_TOKENS_KEY: torch.randn(B, S, 32)}
 
-    def generate(self, prompts, prompt_lengths, mask, **kwargs):
+    def generate(self, prompts, mask, **kwargs):
         B, S = prompts.shape
         out = torch.randint(0, 4, (B, S))
         return out
@@ -696,9 +696,6 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         else:
             prompts, mask = input_batch[INPUT_ENCODER_TOKENS_KEY], input_batch[INPUT_ENCODER_MASK_KEY]
 
-        # Calculate actual lengths of prompts using the mask
-        prompt_lengths = mask.sum(dim=1)
-
         logger.info("Generate output using the history")
         self.time_quantile_map = torch.tensor(
             [
@@ -712,7 +709,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         self.time_quantile_map = torch.cat([self.time_quantile_map, torch.zeros(1)])
 
         for i in range(self.cfg.num_samples):
-            out = self.model.generate(prompts, prompt_lengths, mask, **kwargs)
+            out = self.model.generate(prompts=prompts, mask=mask, **kwargs)
             out_mask = torch.ones_like(out).bool()
 
             # Store generated data
