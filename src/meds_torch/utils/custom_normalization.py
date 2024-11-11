@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 """Transformations for normalizing MEDS datasets, across both categorical and continuous
-dimensions."""
+dimensions.
+
+DO NOT RUN THIS WITH PARALLELISM
+"""
 from pathlib import Path
 
 import hydra
