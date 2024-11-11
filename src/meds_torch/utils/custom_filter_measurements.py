@@ -110,7 +110,7 @@ def filter_measurements_fntr(
         ...     "code/n_subjects":    [2,   1,   3,   2],
         ...     "code/n_occurrences": [4,   5,   3,   2],
         ... })
-        >>> stage_cfg = DictConfig({"allowed_codes": ["^BIRTH$", "^VISIT.*$"]})
+        >>> stage_cfg = DictConfig({"additional_codes": ["^BIRTH$", "^VISIT.*$"]})
         >>> fn = filter_measurements_fntr(stage_cfg, code_metadata_df, ["modifier1"])
         >>> fn(data).collect()
         shape: (3, 3)
@@ -162,9 +162,12 @@ def filter_measurements_fntr(
         filter_exprs.append(pl.col("code/n_occurrences") >= min_occurrences_per_code)
 
     if additional_codes is not None:
-        filter_expr = pl.any_horizontal(
-            [pl.all_horizontal(filter_exprs), pl.col("code").str.contains("|".join(additional_codes))]
-        )
+        additional_codes_expr = pl.col("code").str.contains("|".join(additional_codes))
+        if filter_exprs:
+            filter_expr = pl.any_horizontal([pl.all_horizontal(filter_exprs), additional_codes_expr])
+        else:
+            filter_expr = additional_codes_expr
+
     else:
         if not filter_exprs:
             return lambda df: df
