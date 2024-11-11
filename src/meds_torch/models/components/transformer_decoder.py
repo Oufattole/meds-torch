@@ -473,11 +473,6 @@ class TransformerDecoderModel(torch.nn.Module, Module):
             cumulative_time, continue_generation = update_generation_budget(
                 cumulative_time, out, get_next_token_time, mask, budget
             )
-            from loguru import logger
-
-            logger.info(f"Time: {cumulative_time}")
-            logger.info(f"Out: {out}")
-            logger.info(temperature)
 
         # Return only the generated part (excluding prompt)
         return out[:, prompt_len:]

@@ -759,7 +759,6 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         else:
             prompts, mask = input_batch[INPUT_ENCODER_TOKENS_KEY], input_batch[INPUT_ENCODER_MASK_KEY]
 
-        logger.info("Generate output using the history")
         self.time_quantile_map = torch.tensor(
             [
                 TIME_QUANTILE_VALUES[TIME_QUANTILE_NAMES.index(code)]
