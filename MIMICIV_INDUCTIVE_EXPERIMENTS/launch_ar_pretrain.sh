@@ -34,7 +34,7 @@ run_job() {
 
     if [ -z "$CHECK_FILE" ] || [ ! -f "$CHECK_FILE" ]; then
         MAX_POLARS_THREADS=4 meds-torch-tune model=$METHOD callbacks=tune_default \
-            hparams_search.ray.resources_per_trial.gpu=1 data.dataloader.num_workers=16 \
+            hparams_search.ray.resources_per_trial.GPU=1 data.dataloader.num_workers=16 \
             hparams_search=ray_tune experiment=$experiment paths.data_dir=${TENSOR_DIR} \
             paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${PRETRAIN_SWEEP_DIR} \
             hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/${CONFIGS_FOLDER}/configs/meds-torch-configs]
