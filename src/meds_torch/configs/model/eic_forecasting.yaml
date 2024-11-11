@@ -33,6 +33,7 @@ compile: false
 
 # sampling parameters
 num_samples: 0 # number of samples to generate
+temperature: 1.0 # sampling temperature
 
 # Autoregressive modeling metric params
 top_k_acc:

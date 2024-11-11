@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import numpy as np
 import polars as pl
 import torch
@@ -36,7 +38,15 @@ class DummyModel:
         B, S = batch[INPUT_ENCODER_TOKENS_KEY].shape
         return {BACKBONE_TOKENS_KEY: torch.randn(B, S, 32)}
 
-    def generate(self, prompts, mask, **kwargs):
+    def generate(
+        self,
+        prompts: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        get_next_token_time: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
+        temperature: float = 1.0,
+        filter_logits_fn: str | Callable = torch.nn.Identity(),
+        sliding_window_size: int | None = None,
+    ) -> torch.Tensor:
         B, S = prompts.shape
         out = torch.randint(0, 4, (B, S))
         return out
@@ -256,9 +266,10 @@ class EicForecastingModule(BaseModule, TimeableMixin):
     ...     "code_metadata_fp": temp_file.name,
     ...     "backbone": {"_target_": "meds_torch.models.eic_forecasting.DummyModel"},
     ...     "vocab_size": 4,
-    ...     "num_samples": 2,
+    ...     "num_samples": 0,
     ...     "max_seq_len": 10,
     ...     "zero_shot_labeler": None,
+    ...     'temperature': 1.0,
     ...     "optimizer": {
     ...         "_target_": "meds_torch.models.eic_forecasting.DummyOptimizer",
     ...         "_partial_": True
@@ -273,31 +284,83 @@ class EicForecastingModule(BaseModule, TimeableMixin):
     ...     "top_k_acc": [1],
     ... }
     >>> cfg = instantiate(cfg)
-    >>>
-    >>> # Test workflow 1: Data generation
-    >>> model = EicForecastingModule(cfg)
-    >>>
     >>> # Create input batch
     >>> batch = {
     ...     'code': torch.tensor([[0, 1, 2], [1, 2, 3]]),
     ...     'mask': torch.ones(2, 3).bool()
     ... }
+
+
+    # >>> batch['mask'][0,-1] = 0 # mask a token
+
+
+    # >>>
+    # >>> # Test workflow 1: Autoregressive training
+    # >>> model = EicForecastingModule(cfg)
+    # >>> loss = model.training_step(batch)
+    # >>> assert loss.isfinite().all()
+    # >>>
+    # >>> # Test workflow 2: Data generation
+    # >>> cfg.num_samples = 2  # Enable generation
+    # >>> model = EicForecastingModule(cfg)
+    # >>>
+    # >>> # Test generation
+    # >>> output = model.forward(batch)
+    # >>> print(f"Generated sequences shape: {output['GENERATE//0']['code'].shape}")
+    # Generated sequences shape: torch.Size([2, 3])
+    # >>> # Test workflow 3: Zero-shot prediction
+    # >>> cfg.zero_shot_labeler = lambda x: torch.tensor([0.7, 0.3])
+    # >>> model = EicForecastingModule(cfg)
+    # >>> output = model.forward(batch)
+    # >>> print(f"Zero-shot predictions shape: {output[MODEL_PRED_PROBA_KEY].shape}")
+    # Zero-shot predictions shape: torch.Size([2])
+    # >>>
+
+
+    >>> # Test generation with real model
+    >>> cfg.num_samples = 2  # Enable generation
+    >>> B, S, L = 2, 5, 8 # [batch_size, input_sequence_length, token_dim]
+    >>> vocab_size = 4
+    >>> max_seq_len = 10
+    >>> cfg.temperature = 1000.0 # Raise the temperature to randomize the predictions
+    >>> model = EicForecastingModule(cfg)
+    >>> _ = torch.manual_seed(42)
+    >>> model.model = instantiate({
+    ...     '_target_': "meds_torch.models.components.transformer_decoder.TransformerDecoderModel.initialize",
+    ...     'token_dim': L,
+    ...     'vocab_size': vocab_size,
+    ...     'max_seq_len': max_seq_len,
+    ...     'get_last_token': True,
+    ...     'token_emb': None,
+    ...     'generation_budget': {
+    ...         '_target_': ("meds_torch.models.components.transformer_decoder."
+    ...                      "GenerationBudget.from_time_len"),
+    ...         "value": .5,
+    ...     },
+    ...     'model': {
+    ...         '_target_': 'x_transformers.TransformerWrapper',
+    ...         'num_tokens': vocab_size,
+    ...         'max_seq_len': max_seq_len,
+    ...         'attn_layers': {
+    ...             '_target_': 'x_transformers.Decoder',
+    ...             'dim': L,
+    ...             'depth': 2,
+    ...             'heads': 2,
+    ...         }
+    ...     }
+    ... })
     >>>
-    >>> # Test generation
+    >>> # Create input batch
     >>> output = model.forward(batch)
-    >>> print(f"Generated sequences shape: {output['GENERATE//0']['code'].shape}")
-    Generated sequences shape: torch.Size([2, 3])
-    >>> # Test workflow 2: Zero-shot prediction
-    >>> cfg.zero_shot_labeler = lambda x: torch.tensor([0.7, 0.3])
-    >>> model = EicForecastingModule(cfg)
-    >>> output = model.forward(batch)
-    >>> print(f"Zero-shot predictions shape: {output[MODEL_PRED_PROBA_KEY].shape}")
-    Zero-shot predictions shape: torch.Size([2])
-    >>> # Test workflow 3: Autoregressive training
-    >>> cfg.num_samples = 0  # Disable generation
-    >>> model = EicForecastingModule(cfg)
-    >>> loss = model.training_step(batch)
-    >>> assert loss.isfinite().all()
+    >>> codes = output['GENERATE//0']['code']
+    >>> codes.shape[0] == 2
+    True
+    >>> codes.shape[1] >= 1
+    True
+    >>> # Note that the time token is code/vocab_index 2 in the medadata
+    >>>  # check that 1 time token was generated for the shortest time trajectory
+    >>> (codes == 2).sum(dim=1).min().item()
+    1
     >>> temp_file.close()
     """
 
@@ -708,8 +771,18 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         )
         self.time_quantile_map = torch.cat([self.time_quantile_map, torch.zeros(1)])
 
+        def get_next_token_time(x, m):
+            return self.time_quantile_map[x[:, -1].squeeze()]
+
         for i in range(self.cfg.num_samples):
-            out = self.model.generate(prompts=prompts, mask=mask, **kwargs)
+            out = self.model.generate(
+                prompts=prompts,
+                mask=mask,
+                get_next_token_time=get_next_token_time,
+                temperature=self.cfg.temperature,
+                sliding_window_size=self.cfg.max_seq_len,
+                **kwargs,
+            )
             out_mask = torch.ones_like(out).bool()
 
             # Store generated data

@@ -71,7 +71,7 @@ def task_wrapper(task_func: Callable) -> Callable:
         # things to do if exception occurs
         except Exception as ex:
             # save exception to `.log` file
-            log.error("")
+            log.error(ex)
 
             # some hyperparameter combinations might be invalid or cause out-of-memory errors
             # so when using hparam search plugins like Optuna, you might want to disable

@@ -93,7 +93,7 @@ def generate_next_token(
     cache: Any | None,
     mask: torch.Tensor | None,
     temperature: float,
-    filter_logits_fn: str | Callable,
+    filter_logits_fn: str | Callable = torch.nn.Identity(),
     **kwargs,
 ) -> tuple[torch.Tensor, torch.Tensor, Any | None, torch.Tensor | None]:
     """Generate the next token using sliding window attention and sampling.
@@ -129,6 +129,7 @@ def generate_next_token(
         >>> # Test with sliding window and mask
         >>> current_output = torch.randint(0, vocab_size, (B, S))
         >>> orig_mask = torch.ones((B, S), dtype=torch.bool)  # All tokens attended to
+        >>> orig_mask[0,-1] = 0 # Mask a single token
         >>> sliding_window = 3
         >>> next_token, new_out, new_cache, new_mask = generate_next_token(
         ...     model=model,
@@ -137,7 +138,6 @@ def generate_next_token(
         ...     cache=None,
         ...     mask=orig_mask,
         ...     temperature=1.0,
-        ...     filter_logits_fn='top_k'
         ... )
         >>> next_token.shape  # Single token per sequence
         torch.Size([2, 1])
@@ -161,7 +161,6 @@ def generate_next_token(
         ...     cache=None,
         ...     mask=long_mask,
         ...     temperature=1.0,
-        ...     filter_logits_fn='top_k'
         ... )
         >>> # Check if mask was properly sliced for sliding window
         >>> truncated_mask = new_mask[:, -sliding_window:]
@@ -201,6 +200,7 @@ def generate_next_token(
 
     # Generate next token logits
     logits, new_cache = model(x, mask=window_mask, return_intermediates=True, cache=cache, **kwargs)
+    # model(x, mask=window_mask, return_intermediates=True, cache=None, **kwargs)[0]
 
     if model.can_cache_kv:
         cache = new_cache
@@ -258,6 +258,9 @@ def update_generation_budget(
         >>> device = 'cpu'
         >>> # Test time budget
         >>> cumulative = torch.zeros(B, device=device)
+        >>> # Create a single token mask
+        >>> mask = torch.ones(B, 5)
+        >>> mask[0,-1] = 0
         >>> current_out = torch.randint(0, 5, (B, 5), device=device)
         >>> get_time = lambda x, m: torch.ones(B, device=device)
         >>> time_budget = GenerationBudget.from_time_len(1.5)  # Generate until cumulative time > 1.5
@@ -265,7 +268,7 @@ def update_generation_budget(
         ...     cumulative_time=cumulative,
         ...     current_output=current_out,
         ...     get_next_token_time=get_time,
-        ...     mask=None,
+        ...     mask=mask,
         ...     budget=time_budget,
         ... )
         >>> new_time  # Should be 1
@@ -276,7 +279,7 @@ def update_generation_budget(
         ...     cumulative_time=new_time,
         ...     current_output=current_out,
         ...     get_next_token_time=get_time,
-        ...     mask=None,
+        ...     mask=mask,
         ...     budget=time_budget,
         ... )
         >>> continue_gen
@@ -290,7 +293,7 @@ def update_generation_budget(
         ...     cumulative_time=cumulative,
         ...     current_output=current_out,
         ...     get_next_token_time=None,
-        ...     mask=None,
+        ...     mask=mask,
         ...     budget=seq_len_budget,
         ... )
         >>> continue_gen  # Should continue
@@ -301,7 +304,7 @@ def update_generation_budget(
         ...     cumulative_time=cumulative,
         ...     current_output=current_out,
         ...     get_next_token_time=None,
-        ...     mask=None,
+        ...     mask=mask,
         ...     budget=seq_len_budget,
         ... )
         >>> continue_gen # Should stop since > max_seq_len
@@ -368,6 +371,8 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         >>> model = TransformerDecoderModel(cfg)
 
         >>> # Test forward pass
+        >>> mask = torch.ones(B, S, dtype=torch.bool)
+        >>> mask[0,-1] = 0
         >>> batch = {  # Both have shapes: [batch_size, input_sequence_length]
         ...     INPUT_ENCODER_TOKENS_KEY: torch.randint(B, vocab_size, (B, S)),
         ...     INPUT_ENCODER_MASK_KEY: torch.ones(B, S, dtype=torch.bool)
@@ -381,6 +386,7 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         >>> prompts = torch.randint(0, vocab_size, (B, S))  # [batch_size, prompt_len]
         >>> gen_output = model.generate(
         ...     prompts=prompts,
+        ...     mask=mask,
         ... )
         >>> # Since we started with 5 prompt tokens we can generate 2 more to get to a max_seq_length of 7:
         >>> gen_output.shape
@@ -393,6 +399,7 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         >>> sliding_window_size = 7  # Small window to force sliding
         >>> gen_output = model.generate(
         ...     prompts=prompts,
+        ...     mask=mask,
         ...     sliding_window_size=sliding_window_size,
         ...     temperature=0.7,
         ...     get_next_token_time=lambda code, next_token_mask: torch.ones(B).float(),
@@ -427,7 +434,7 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         mask: torch.Tensor | None = None,
         get_next_token_time: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
         temperature: float = 1.0,
-        filter_logits_fn: str = "top_k",
+        filter_logits_fn: str | Callable = torch.nn.Identity(),
         sliding_window_size: int | None = None,
         **kwargs,
     ) -> torch.Tensor:
@@ -461,9 +468,16 @@ class TransformerDecoderModel(torch.nn.Module, Module):
             _, out, cache, mask = generate_next_token(
                 self.model, out, sliding_window_size, cache, mask, temperature, filter_logits_fn, **kwargs
             )
+            if mask is not None:
+                cache = None  # Caching doesn't work if `mask` is used in x-transformers, ses #128
             cumulative_time, continue_generation = update_generation_budget(
                 cumulative_time, out, get_next_token_time, mask, budget
             )
+            from loguru import logger
+
+            logger.info(f"Time: {cumulative_time}")
+            logger.info(f"Out: {out}")
+            logger.info(temperature)
 
         # Return only the generated part (excluding prompt)
         return out[:, prompt_len:]
