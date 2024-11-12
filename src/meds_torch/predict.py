@@ -34,7 +34,7 @@ from meds_torch.utils.resolvers import setup_resolvers
 
 setup_resolvers()
 log = RankedLogger(__name__, rank_zero_only=True)
-config_yaml = files("meds_torch").joinpath("configs/eval.yaml")
+config_yaml = files("meds_torch").joinpath("configs/predict.yaml")
 
 MODEL_KEY_TO_PREDICT_SCHEMA_NAME = {
     MODEL_EMBEDDINGS_KEY: "embeddings",
