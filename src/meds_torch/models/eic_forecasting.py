@@ -768,7 +768,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
             ],
             device=self.device,
         )
-        self.time_quantile_map = torch.cat([self.time_quantile_map, torch.zeros(1)])
+        self.time_quantile_map = torch.cat([self.time_quantile_map, torch.zeros(1, device=self.device)])
 
         def get_next_token_time(x, m):
             return self.time_quantile_map[x[:, -1].squeeze()]
