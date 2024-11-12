@@ -1,5 +1,6 @@
-_target_: meds_torch.data.datamodule.MEDSDataModule.initialize
+_target_: meds_torch.data.components.pytorch_dataset.PytorchDataset.initialize
 name: pytorch_dataset
+split: train
 
 # Path params
 data_dir: ${paths.data_dir}
@@ -8,10 +9,6 @@ cache_dir: ${paths.data_dir}/.pytorch_dataset_cache_dir/
 code_metadata_fp: ${paths.data_dir}/metadata/codes.parquet
 schema_files_root: ${paths.data_dir}/tokenization/schemas
 tasks_root: ${paths.meds_cohort_dir}/tasks
-split_names:
-    train: train # training data is in ${paths.data_dir}/${split_names.train}**/*.nrt
-    validate: tuning # tuning data is in ${paths.data_dir}/${split_names.validate}/**/*.nrt
-    test: held_out # held_out data is in ${paths.data_dir}/${split_names.test}/**/*.nrt
 
 # Prediction params
 predict_dataset: val # train, val, or test, which dataset to predict on
@@ -19,8 +16,8 @@ predict_dataset: val # train, val, or test, which dataset to predict on
 # Task params
 task_root_dir: null
 task_name: null
-task_label_path: ${data.task_root_dir}/${data.task_name}.parquet
-task_info_path: ${data.task_root_dir}/${data.task_name}_info.json
+task_label_path: ${data.dataset.task_root_dir}/${data.dataset.task_name}.parquet
+task_info_path: ${data.dataset.task_root_dir}/${data.dataset.task_name}_info.json
 
 # Split params
 train_subset_size: null
@@ -51,8 +48,8 @@ dataloader:
   pin_memory: False
 
 # Tokenization params
-vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.VOCAB_SPECIAL_TOKEN_ID_OFFSET}}
+vocab_size: ${get_vocab_size:${data.dataset.code_metadata_fp}, ${data.dataset.VOCAB_SPECIAL_TOKEN_ID_OFFSET}}
 eos_offset: 1
-EOS_TOKEN_ID: ${get_eos_token_id:${data.vocab_size}, ${data.eos_offset}}
+EOS_TOKEN_ID: ${get_eos_token_id:${data.dataset.vocab_size}, ${data.dataset.eos_offset}}
 VOCAB_SPECIAL_TOKEN_ID_OFFSET: 1
 postpend_eos_token: ${model.backbone.postpend_eos_token}

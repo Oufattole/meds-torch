@@ -1,0 +1,27 @@
+defaults:
+  - dataset: pytorch_dataset
+  - dataset@train: pytorch_dataset
+  - dataset@val: pytorch_dataset
+  - dataset@test: pytorch_dataset
+  - _self_ # must be at the bottom to overwrite split in data@split
+
+_target_: meds_torch.data.datamodule.MEDSDataModule.initialize
+
+dataloader:
+  batch_size: 128 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
+  num_workers: 0
+  pin_memory: False
+
+split_names:
+    train: train # training data is in ${paths.data_dir}/${split_names.train}**/*.nrt
+    validate: tuning # tuning data is in ${paths.data_dir}/${split_names.validate}/**/*.nrt
+    test: held_out # held_out data is in ${paths.data_dir}/${split_names.test}/**/*.nrt
+
+train: 
+  split: ${data.split_names.train}
+
+val: 
+  split: ${data.split_names.validate}
+
+test: 
+  split: ${data.split_names.test}

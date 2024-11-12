@@ -17,12 +17,12 @@ scheduler:
   factor: 0.1
   patience: 10
 
-max_seq_len: ${data.max_seq_len}
+max_seq_len: ${data.dataset.max_seq_len}
 token_dim: 4
-vocab_size: ${data.vocab_size}
+vocab_size: ${data.dataset.vocab_size}
 get_representations: false
-task_name: ${data.task_name}
-batch_size: ${data.dataloader.batch_size}
+task_name: ${data.dataset.task_name}
+batch_size: ${data.dataset.dataloader.batch_size}
 
 # compile model for faster training with pytorch 2.0
 compile: false

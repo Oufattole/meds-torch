@@ -3,6 +3,6 @@ defaults:
   - _self_
 name: random_windows_pytorch_dataset
 
-max_window_size: ${data.max_seq_len}
-min_window_size: ${data.min_seq_len}
+max_window_size: ${data.dataset.max_seq_len}
+min_window_size: ${data.dataset.min_seq_len}
 n_windows: 2

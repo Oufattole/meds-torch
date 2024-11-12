@@ -11,7 +11,7 @@ from loguru import logger
 from mixins import SeedableMixin, TimeableMixin
 from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 from omegaconf import DictConfig
-
+from meds_torch.utils.module_class import Module
 
 @dataclass
 class DummyConfig:
@@ -431,7 +431,7 @@ def get_task_indices_and_labels(
     return indexes, labels
 
 
-class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
+class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin, Module):
     """A PyTorch Dataset class for handling complex, multi-modal medical data.
 
     This dataset is designed to work with data from the MEDS (Medical Event Data Set) format, supporting
@@ -501,11 +501,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         First subject label: 0
     """
 
-    def __init__(self, cfg: DictConfig, split: str):
+    def __init__(self, cfg: DictConfig):
         super().__init__()
 
         self.config = cfg
-        self.split = split
+        self.split = cfg.split
 
         logger.info("Reading subject schema and static data")
         self.read_subject_descriptors()
