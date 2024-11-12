@@ -1,7 +1,7 @@
 defaults:
   - input_encoder: eic_encoder
   - backbone: eic_transformer_decoder
-  - zero_shot_labeler: none
+  - zero_shot_labeler: null
   - _self_
 _target_: meds_torch.models.eic_forecasting.EicForecastingModule.initialize
 

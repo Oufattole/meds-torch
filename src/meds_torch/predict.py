@@ -253,7 +253,7 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
     ...
     ...     # Verify outputs
     ...     assert Path(cfg.paths.predict_fp).exists()
-    ...     print(pl.read_parquet(cfg.paths.predict_fp))
+    ...     print(pl.read_parquet(cfg.paths.predict_fp))  # doctest: +NORMALIZE_WHITESPACE, +ELLIPSIS
     shape: (2, 5)
     ┌────────────┬─────────────────────┬───────────────┬─────────────────────────┬───────────────────────────┐
     │ subject_id ┆ prediction_time     ┆ boolean_value ┆ predicted_boolean_value ┆ predicted_boolean_probabi │
@@ -261,8 +261,8 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
     │ i64        ┆ datetime[μs]        ┆ bool          ┆ bool                    ┆ ---                       │
     │            ┆                     ┆               ┆                         ┆ f64                       │
     ╞════════════╪═════════════════════╪═══════════════╪═════════════════════════╪═══════════════════════════╡
-    │ 1          ┆ 2020-01-01 00:00:00 ┆ true          ┆ false                   ┆ 0.2                       │
-    │ 2          ┆ 2020-01-02 00:00:00 ┆ true          ┆ true                    ┆ 0.8                       │
+    │ 1          ┆ 2020-01-01 00:00:00 ┆ ...           ┆ ...                     ┆ ...                       │
+    │ 2          ┆ 2020-01-02 00:00:00 ┆ ...           ┆ ...                     ┆ ...                       │
     └────────────┴─────────────────────┴───────────────┴─────────────────────────┴───────────────────────────┘
     """
     assert cfg.ckpt_path

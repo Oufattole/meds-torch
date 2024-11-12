@@ -1,5 +1,5 @@
 
-_target_: meds_torch.models.zero_shot_labeler.TaskLabeler
+_target_: meds_torch.models.zero_shot_labeler.time_to_event_labeler.TaskLabeler
 
 target_codes: ???
 time_length: ???

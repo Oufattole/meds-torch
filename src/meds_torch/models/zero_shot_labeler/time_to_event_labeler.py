@@ -74,8 +74,8 @@ class TaskLabeler:
     target_codes: list[int]
     time_length: float
     min_time: float = 0.0
-    numeric_value_min: float = None
-    numeric_value_max: float = None
+    numeric_value_min: float | None = None
+    numeric_value_max: float | None = None
     include_min_time: bool = True
     include_max_time: bool = True
 

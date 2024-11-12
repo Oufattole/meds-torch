@@ -25,6 +25,7 @@ from meds_torch.models import (
 )
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
+from meds_torch.models.zero_shot_labeler.time_to_event_labeler import TaskLabeler
 from meds_torch.models.zero_shot_labeler.utils import TrajectoryBatch
 
 # Create dummy components for testing
@@ -798,12 +799,19 @@ class EicForecastingModule(BaseModule, TimeableMixin):
             }
             input_batch[GENERATE_PREFIX + str(i)] = generated_data
 
-            if self.cfg.zero_shot_labeler:
+            if self.cfg.get("zero_shot_labeler") is not None:
                 trajectory_batch = self.to_trajectory_batch(
                     generated_data["code"], generated_data["mask"], self.metadata_df
                 )
                 input_batch.setdefault(MODEL_PRED_PROBA_KEY, torch.zeros(prompts.shape[0]))
-                input_batch[MODEL_PRED_PROBA_KEY] += self.cfg.zero_shot_labeler(trajectory_batch)
+                if isinstance(self.cfg.zero_shot_labeler, DictConfig):
+                    task_labeler = TaskLabeler(**self.cfg.zero_shot_labeler)
+                else:
+                    task_labeler = self.cfg.zero_shot_labeler
+                pred_labels, unknown_pred = task_labeler(trajectory_batch)
+                # Handle unknown values by setting their probability to 0.5
+                pred_labels[unknown_pred] = 0.5
+                input_batch[MODEL_PRED_PROBA_KEY] += pred_labels.squeeze(1)
         if MODEL_PRED_PROBA_KEY in input_batch:
             input_batch[MODEL_PRED_PROBA_KEY] /= self.cfg.num_samples
         return input_batch
