@@ -46,7 +46,6 @@ class DummyModel:
         get_next_token_time: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
         temperature: float = 1.0,
         filter_logits_fn: str | Callable = torch.nn.Identity(),
-        sliding_window_size: int | None = None,
     ) -> torch.Tensor:
         B, S = prompts.shape
         out = torch.randint(0, 4, (B, S))
@@ -771,8 +770,8 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         )
         self.time_quantile_map = torch.cat([self.time_quantile_map, torch.zeros(1, device=self.device)])
 
-        def get_next_token_time(x, m):
-            return self.time_quantile_map[x[:, -1].squeeze()]
+        def get_next_token_time(x):
+            return self.time_quantile_map[x.squeeze()]
 
         for i in range(self.cfg.num_samples):
             out = self.model.generate(
@@ -780,7 +779,6 @@ class EicForecastingModule(BaseModule, TimeableMixin):
                 mask=mask,
                 get_next_token_time=get_next_token_time,
                 temperature=self.cfg.temperature,
-                sliding_window_size=self.cfg.max_seq_len,
                 **kwargs,
             )
             out_mask = torch.ones_like(out).bool()
@@ -812,6 +810,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
                 # Handle unknown values by setting their probability to 0.5
                 pred_labels[unknown_pred] = 0.5
                 input_batch[MODEL_PRED_PROBA_KEY] += pred_labels.squeeze(1)
+                logger.info(f"Completed zero-shot labeling for sample {i+1}")
         if MODEL_PRED_PROBA_KEY in input_batch:
             input_batch[MODEL_PRED_PROBA_KEY] /= self.cfg.num_samples
         return input_batch

@@ -1,19 +1,37 @@
 from collections.abc import Callable
-from typing import Any
+from functools import wraps
 
 import torch
+from loguru import logger
 from omegaconf import DictConfig
 from torch.functional import F
+from x_transformers import TransformerWrapper
 from x_transformers.autoregressive_wrapper import (
     FILTER_LOGITS_FN,
-    eval_decorator,
+    align_right,
     exists,
+    identity,
+    join,
+    pack,
+    unpack,
 )
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models import BACKBONE_EMBEDDINGS_KEY, BACKBONE_TOKENS_KEY
 from meds_torch.models.components.utils import get_last_token
 from meds_torch.utils.module_class import Module
+
+
+def eval_decorator(fn):
+    @wraps(fn)
+    def inner(model, *args, **kwargs):
+        was_training = model.training
+        model.eval()
+        out = fn(model, *args, **kwargs)
+        model.train(was_training)
+        return out
+
+    return inner
 
 
 class GenerationBudget:
@@ -86,166 +104,24 @@ class GenerationBudget:
         return self._value if not hasattr(self, "_is_seq_len") else None
 
 
-def generate_next_token(
-    model: Any,
-    current_output: torch.Tensor,
-    sliding_window_size: int | None,
-    cache: Any | None,
-    mask: torch.Tensor | None,
-    temperature: float,
-    filter_logits_fn: str | Callable = torch.nn.Identity(),
-    **kwargs,
-) -> tuple[torch.Tensor, torch.Tensor, Any | None, torch.Tensor | None]:
-    """Generate the next token using sliding window attention and sampling.
-
-    Args:
-        model: The transformer model to use for generation
-        current_output: Current sequence of tokens [batch_size, seq_len]
-        sliding_window_size: Size of sliding window for attention context
-        cache: Optional KV cache from previous generation steps
-        mask: Optional attention mask [batch_size, seq_len]
-        temperature: Sampling temperature (0 for greedy)
-        filter_logits_fn: Name of logit filtering function or callable
-        **kwargs: Additional arguments passed to model forward
-
-    Returns:
-        Tuple containing:
-        - Generated token tensor [batch_size, 1]
-        - Updated sequence with new token appended
-        - Updated KV cache if model supports caching
-        - Updated attention mask if input mask was provided
-
-    Examples:
-        >>> import torch
-        >>> from x_transformers import TransformerWrapper, Decoder
-        >>> B, S, L = 2, 5, 8  # batch_size, seq_len, dim
-        >>> vocab_size = 100
-        >>> # Create mock transformer
-        >>> model = TransformerWrapper(
-        ...     num_tokens=vocab_size,
-        ...     max_seq_len=10,
-        ...     attn_layers=Decoder(dim=L, depth=2, heads=2)
-        ... )
-        >>> # Test with sliding window and mask
-        >>> current_output = torch.randint(0, vocab_size, (B, S))
-        >>> orig_mask = torch.ones((B, S), dtype=torch.bool)  # All tokens attended to
-        >>> orig_mask[0,-1] = 0 # Mask a single token
-        >>> sliding_window = 3
-        >>> next_token, new_out, new_cache, new_mask = generate_next_token(
-        ...     model=model,
-        ...     current_output=current_output,
-        ...     sliding_window_size=sliding_window,
-        ...     cache=None,
-        ...     mask=orig_mask,
-        ...     temperature=1.0,
-        ... )
-        >>> next_token.shape  # Single token per sequence
-        torch.Size([2, 1])
-        >>> new_out.shape  # Original sequence + 1 new token
-        torch.Size([2, 6])
-        >>> new_mask.shape  # Mask should match new sequence length
-        torch.Size([2, 6])
-        >>> # Verify mask was properly extended
-        >>> (new_mask[:, :-1] == orig_mask).all()  # Old mask values preserved
-        tensor(True)
-        >>> new_mask[:, -1].all()  # New token is attended to
-        tensor(True)
-
-        >>> # Test with sliding window mask shift
-        >>> long_output = torch.randint(0, vocab_size, (B, 8))  # Longer than window
-        >>> long_mask = torch.ones((B, 8), dtype=torch.bool)
-        >>> next_token, new_out, new_cache, new_mask = generate_next_token(
-        ...     model=model,
-        ...     current_output=long_output,
-        ...     sliding_window_size=sliding_window,
-        ...     cache=None,
-        ...     mask=long_mask,
-        ...     temperature=1.0,
-        ... )
-        >>> # Check if mask was properly sliced for sliding window
-        >>> truncated_mask = new_mask[:, -sliding_window:]
-        >>> truncated_mask.shape  # Should match sliding window size
-        torch.Size([2, 3])
-        >>> truncated_mask.all()  # All tokens in window should be attended to
-        tensor(True)
-
-        >>> # Test without mask (should still work)
-        >>> next_token, new_out, _, output_mask = generate_next_token(
-        ...     model=model,
-        ...     current_output=current_output,
-        ...     sliding_window_size=None,
-        ...     cache=None,
-        ...     mask=None,
-        ...     temperature=1.0,
-        ...     filter_logits_fn='top_k'
-        ... )
-        >>> output_mask is None  # Should remain None if no input mask
-        True
-    """
-    # Handle sliding window for long sequences
-    if exists(sliding_window_size) and current_output.shape[1] > sliding_window_size:
-        window_start = max(0, current_output.shape[1] - sliding_window_size)
-        x = current_output[:, window_start:]
-
-        # Shift mask for sliding window if it exists
-        window_mask = mask[:, window_start:] if exists(mask) else None
-
-        # Adjust cache for sliding window
-        if exists(cache):
-            for inter in cache.attn_intermediates:
-                inter.cached_kv = [t[..., -(sliding_window_size - 1) :, :] for t in inter.cached_kv]
-    else:
-        x = current_output
-        window_mask = mask
-
-    # Generate next token logits
-    logits, new_cache = model(x, mask=window_mask, return_intermediates=True, cache=cache, **kwargs)
-    # model(x, mask=window_mask, return_intermediates=True, cache=None, **kwargs)[0]
-
-    if model.can_cache_kv:
-        cache = new_cache
-
-    # Sample next token
-    logits = logits[:, -1]
-    if temperature == 0:
-        sample = logits.argmax(dim=-1, keepdim=True)
-    else:
-        if isinstance(filter_logits_fn, str):
-            filter_fn = FILTER_LOGITS_FN[filter_logits_fn]
-            filtered_logits = filter_fn(logits)
-        else:
-            filtered_logits = filter_logits_fn(logits)
-        probs = F.softmax(filtered_logits / temperature, dim=-1)
-        sample = torch.multinomial(probs, 1)
-
-    # Update output
-    new_output = torch.cat((current_output, sample), dim=-1)
-
-    # Update mask if it exists
-    new_mask = None
-    if exists(mask):
-        new_mask = F.pad(mask, (0, 1), value=True)  # Extend mask for new token
-
-    return sample, new_output, cache, new_mask
-
-
 def update_generation_budget(
     cumulative_time: torch.Tensor,
-    current_output: torch.Tensor,
+    current_sample: torch.Tensor,
+    num_generated_tokens: int,
     get_next_token_time: Callable | None,
-    mask: torch.Tensor | None,
     budget: GenerationBudget,
 ) -> tuple[torch.Tensor, bool]:
     """Update generation budget tracking and check stopping conditions.
 
     Args:
         cumulative_time: Current cumulative time for each sequence
-        current_output: Current sequence of tokens
+        current_output: Current sampled tokens
+        num_generated_tokens: Number of generated tokens
         get_next_token_time: Function to predict time for next token
         mask: Optional attention mask
         is_time_budget: Whether using time-based budget
         min_time_len: Minimum time length for generation
-        max_seq_len: Maximum sequence length
+        max_seq_len: Maximum sequence length to generate
 
     Returns:
         Tuple containing:
@@ -259,16 +135,14 @@ def update_generation_budget(
         >>> # Test time budget
         >>> cumulative = torch.zeros(B, device=device)
         >>> # Create a single token mask
-        >>> mask = torch.ones(B, 5)
-        >>> mask[0,-1] = 0
-        >>> current_out = torch.randint(0, 5, (B, 5), device=device)
-        >>> get_time = lambda x, m: torch.ones(B, device=device)
+        >>> current_sample = torch.randint(0, 5, (5,), device=device)
+        >>> get_time = lambda x: torch.ones(B, device=device)
         >>> time_budget = GenerationBudget.from_time_len(1.5)  # Generate until cumulative time > 1.5
         >>> new_time, continue_gen = update_generation_budget(
         ...     cumulative_time=cumulative,
-        ...     current_output=current_out,
+        ...     current_sample=current_sample,
+        ...     num_generated_tokens=2,
         ...     get_next_token_time=get_time,
-        ...     mask=mask,
         ...     budget=time_budget,
         ... )
         >>> new_time  # Should be 1
@@ -277,9 +151,9 @@ def update_generation_budget(
         True
         >>> new_time, continue_gen = update_generation_budget(
         ...     cumulative_time=new_time,
-        ...     current_output=current_out,
+        ...     current_sample=current_sample,
+        ...     num_generated_tokens=3,
         ...     get_next_token_time=get_time,
-        ...     mask=mask,
         ...     budget=time_budget,
         ... )
         >>> continue_gen
@@ -291,9 +165,9 @@ def update_generation_budget(
         >>> # Test sequence length budget
         >>> _, continue_gen = update_generation_budget(
         ...     cumulative_time=cumulative,
-        ...     current_output=current_out,
+        ...     current_sample=current_sample,
+        ...     num_generated_tokens=5,
         ...     get_next_token_time=None,
-        ...     mask=mask,
         ...     budget=seq_len_budget,
         ... )
         >>> continue_gen  # Should continue
@@ -302,16 +176,15 @@ def update_generation_budget(
         >>> # Test sequence length budget
         >>> _, continue_gen = update_generation_budget(
         ...     cumulative_time=cumulative,
-        ...     current_output=current_out,
+        ...     current_sample=current_sample,
+        ...     num_generated_tokens=5,
         ...     get_next_token_time=None,
-        ...     mask=mask,
         ...     budget=seq_len_budget,
         ... )
         >>> continue_gen # Should stop since > max_seq_len
         False
     """
     # Get budget constraints
-    max_seq_len = budget.max_seq_len
     min_time_len = budget.min_time_len
     is_time_budget = exists(min_time_len)
     if is_time_budget:
@@ -319,12 +192,12 @@ def update_generation_budget(
         with torch.no_grad():
             if get_next_token_time is None:
                 raise ValueError("`get_next_token_time` is required when generating using the time budget")
-            pred_time = get_next_token_time(current_output, mask)
+            pred_time = get_next_token_time(current_sample)
             cumulative_time = cumulative_time + pred_time.squeeze(-1)
 
         continue_generation = (cumulative_time < min_time_len).any().item()
     else:
-        continue_generation = current_output.shape[1] < max_seq_len
+        continue_generation = num_generated_tokens < budget.max_seq_len
 
     return cumulative_time, continue_generation
 
@@ -359,11 +232,13 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         ...         '_target_': 'x_transformers.TransformerWrapper',
         ...         'num_tokens': vocab_size,
         ...         'max_seq_len': max_seq_len,
+        ...         'use_abs_pos_emb': False,
         ...         'attn_layers': {
         ...             '_target_': 'x_transformers.Decoder',
         ...             'dim': L,
         ...             'depth': 2,
         ...             'heads': 2,
+        ...             'rotary_pos_emb': True,
         ...         }
         ...     }
         ... })
@@ -390,19 +265,17 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         ... )
         >>> # Since we started with 5 prompt tokens we can generate 2 more to get to a max_seq_length of 7:
         >>> gen_output.shape
-        torch.Size([2, 2])
+        torch.Size([2, 7])
         >>> # Test generation with time budget and sliding window
         >>> # The timing function (get_next_token_time) maps token embeddings to predicted duration
         >>> # Here we use a simple function that returns 1.0 for each token
         >>> time_budget = GenerationBudget.from_time_len(10)  # Generate until cumulative time >= 10
         >>> cfg.generation_budget = time_budget # modify cfg to use the time budget
-        >>> sliding_window_size = 7  # Small window to force sliding
         >>> gen_output = model.generate(
         ...     prompts=prompts,
         ...     mask=mask,
-        ...     sliding_window_size=sliding_window_size,
         ...     temperature=0.7,
-        ...     get_next_token_time=lambda code, next_token_mask: torch.ones(B).float(),
+        ...     get_next_token_time=lambda code: torch.ones(B).float(),
         ... )
         >>> # Should have generated 10 tokens (since each token takes 1.0 time)
         >>> gen_output.shape
@@ -426,16 +299,18 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         batch[BACKBONE_EMBEDDINGS_KEY] = embeddings
         return batch
 
-    @torch.no_grad()
-    @eval_decorator
     def generate(
         self,
         prompts: torch.Tensor,
         mask: torch.Tensor | None = None,
         get_next_token_time: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
-        temperature: float = 1.0,
-        filter_logits_fn: str | Callable = torch.nn.Identity(),
-        sliding_window_size: int | None = None,
+        eos_token=None,
+        temperature=1.0,
+        filter_logits_fn: str | Callable = identity,
+        restrict_to_max_seq_len: bool = True,
+        filter_kwargs: dict = dict(),
+        cache_kv=True,
+        pad_value: int = 0,
         **kwargs,
     ) -> torch.Tensor:
         """Generate tokens with either sequence length or time budget constraints.
@@ -446,33 +321,263 @@ class TransformerDecoderModel(torch.nn.Module, Module):
             mask: Optional attention mask for prompts
             temperature: Sampling temperature
             filter_logits_fn: Name of logit filtering function ('top_k', 'top_p', etc.)
-            sliding_window_size: Size of sliding window for attention context
             **kwargs: Additional arguments passed to the model
 
         Returns:
             torch.Tensor: Generated token sequences [batch_size, generated_len]
         """
-        budget = self.cfg.generation_budget
-        device = prompts.device
-        batch_size, prompt_len = prompts.shape
-        sliding_window_size = sliding_window_size or self.cfg.max_seq_len
+        if mask is None:
+            prompt_lengths = torch.tensor([prompts.shape[1]] * prompts.shape[0])
+        else:
+            prompt_lengths = mask.sum(dim=-1)
+            right_pad_mask = torch.arange(mask.size(1), device=mask.device).unsqueeze(
+                0
+            ) < prompt_lengths.unsqueeze(1)
+            if not torch.equal(right_pad_mask, mask):
+                raise ValueError("Mask must correspond to right padding")
 
-        # Initialize tracking tensors
-        cumulative_time = torch.zeros(batch_size, device=device)
-        out = prompts
-        cache = None
+        return generate(
+            self.model,
+            prompts=prompts,
+            budget=self.cfg.generation_budget,
+            get_next_token_time=get_next_token_time,
+            eos_token=eos_token,
+            temperature=temperature,
+            prompt_lens=prompt_lengths,
+            filter_logits_fn=filter_logits_fn,
+            restrict_to_max_seq_len=restrict_to_max_seq_len,
+            filter_kwargs=filter_kwargs,
+            cache_kv=cache_kv,
+            pad_value=pad_value,
+            **kwargs,
+        )
 
-        continue_generation = True
 
-        while continue_generation:
-            _, out, cache, mask = generate_next_token(
-                self.model, out, sliding_window_size, cache, mask, temperature, filter_logits_fn, **kwargs
+@torch.no_grad()
+@eval_decorator
+def generate(
+    model: TransformerWrapper,
+    prompts: torch.Tensor,
+    budget: GenerationBudget,
+    get_next_token_time: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
+    eos_token=None,
+    temperature=1.0,
+    prompt_lens: torch.Tensor | None = None,
+    filter_logits_fn: str | Callable = identity,
+    restrict_to_max_seq_len: bool = True,
+    filter_kwargs: dict = dict(),
+    cache_kv=True,
+    pad_value: int = 0,
+    **kwargs,
+):
+    """Generate tokens autoregressively from given prompts.
+
+    Args:
+        prompts: Input token sequence [batch_size, seq_len]
+        seq_len: Number of tokens to generate
+        eos_token: Optional end of sequence token to stop generation
+        temperature: Sampling temperature (0 for greedy)
+        prompt_lens: Optional lengths for variable length prompts
+        filter_logits_fn: Optional filtering function for logits
+        restrict_to_max_seq_len: Whether to restrict to model's max sequence length
+        filter_kwargs: Additional arguments for filter_logits_fn
+        cache_kv: Whether to use key-value caching
+        **kwargs: Additional arguments passed to model forward
+
+    Returns:
+        Generated token sequence [batch_size, seq_len]
+
+    Examples:
+    >>> import torch
+    >>> from x_transformers import TransformerWrapper, Decoder
+    >>> # Create mock transformer
+    >>> B, S, L = 2, 4, 8  # batch_size, seq_len, dim
+    >>> vocab_size = 5
+    >>> model = TransformerWrapper(
+    ...     use_abs_pos_emb=False,
+    ...     num_tokens=vocab_size,
+    ...     max_seq_len=10,
+    ...     attn_layers=Decoder(dim=L, depth=1, heads=2, rotary_pos_emb=True)
+    ... )
+
+    >>> # Test basic generation
+    >>> budget = GenerationBudget.from_seq_len(2)
+    >>> prompts = torch.randint(0, vocab_size, (B, S))
+    >>> gen_tokens = generate(model=model,
+    ...     prompts=prompts,
+    ...     budget=budget,
+    ...     temperature=1.0,
+    ...     filter_logits_fn='top_k',
+    ...     filter_kwargs={'k': 10},
+    ... )
+    >>> gen_tokens.shape  # Should be [batch_size, seq_len]
+    torch.Size([2, 2])
+
+    >>> # Test with EOS token
+    >>> eos_token = vocab_size - 1
+    >>> budget = GenerationBudget.from_seq_len(2)
+    >>> gen_tokens = generate(model=model,
+    ...     prompts=prompts,
+    ...     budget=budget,
+    ...     eos_token=eos_token,
+    ...     temperature=0.0  # greedy
+    ... )
+    >>> gen_tokens.shape[0]  # Batch size preserved
+    2
+
+    >>> # Test with variable length prompts
+    >>> prompt_lens = torch.tensor([2, 3])
+    >>> gen_tokens = generate(model=model,
+    ...     prompts=prompts,
+    ...     budget=budget,
+    ...     prompt_lens=prompt_lens,
+    ...     temperature=1.0
+    ... )
+    >>> gen_tokens.shape  # Should be [batch_size, seq_len]
+    torch.Size([2, 2])
+
+    >>> # Test with KV caching
+    >>> prompt_lens = torch.tensor([S-2] + [S]*(B-1))  # Mask out last two tokens of first sequence
+    >>> budget = GenerationBudget.from_seq_len(3)
+    >>> gen_tokens = generate(model=model,
+    ...     prompts=prompts,
+    ...     prompt_lens=prompt_lens,
+    ...     budget=budget,
+    ...     temperature=1.0,
+    ...     cache_kv=True
+    ... )
+    >>> gen_tokens.shape  # Should be [batch_size, seq_len]
+    torch.Size([2, 3])
+
+    >>> # Test with all-True mask
+    >>> prompt_lens = torch.tensor([S]*B, dtype=torch.int)  # Variable sequence lengths
+    >>> gen_tokens = generate(model=model,
+    ...     prompts=prompts,
+    ...     prompt_lens=prompt_lens,
+    ...     budget=budget,
+    ...     temperature=1.0,
+    ...     cache_kv=True
+    ... )
+    >>> gen_tokens.shape  # Should be [batch_size, seq_len]
+    torch.Size([2, 3])
+
+    >>> # Test with max sequence length restriction
+    >>> long_prompts = torch.randint(0, vocab_size, (B, 8))  # Longer sequence
+    >>> prompt_lens = torch.tensor([5] + [8]*(B-1))  # Variable sequence lengths
+    >>> gen_tokens = generate(model=model,
+    ...     prompts=long_prompts,
+    ...     prompt_lens=prompt_lens,
+    ...     budget=budget,
+    ...     temperature=1.0,
+    ...     cache_kv=True,
+    ... )
+    >>> gen_tokens.shape  # Should be [batch_size, seq_len]
+    torch.Size([2, 3])
+    """
+    max_seq_len, greedy = model.max_seq_len, temperature == 0.0
+
+    prompts, ps = pack([prompts], "* n")
+
+    b, t = prompts.shape
+
+    # handle filter logits fn given as string
+
+    if isinstance(filter_logits_fn, str):
+        assert filter_logits_fn in FILTER_LOGITS_FN, f"only {join(FILTER_LOGITS_FN.keys())} are available"
+
+        filter_logits_fn = FILTER_LOGITS_FN[filter_logits_fn]
+
+    # handle variable lengthed prompts (prefixes)
+
+    seq_start_pos = None
+    if exists(prompt_lens):
+        prompts = align_right(prompts, prompt_lens, pad_id=pad_value)
+        seq_start_pos = t - prompt_lens
+
+    # output from which sampled tokens appended to
+    out = prompts
+    # kv caches
+    cache = None
+    # Initialize tracking tensors
+    cumulative_time = torch.zeros(b, device=prompts.device)
+
+    # sampling up to budget
+    out = prompts
+    cache = None
+
+    continue_generation = True
+
+    num_generated_tokens = 0
+    while continue_generation:
+        if restrict_to_max_seq_len:
+            max_len_exceeded = out.shape[-1] > max_seq_len
+
+            if cache_kv and max_len_exceeded and not model.can_cache_kv_outside_max_seq_len:
+                raise ValueError(
+                    "the network cannot use cached key values when decoding outside the "
+                    "max sequence length. most likely because you are using absolute "
+                    "positional embedding. you can switch to rotary embeddings to resolve "
+                    "this issue"
+                )
+
+            x = out[:, -max_seq_len:]
+
+            if exists(cache):
+                for inter in cache.attn_intermediates:
+                    if inter.layer_type == "a":
+                        inter.cached_kv = [t[..., -(max_seq_len - 1) :, :] for t in inter.cached_kv]
+
+        logits, new_cache = model(
+            x, return_intermediates=True, cache=cache, seq_start_pos=seq_start_pos, **kwargs
+        )
+
+        if cache_kv and model.can_cache_kv:
+            cache = new_cache
+
+        logits = logits[:, -1]
+
+        # filter by top_k, top_p (nucleus), top_a, or custom
+
+        if greedy:
+            sample = logits.argmax(dim=-1, keepdim=True)
+        else:
+            filtered_logits = filter_logits_fn(logits, **filter_kwargs)
+            probs = F.softmax(filtered_logits / temperature, dim=-1)
+            sample = torch.multinomial(probs, 1)
+
+        num_generated_tokens += 1
+        if num_generated_tokens % max_seq_len == 0 and exists(budget.min_time_len):
+            mean_percent_time = round(cumulative_time.mean().item() / budget.min_time_len * 100, 2)
+            min_percent_time = round(cumulative_time.min().item() / budget.min_time_len * 100, 2)
+            logger.warning(
+                "GENERATION TIME BUDGET WARNING: Generated trajectory is long\n"
+                f"Generated {num_generated_tokens} tokens\n"
+                f"mean time cutoff percent: {mean_percent_time}\n"
+                f"min time cutoff percent: {min_percent_time}\n"
             )
-            if mask is not None:
-                cache = None  # Caching doesn't work if `mask` is used in x-transformers, ses #128
-            cumulative_time, continue_generation = update_generation_budget(
-                cumulative_time, out, get_next_token_time, mask, budget
-            )
+        cumulative_time, continue_generation = update_generation_budget(
+            cumulative_time, sample, num_generated_tokens, get_next_token_time, budget
+        )
 
-        # Return only the generated part (excluding prompt)
-        return out[:, prompt_len:]
+        # concat sample
+        out = torch.cat((out, sample), dim=-1)
+
+        if not exists(eos_token):
+            continue
+
+        is_eos_tokens = out == eos_token
+
+        if is_eos_tokens.any(dim=-1).all():
+            break
+
+    if exists(eos_token):
+        # mask out everything after the eos tokens
+        shifted_is_eos_tokens = F.pad(is_eos_tokens, (1, -1))
+        mask = shifted_is_eos_tokens.float().cumsum(dim=-1) >= 1
+        out = out.masked_fill(mask, pad_value)
+
+    out = out[:, t:]
+
+    (out,) = unpack(out, ps, "* n")
+
+    return out
