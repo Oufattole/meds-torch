@@ -5,3 +5,8 @@ name: multiwindow_pytorch_dataset
 
 subject_level_sampling: false
 raw_windows_fp: ???
+default_window_name: null
+
+# Sequence of windows to fuse
+early_fusion_windows: null
+early_fusion_window_name: "FUSED"

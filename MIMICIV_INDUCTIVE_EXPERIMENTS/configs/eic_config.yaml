@@ -36,6 +36,8 @@ stage_configs:
       - code/n_subjects
       - name: values/quantiles
         quantiles: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+      - values/min
+      - values/max
   custom_normalization:
     _script: "python -m meds_torch.utils.custom_normalization"
     custom_quantiles:
@@ -62,3 +64,5 @@ stage_configs:
         values/quantile/20: 10 # 10 years
         values/quantile/21: 20 # 20 years
         values/quantile/22: 40 # 40 years
+  tokenization:
+    _script: "python -m meds_torch.utils.custom_tokenization"
