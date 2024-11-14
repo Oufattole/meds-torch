@@ -26,7 +26,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "polars", "pyarrow", "nested_ragged_tensors==0.0.6", "loguru", "numpy", "ml-mixins", "torch", "omegaconf", "hydra-core",
+    "polars", "pyarrow", "nested_ragged_tensors", "loguru", "numpy", "ml-mixins", "torch", "omegaconf", "hydra-core",
     "lightning", "x-transformers==1.34.0", "rich", "hydra-colorlog", "hydra-optuna-sweeper", "wandb", "torchmetrics",
     "torchvision", "transformers", "ray[tune]",
 ]
