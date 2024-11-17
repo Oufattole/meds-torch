@@ -28,7 +28,7 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
         collate_type_override = "data.collate_type=triplet"
     elif token_type == "eic":
         collate_type_override = "data.collate_type=eic"
-    elif token_type == "text":
+    elif token_type == "textcode":
         collate_type_override = "data.collate_type=triplet"
     else:
         raise NotImplementedError(f"Unsupported token type {token_type}!")
