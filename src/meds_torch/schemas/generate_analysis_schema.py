@@ -14,9 +14,9 @@ MEDS_TRAJECTORY_SCHEMA = OrderedDict(
     [
         ("subject_id", pa.int64()),
         ("prediction_time", pa.timestamp("us")),
+        ("time", pa.timestamp("us")),
         ("code", pa.int64()),
         ("numeric_value", pa.float64()),
-        ("time_delta_days", pa.float64()),
         ("TRAJECTORY_TYPE", pa.string()),
     ]
 )
@@ -50,7 +50,7 @@ def validate_generated_data(df):
     >>> import polars as pl
     >>> from datetime import datetime
     >>> df = pl.DataFrame({
-    ...                    'time_delta_days': [0.0, 0.0, 5.2091e-9],
+    ...                    'time': [datetime(2024, 7, 18, 16, 21, 41)] * 3,
     ...                    'code': [55, 59, 61],
     ...                    'numeric_value': [0.625, 0.625, float('nan')],
     ...                    'subject_id': [109767.0, 109767.0, 109767.0],
@@ -61,16 +61,16 @@ def validate_generated_data(df):
     pyarrow.Table
     subject_id: int64
     prediction_time: timestamp[us]
+    time: timestamp[us]
     code: int64
     numeric_value: double
-    time_delta_days: double
     TRAJECTORY_TYPE: string
     ----
     subject_id: [[109767,109767,109767]]
     prediction_time: [[2024-07-18 16:21:41.000000,2024-07-18 16:21:41.000000,2024-07-18 16:21:41.000000]]
+    time: [[2024-07-18 16:21:41.000000,2024-07-18 16:21:41.000000,2024-07-18 16:21:41.000000]]
     code: [[55,59,61]]
     numeric_value: [[0.625,0.625,nan]]
-    time_delta_days: [[0,0,5.2091e-9]]
     TRAJECTORY_TYPE: [["INPUT_DATA","INPUT_DATA","INPUT_DATA"]]
     """
     # Get the validated schema

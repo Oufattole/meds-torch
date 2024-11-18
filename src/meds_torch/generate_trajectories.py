@@ -12,7 +12,7 @@ from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from omegaconf import DictConfig
 
-from meds_torch.models import ACTUAL_FUTURE, GENERATE_PREFIX, INPUT_DATA
+from meds_torch.models import GENERATE_PREFIX, INPUT_DATA
 from meds_torch.schemas.generate_analysis_schema import validate_generated_data
 from meds_torch.utils import (
     RankedLogger,
@@ -79,14 +79,6 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     input_df = model.to_meds(predictions, model.metadata_df)
     input_df = input_df.with_columns(pl.lit(INPUT_DATA).alias("TRAJECTORY_TYPE"))
     dfs = {INPUT_DATA: input_df}
-    if cfg.actual_future_name:
-        actual_trajectories = [batch[cfg.actual_future_name] for batch in predictions]
-        for i in range(len(actual_trajectories)):
-            actual_trajectories[i]["subject_id"] = predictions[i]["subject_id"]
-            actual_trajectories[i]["prediction_time"] = predictions[i]["prediction_time"]
-        actual_df = model.to_meds(actual_trajectories, model.metadata_df)
-        actual_df = actual_df.with_columns(pl.lit(ACTUAL_FUTURE).alias("TRAJECTORY_TYPE"))
-        dfs[ACTUAL_FUTURE] = actual_df
 
     # Extract generated trajectories
     generated_trajectory_keys = [key for key in predictions[0].keys() if key.startswith(GENERATE_PREFIX)]
@@ -95,6 +87,7 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
         for i in range(len(gen_trajectories)):
             gen_trajectories[i]["subject_id"] = predictions[i]["subject_id"]
             gen_trajectories[i]["prediction_time"] = predictions[i]["prediction_time"]
+            gen_trajectories[i]["end_time"] = predictions[i]["end_time"]
         gen_df = model.to_meds(gen_trajectories, model.metadata_df)
         gen_df = gen_df.with_columns(pl.lit(gen_key).alias("TRAJECTORY_TYPE"))
         dfs[gen_key] = gen_df

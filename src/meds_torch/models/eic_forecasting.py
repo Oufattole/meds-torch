@@ -26,7 +26,10 @@ from meds_torch.models import (
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
 from meds_torch.models.zero_shot_labeler.time_to_event_labeler import TaskLabeler
-from meds_torch.models.zero_shot_labeler.utils import TrajectoryBatch
+from meds_torch.models.zero_shot_labeler.utils import (
+    TrajectoryBatch,
+    get_time_days_delta,
+)
 
 # Create dummy components for testing
 
@@ -245,6 +248,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
     Examples:
     >>> import tempfile
+    >>> import datetime
     >>> from hydra.utils import instantiate
     >>> # Create temporary metadata file
     >>> temp_file = tempfile.NamedTemporaryFile(suffix='.parquet')
@@ -289,34 +293,30 @@ class EicForecastingModule(BaseModule, TimeableMixin):
     ...     'code': torch.tensor([[0, 1, 2], [1, 2, 3]]),
     ...     'mask': torch.ones(2, 3).bool()
     ... }
-
-
-    # >>> batch['mask'][0,-1] = 0 # mask a token
-
-
-    # >>>
-    # >>> # Test workflow 1: Autoregressive training
-    # >>> model = EicForecastingModule(cfg)
-    # >>> loss = model.training_step(batch)
-    # >>> assert loss.isfinite().all()
-    # >>>
-    # >>> # Test workflow 2: Data generation
-    # >>> cfg.num_samples = 2  # Enable generation
-    # >>> model = EicForecastingModule(cfg)
-    # >>>
-    # >>> # Test generation
-    # >>> output = model.forward(batch)
-    # >>> print(f"Generated sequences shape: {output['GENERATE//0']['code'].shape}")
-    # Generated sequences shape: torch.Size([2, 3])
-    # >>> # Test workflow 3: Zero-shot prediction
-    # >>> cfg.zero_shot_labeler = lambda x: torch.tensor([0.7, 0.3])
-    # >>> model = EicForecastingModule(cfg)
-    # >>> output = model.forward(batch)
-    # >>> print(f"Zero-shot predictions shape: {output[MODEL_PRED_PROBA_KEY].shape}")
-    # Zero-shot predictions shape: torch.Size([2])
-    # >>>
-
-
+    >>>
+    >>> # Test workflow 1: Autoregressive training
+    >>> model = EicForecastingModule(cfg)
+    >>> loss = model.training_step(batch)
+    >>> assert loss.isfinite().all()
+    >>>
+    >>> # Test workflow 2: Data generation
+    >>> cfg.num_samples = 2  # Enable generation
+    >>> model = EicForecastingModule(cfg)
+    >>>
+    >>> # Test generation
+    >>> output = model.forward(batch)
+    >>> print(f"Generated sequences shape: {output['GENERATE//0']['code'].shape}")
+    Generated sequences shape: torch.Size([2, 3])
+    >>> # Test workflow 3: Zero-shot prediction
+    >>> cfg.zero_shot_labeler = lambda x: (torch.tensor([0.7, 0.3]), torch.tensor([False, True]))
+    >>> model = EicForecastingModule(cfg)
+    >>> batch['prediction_time'] = [datetime.datetime(1997,1,1), datetime.datetime(1997,1,1)]
+    >>> batch['end_time'] = [datetime.datetime(1997,1,1), datetime.datetime(1997,1,1)]
+    >>> output = model.forward(batch)
+    >>> print(f"Zero-shot predictions shape: {output[MODEL_PRED_PROBA_KEY].shape}")
+    Zero-shot predictions shape: torch.Size([2])
+    >>> output[MODEL_PRED_PROBA_KEY]
+    tensor([0.7000, 0.5000])
     >>> # Test generation with real model
     >>> cfg.num_samples = 2  # Enable generation
     >>> B, S, L = 2, 5, 8 # [batch_size, input_sequence_length, token_dim]
@@ -618,59 +618,64 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         ... })
         >>> code_tensors = [
         ...     {'code': torch.tensor([[0, 2, 5, 5]]), 'subject_id': ['1'],
-        ...      'mask': torch.tensor([[1, 1, 1, 1]]), 'prediction_time': [datetime(1997, 1, 1)],},
+        ...      'mask': torch.tensor([[1, 1, 1, 1]]), 'prediction_time': [datetime(1997, 1, 1)],
+        ...      'end_time': [datetime(1996, 12, 31)]},
         ...     {'code': torch.tensor([[2, 3, 4, 5], [5, 5, 0, 1]]),
         ...      'mask': torch.tensor([[1, 1, 1, 0], [1, 1, 1, 0]]),
         ...      'prediction_time': [datetime(1998, 1, 1), datetime(1999, 1, 1)],
-        ...      'subject_id': ['2','3']},
+        ...      'subject_id': ['2','3'], 'end_time': [datetime(1997, 12, 31), datetime(1996, 12, 31)],},
         ... ]
         >>> EicForecastingModule.to_meds(code_tensors, metadata_df)
         shape: (10, 5)
-        ┌─────────────────┬──────┬───────────────┬────────────┬─────────────────────┐
-        │ time_delta_days ┆ code ┆ numeric_value ┆ subject_id ┆ prediction_time     │
-        │ ---             ┆ ---  ┆ ---           ┆ ---        ┆ ---                 │
-        │ f32             ┆ i64  ┆ f32           ┆ i64        ┆ datetime[μs]        │
-        ╞═════════════════╪══════╪═══════════════╪════════════╪═════════════════════╡
-        │ 0.0             ┆ 0    ┆ NaN           ┆ 1          ┆ 1997-01-01 00:00:00 │
-        │ 0.0             ┆ 2    ┆ 0.375         ┆ 1          ┆ 1997-01-01 00:00:00 │
-        │ 0.002738        ┆ 5    ┆ NaN           ┆ 1          ┆ 1997-01-01 00:00:00 │
-        │ 0.005476        ┆ 5    ┆ NaN           ┆ 1          ┆ 1997-01-01 00:00:00 │
-        │ 0.0             ┆ 2    ┆ 0.375         ┆ 2          ┆ 1998-01-01 00:00:00 │
-        │ 0.0             ┆ 3    ┆ 0.625         ┆ 2          ┆ 1998-01-01 00:00:00 │
-        │ 0.0             ┆ 4    ┆ 0.875         ┆ 2          ┆ 1998-01-01 00:00:00 │
-        │ 0.002738        ┆ 5    ┆ NaN           ┆ 3          ┆ 1999-01-01 00:00:00 │
-        │ 0.005476        ┆ 5    ┆ NaN           ┆ 3          ┆ 1999-01-01 00:00:00 │
-        │ 0.005476        ┆ 0    ┆ NaN           ┆ 3          ┆ 1999-01-01 00:00:00 │
-        └─────────────────┴──────┴───────────────┴────────────┴─────────────────────┘
+        ┌──────┬───────────────┬────────────┬─────────────────────┬────────────────────────────┐
+        │ code ┆ numeric_value ┆ subject_id ┆ prediction_time     ┆ time                       │
+        │ ---  ┆ ---           ┆ ---        ┆ ---                 ┆ ---                        │
+        │ i64  ┆ f32           ┆ i64        ┆ datetime[μs]        ┆ datetime[μs]               │
+        ╞══════╪═══════════════╪════════════╪═════════════════════╪════════════════════════════╡
+        │ 0    ┆ NaN           ┆ 1          ┆ 1997-01-01 00:00:00 ┆ 1996-12-31 00:00:00        │
+        │ 2    ┆ 0.375         ┆ 1          ┆ 1997-01-01 00:00:00 ┆ 1996-12-31 00:00:00        │
+        │ 5    ┆ NaN           ┆ 1          ┆ 1997-01-01 00:00:00 ┆ 1997-12-31 05:48:44.315009 │
+        │ 5    ┆ NaN           ┆ 1          ┆ 1997-01-01 00:00:00 ┆ 1998-12-31 11:37:28.630018 │
+        │ 2    ┆ 0.375         ┆ 2          ┆ 1998-01-01 00:00:00 ┆ 1997-12-31 00:00:00        │
+        │ 3    ┆ 0.625         ┆ 2          ┆ 1998-01-01 00:00:00 ┆ 1997-12-31 00:00:00        │
+        │ 4    ┆ 0.875         ┆ 2          ┆ 1998-01-01 00:00:00 ┆ 1997-12-31 00:00:00        │
+        │ 5    ┆ NaN           ┆ 3          ┆ 1999-01-01 00:00:00 ┆ 1997-12-31 05:48:44.315009 │
+        │ 5    ┆ NaN           ┆ 3          ┆ 1999-01-01 00:00:00 ┆ 1998-12-31 11:37:28.630018 │
+        │ 0    ┆ NaN           ┆ 3          ┆ 1999-01-01 00:00:00 ┆ 1998-12-31 11:37:28.630018 │
+        └──────┴───────────────┴────────────┴─────────────────────┴────────────────────────────┘
         """
         code_to_time_map = cls.get_code_to_time_map(metadata_df)
         code_to_numeric_value_map = cls.get_code_to_numeric_value_map(metadata_df)
         # Initialize lists to store the DataFrame rows
         dfs = []
         for item in code_tensors:
-            time = torch.cumsum(code_to_time_map[item["code"]], dim=1)
+            time_delta_years = torch.cumsum(code_to_time_map[item["code"]], dim=1)
             numeric_values = code_to_numeric_value_map[item["code"]]
             subject_id = item["subject_id"]
             if isinstance(subject_id, torch.Tensor):
                 subject_id = subject_id.numpy()
-            df = pl.from_dict(
-                dict(
-                    time=time.numpy(),
-                    code=item["code"].numpy(),
-                    numeric_value=numeric_values.numpy(),
-                    subject_id=subject_id,
-                    mask=item["mask"].numpy(),
-                    prediction_time=item["prediction_time"],
-                )
+            data = dict(
+                time_delta_days=time_delta_years.numpy() * 365.2422,
+                code=item["code"].numpy(),
+                numeric_value=numeric_values.numpy(),
+                subject_id=subject_id,
+                mask=item["mask"].numpy(),
+                end_time=item["end_time"],
+                prediction_time=item["prediction_time"],
             )
+
+            df = pl.from_dict(data)
             df = (
-                df.explode("time", "code", "numeric_value", "mask")
+                df.explode("time_delta_days", "code", "numeric_value", "mask")
                 .filter(pl.col("mask").cast(pl.Boolean))
                 .with_columns(pl.col("subject_id").cast(pl.Int64))
-                .with_columns(pl.col("time") / 365.2422)  # convert time from years to days
-                .rename({"time": "time_delta_days"})
                 .drop("mask")
             )
+            time_expr = (pl.col("time_delta_days") * 24 * 60 * 60 * 1_000_000_000).cast(
+                pl.Duration(time_unit="ns")
+            )
+            df = df.with_columns((time_expr + pl.col("end_time")).alias("time"))
+            df = df.drop("time_delta_days", "end_time")
             dfs.append(df)
         return pl.concat(dfs)
 
@@ -680,6 +685,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         code,
         mask,
         metadata_df,
+        prediction_time_offset_days: torch.Tensor,
         code_to_time_map: torch.Tensor = None,
         code_to_numeric_value_map: torch.Tensor = None,
     ):
@@ -690,6 +696,9 @@ class EicForecastingModule(BaseModule, TimeableMixin):
             mask (torch.Tensor): Tensor of shape (batch_size, sequence_length) indicates valid
                 measurements/codes
             metadata_df: Polars DataFrame containing code metadata (includes 'code' column)
+            prediction_time_offset_days: Tensor of shape (batch_size,) containing the time difference in days
+                between each input sequence's end time and its target prediction time. Used to calculate
+                absolute timestamps since the TrajectoryBatch stores times relative to the prediction time.
 
         Returns:
             pl.DataFrame: MEDS format DataFrame with columns:
@@ -719,11 +728,12 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         ... })
         >>> code = torch.tensor([[0, 2, 5, 5], [2, 3, 4, 5], [5, 5, 0, 1]])
         >>> mask = torch.tensor([[1, 1, 1, 1], [1, 1, 1, 0], [1, 1, 1, 0]])
+        >>> prediction_time_offset_days = torch.tensor([0.0, 1.0, 2.0])
         >>> from pprint import pprint, pformat
-        >>> EicForecastingModule.to_trajectory_batch(code, mask, metadata_df)
+        >>> EicForecastingModule.to_trajectory_batch(code, mask, metadata_df, prediction_time_offset_days)
         TrajectoryBatch(time=tensor([[0., 0., 1., 2.],
-                [0., 0., 0., 1.],
-                [1., 2., 2., 2.]]), code=tensor([[0, 2, 5, 5],
+                [1., 1., 1., 2.],
+                [3., 4., 4., 4.]]), code=tensor([[0, 2, 5, 5],
                 [2, 3, 4, 5],
                 [5, 5, 0, 1]]), mask=tensor([[1, 1, 1, 1],
                 [1, 1, 1, 0],
@@ -741,6 +751,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         time = torch.cumsum(code_to_time_map[code], dim=1)
         numeric_value = code_to_numeric_value_map[code]
         numeric_value_mask = numeric_value.isnan()
+        time += prediction_time_offset_days.unsqueeze(1)
         return TrajectoryBatch(time, code, mask, numeric_value, numeric_value_mask)
 
     @torch.no_grad()
@@ -798,8 +809,19 @@ class EicForecastingModule(BaseModule, TimeableMixin):
             input_batch[GENERATE_PREFIX + str(i)] = generated_data
 
             if self.cfg.get("zero_shot_labeler") is not None:
+                if "prediction_time" not in input_batch or "end_time" not in input_batch:
+                    raise ValueError(
+                        "Prediction time and end time must be provided for zero-shot labeling. "
+                        "Enable the flags do_include_prediction_time and do_include_end_time."
+                    )
+                prediction_time_offset_days = get_time_days_delta(
+                    input_batch["prediction_time"], input_batch["end_time"], generated_data["code"].device
+                )
                 trajectory_batch = self.to_trajectory_batch(
-                    generated_data["code"], generated_data["mask"], self.metadata_df
+                    generated_data["code"],
+                    generated_data["mask"],
+                    self.metadata_df,
+                    prediction_time_offset_days,
                 )
                 input_batch.setdefault(MODEL_PRED_PROBA_KEY, torch.zeros(prompts.shape[0]))
                 if isinstance(self.cfg.zero_shot_labeler, DictConfig):
@@ -809,7 +831,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
                 pred_labels, unknown_pred = task_labeler(trajectory_batch)
                 # Handle unknown values by setting their probability to 0.5
                 pred_labels[unknown_pred] = 0.5
-                input_batch[MODEL_PRED_PROBA_KEY] += pred_labels.squeeze(1)
+                input_batch[MODEL_PRED_PROBA_KEY] += pred_labels
                 logger.info(f"Completed zero-shot labeling for sample {i+1}")
         if MODEL_PRED_PROBA_KEY in input_batch:
             input_batch[MODEL_PRED_PROBA_KEY] /= self.cfg.num_samples

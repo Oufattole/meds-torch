@@ -32,6 +32,7 @@ tokenizer: "emilyalsentzer/Bio_ClinicalBERT"
 do_include_subject_id: false
 do_include_subsequence_indices: false
 do_include_start_time_min: false
+do_include_end_time: false
 do_include_prediction_time: false
 do_prepend_static_data: false
 num_value_code_quantiles: null

@@ -454,7 +454,7 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
     end_idx: <class 'int'>
     dynamic: <class 'nested_ragged_tensors.ragged_numpy.JointNestedRaggedTensorDict'>
     start_time: <class 'datetime.datetime'>
-    prediction_time: <class 'datetime.datetime'>
+    end_time: <class 'datetime.datetime'>
     """
 
     def __init__(self, cfg: DictConfig, split: str):
