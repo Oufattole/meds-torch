@@ -47,6 +47,8 @@ class DummyModel:
         prompts: torch.Tensor,
         mask: torch.Tensor | None = None,
         get_next_token_time: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
+        eos_tokens=None,
+        time_offset_years: torch.Tensor | None = None,
         temperature: float = 1.0,
         filter_logits_fn: str | Callable = torch.nn.Identity(),
     ) -> torch.Tensor:
@@ -94,28 +96,29 @@ CODE_LOGITS = "MODEL//CODE_LOGITS"
 # Time quantiles for the EIC dataset
 TIME_QUANTILE_VALUES = [
     0,
-    0.00000190258,
-    0.00000951293,
-    0.00001902587,
-    0.00005707762,
-    0.00011415525,
-    0.00034246575,
-    0.0006849315,
-    0.00136986301,
-    0.00273972602,
-    0.00547945205,
-    0.0109589041,
-    0.01917808219,
-    0.03835616438,
-    0.08219178082,
-    0.16438356164,
-    0.32876712328,
-    1,
-    2,
-    5,
-    10,
-    20,
-    40,
+    1.8697990981546083e-06,
+    6.042738570007656e-06,
+    1.5023761280952375e-05,
+    3.7040579000812096e-05,
+    9.407141472104954e-05,
+    0.00021470011508317946,
+    0.000483380440410716,
+    0.0010109219329935046,
+    0.0018344958495578154,
+    0.0041425300336417024,
+    0.008303153066089282,
+    0.015989647084188808,
+    0.029314912679925205,
+    0.0594034167939482,
+    0.11676680580396949,
+    0.23320547561943775,
+    0.5373471820293758,
+    1.354175718970152,
+    3.012664764359352,
+    6.511592621764305,
+    18.78151017351385,
+    29.61825810321306,
+    64.47917702102863,
 ]
 
 TIME_QUANTILE_NAMES = [
@@ -142,6 +145,7 @@ TIME_QUANTILE_NAMES = [
     "TIME//DELTA//TOKEN//_Q_20",
     "TIME//DELTA//TOKEN//_Q_21",
     "TIME//DELTA//TOKEN//_Q_22",
+    "TIME//DELTA//TOKEN//_Q_23",
 ]
 
 
@@ -274,6 +278,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
     ...     "max_seq_len": 10,
     ...     "zero_shot_labeler": None,
     ...     'temperature': 1.0,
+    ...     'eos_tokens': [4,],
     ...     "optimizer": {
     ...         "_target_": "meds_torch.models.eic_forecasting.DummyOptimizer",
     ...         "_partial_": True
@@ -304,14 +309,14 @@ class EicForecastingModule(BaseModule, TimeableMixin):
     >>> model = EicForecastingModule(cfg)
     >>>
     >>> # Test generation
+    >>> batch['prediction_time'] = [datetime.datetime(1997,1,1), datetime.datetime(1997,1,1)]
+    >>> batch['end_time'] = [datetime.datetime(1997,1,1), datetime.datetime(1997,1,1)]
     >>> output = model.forward(batch)
     >>> print(f"Generated sequences shape: {output['GENERATE//0']['code'].shape}")
     Generated sequences shape: torch.Size([2, 3])
     >>> # Test workflow 3: Zero-shot prediction
     >>> cfg.zero_shot_labeler = lambda x: (torch.tensor([0.7, 0.3]), torch.tensor([False, True]))
     >>> model = EicForecastingModule(cfg)
-    >>> batch['prediction_time'] = [datetime.datetime(1997,1,1), datetime.datetime(1997,1,1)]
-    >>> batch['end_time'] = [datetime.datetime(1997,1,1), datetime.datetime(1997,1,1)]
     >>> output = model.forward(batch)
     >>> print(f"Zero-shot predictions shape: {output[MODEL_PRED_PROBA_KEY].shape}")
     Zero-shot predictions shape: torch.Size([2])
@@ -363,6 +368,9 @@ class EicForecastingModule(BaseModule, TimeableMixin):
     1
     >>> temp_file.close()
     """
+
+    TIME_QUANTILE_VALUES = TIME_QUANTILE_VALUES
+    TIME_QUANTILE_NAMES = TIME_QUANTILE_NAMES
 
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
@@ -484,8 +492,8 @@ class EicForecastingModule(BaseModule, TimeableMixin):
             self.log(f"test/NEXT_TOKEN/{metric_name.upper()}", value, on_epoch=True)
         self.test_next_token_metric.reset()
 
-    @staticmethod
-    def get_code_to_time_map(metadata_df) -> dict:
+    @classmethod
+    def get_code_to_time_map(cls, metadata_df) -> dict:
         """Convert the metadata DataFrame to a dictionary mapping code to time.
 
         Args:
@@ -501,13 +509,14 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         ...     "code/vocab_index": [0, 1, 2, 3]
         ... })
         >>> # Note that the code "TIME//DELTA//TOKEN//_Q_17" maps to 1 year
+        >>> EicForecastingModule.TIME_QUANTILE_VALUES = [1.0 for _ in range(24)]
         >>> EicForecastingModule.get_code_to_time_map(metadata_df)
         tensor([0., 0., 0., 1., 0.])
         """
         assert metadata_df["code/vocab_index"].is_sorted()
         code_to_time_map = torch.tensor(
             [
-                TIME_QUANTILE_VALUES[TIME_QUANTILE_NAMES.index(code)]
+                cls.TIME_QUANTILE_VALUES[cls.TIME_QUANTILE_NAMES.index(code)]
                 if code in set(TIME_QUANTILE_NAMES)
                 else 0
                 for code in metadata_df["code"]
@@ -516,8 +525,8 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         code_to_time_map = torch.cat([code_to_time_map, torch.zeros(1)])
         return code_to_time_map
 
-    @staticmethod
-    def get_code_to_numeric_value_map(metadata_df, get_raw_values=False) -> dict:
+    @classmethod
+    def get_code_to_numeric_value_map(cls, metadata_df, get_raw_values=False) -> dict:
         """Convert the metadata DataFrame to a dictionary mapping code to numeric value.
 
         Args:
@@ -558,14 +567,22 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         result = torch.full((max_vocab_idx + 1,), float("nan"))
         ordered_quantiles = [field.name for field in metadata_df.schema["values/quantiles"].fields]
         percentiles = [0, *[float(q.split("/")[-1]) for q in ordered_quantiles], 1]
+        if "values/min" not in metadata_df.columns or "values/max" not in metadata_df.columns:
+            logger.warning("Missing values/min and/or values/max values in metadata_df")
 
         # Process each row in the DataFrame
         for row in metadata_df.iter_rows(named=True):
             vocab_idx = row["code/vocab_index"]
             code = row["code"]
-            min_value = row["values/min"]
-            max_value = row["values/max"]
             raw_quantiles = [row["values/quantiles"][each] for each in ordered_quantiles]
+            if "values/min" in row:
+                min_value = row["values/min"]
+            else:
+                min_value = raw_quantiles[0]
+            if "values/max" in row:
+                max_value = row["values/max"]
+            else:
+                max_value = raw_quantiles[-1]
             raw_quantiles = [min_value, *raw_quantiles, max_value]
 
             # Check if this is a quarterly code (contains "//_Q_")
@@ -685,7 +702,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         code,
         mask,
         metadata_df,
-        prediction_time_offset_days: torch.Tensor,
+        prediction_time_offset_years: torch.Tensor,
         code_to_time_map: torch.Tensor = None,
         code_to_numeric_value_map: torch.Tensor = None,
     ):
@@ -728,9 +745,9 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         ... })
         >>> code = torch.tensor([[0, 2, 5, 5], [2, 3, 4, 5], [5, 5, 0, 1]])
         >>> mask = torch.tensor([[1, 1, 1, 1], [1, 1, 1, 0], [1, 1, 1, 0]])
-        >>> prediction_time_offset_days = torch.tensor([0.0, 1.0, 2.0])
+        >>> prediction_time_offset_years = torch.tensor([0.0, 1.0, 2.0])
         >>> from pprint import pprint, pformat
-        >>> EicForecastingModule.to_trajectory_batch(code, mask, metadata_df, prediction_time_offset_days)
+        >>> EicForecastingModule.to_trajectory_batch(code, mask, metadata_df, prediction_time_offset_years)
         TrajectoryBatch(time=tensor([[0., 0., 1., 2.],
                 [1., 1., 1., 2.],
                 [3., 4., 4., 4.]]), code=tensor([[0, 2, 5, 5],
@@ -751,7 +768,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         time = torch.cumsum(code_to_time_map[code], dim=1)
         numeric_value = code_to_numeric_value_map[code]
         numeric_value_mask = numeric_value.isnan()
-        time += prediction_time_offset_days.unsqueeze(1)
+        time += prediction_time_offset_years.unsqueeze(1)
         return TrajectoryBatch(time, code, mask, numeric_value, numeric_value_mask)
 
     @torch.no_grad()
@@ -784,12 +801,26 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         def get_next_token_time(x):
             return self.time_quantile_map[x.squeeze()]
 
+        if "prediction_time" not in input_batch or "end_time" not in input_batch:
+            raise ValueError(
+                "Prediction time and end time must be provided for zero-shot labeling. "
+                "Enable the flags do_include_prediction_time and do_include_end_time."
+            )
+        prediction_time_offset_years = (
+            -get_time_days_delta(input_batch["prediction_time"], input_batch["end_time"], prompts.device)
+            / 365.25
+        )
+        if (prediction_time_offset_years > 0).any():
+            raise ValueError("time_offset_years must be less than or equal to 0")
+
         for i in range(self.cfg.num_samples):
             out = self.model.generate(
                 prompts=prompts,
                 mask=mask,
                 get_next_token_time=get_next_token_time,
+                time_offset_years=prediction_time_offset_years,
                 temperature=self.cfg.temperature,
+                eos_tokens=self.cfg.eos_tokens,
                 **kwargs,
             )
             out_mask = torch.ones_like(out).bool()
@@ -804,24 +835,16 @@ class EicForecastingModule(BaseModule, TimeableMixin):
                 "numeric_value": null_data,
                 "numeric_value_mask": null_data,
                 "static_mask": null_data,
-                "time_delta_days": time_deltas.cpu(),
+                "time_delta_years": time_deltas.cpu(),
             }
             input_batch[GENERATE_PREFIX + str(i)] = generated_data
 
             if self.cfg.get("zero_shot_labeler") is not None:
-                if "prediction_time" not in input_batch or "end_time" not in input_batch:
-                    raise ValueError(
-                        "Prediction time and end time must be provided for zero-shot labeling. "
-                        "Enable the flags do_include_prediction_time and do_include_end_time."
-                    )
-                prediction_time_offset_days = get_time_days_delta(
-                    input_batch["prediction_time"], input_batch["end_time"], generated_data["code"].device
-                )
                 trajectory_batch = self.to_trajectory_batch(
                     generated_data["code"],
                     generated_data["mask"],
                     self.metadata_df,
-                    prediction_time_offset_days,
+                    prediction_time_offset_years.cpu(),
                 )
                 input_batch.setdefault(MODEL_PRED_PROBA_KEY, torch.zeros(prompts.shape[0]))
                 if isinstance(self.cfg.zero_shot_labeler, DictConfig):
@@ -831,7 +854,10 @@ class EicForecastingModule(BaseModule, TimeableMixin):
                 pred_labels, unknown_pred = task_labeler(trajectory_batch)
                 # Handle unknown values by setting their probability to 0.5
                 pred_labels[unknown_pred] = 0.5
-                input_batch[MODEL_PRED_PROBA_KEY] += pred_labels
+                try:
+                    input_batch[MODEL_PRED_PROBA_KEY] += pred_labels
+                except:  # noqa: E722
+                    input_batch[MODEL_PRED_PROBA_KEY] += pred_labels.squeeze()
                 logger.info(f"Completed zero-shot labeling for sample {i+1}")
         if MODEL_PRED_PROBA_KEY in input_batch:
             input_batch[MODEL_PRED_PROBA_KEY] /= self.cfg.num_samples
