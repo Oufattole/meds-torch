@@ -8,6 +8,7 @@ stages:
   - count_codes
   - filter_measurements
   - filter_subjects
+  - reorder_measurments
   - fit_normalization
   - fit_vocabulary_indices
   - custom_normalization
@@ -29,6 +30,9 @@ stage_configs:
       - code/n_subjects
   filter_measurements:
     min_subjects_per_code: 10000
+  reorder_measurments:
+    _script: "MEDS_transform-reorder_measurements"
+    order: $(python -m meds_torch.utils.get_all_measurements metadata_fp=${oc.env:MODEL_DIR}/metadata/codes.parquet)
   fit_normalization:
     _script: MEDS_transform-aggregate_code_metadata
     aggregations:
