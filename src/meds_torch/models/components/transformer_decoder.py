@@ -304,7 +304,8 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         prompts: torch.Tensor,
         mask: torch.Tensor | None = None,
         get_next_token_time: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
-        eos_token=None,
+        time_offset_years: torch.Tensor | None = None,
+        eos_tokens: list[int] | None = None,
         temperature=1.0,
         filter_logits_fn: str | Callable = identity,
         restrict_to_max_seq_len: bool = True,
@@ -340,8 +341,9 @@ class TransformerDecoderModel(torch.nn.Module, Module):
             self.model,
             prompts=prompts,
             budget=self.cfg.generation_budget,
+            time_offset_years=time_offset_years,
             get_next_token_time=get_next_token_time,
-            eos_token=eos_token,
+            eos_tokens=eos_tokens,
             temperature=temperature,
             prompt_lens=prompt_lengths,
             filter_logits_fn=filter_logits_fn,
@@ -359,8 +361,9 @@ def generate(
     model: TransformerWrapper,
     prompts: torch.Tensor,
     budget: GenerationBudget,
+    time_offset_years: torch.Tensor | None = None,
     get_next_token_time: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
-    eos_token=None,
+    eos_tokens: list[int] | None = None,
     temperature=1.0,
     prompt_lens: torch.Tensor | None = None,
     filter_logits_fn: str | Callable = identity,
@@ -414,12 +417,12 @@ def generate(
     torch.Size([2, 2])
 
     >>> # Test with EOS token
-    >>> eos_token = vocab_size - 1
+    >>> eos_tokens = [vocab_size - 1]
     >>> budget = GenerationBudget.from_seq_len(2)
     >>> gen_tokens = generate(model=model,
     ...     prompts=prompts,
     ...     budget=budget,
-    ...     eos_token=eos_token,
+    ...     eos_tokens=eos_tokens,
     ...     temperature=0.0  # greedy
     ... )
     >>> gen_tokens.shape[0]  # Batch size preserved
@@ -493,13 +496,17 @@ def generate(
     if exists(prompt_lens):
         prompts = align_right(prompts, prompt_lens, pad_id=pad_value)
         seq_start_pos = t - prompt_lens
+    if exists(eos_tokens):
+        eos_tokens = torch.tensor(eos_tokens, device=prompts.device)
 
     # output from which sampled tokens appended to
     out = prompts
     # kv caches
     cache = None
     # Initialize tracking tensors
-    cumulative_time = torch.zeros(b, device=prompts.device)
+    cumulative_time = (
+        time_offset_years if time_offset_years is not None else torch.zeros(b, device=prompts.device)
+    )
 
     # sampling up to budget
     out = prompts
@@ -562,15 +569,20 @@ def generate(
         # concat sample
         out = torch.cat((out, sample), dim=-1)
 
-        if not exists(eos_token):
+        if not exists(eos_tokens):
             continue
 
-        is_eos_tokens = out == eos_token
+        is_eos_tokens = torch.isin(out, eos_tokens)
 
-        if is_eos_tokens.any(dim=-1).all():
+        if exists(budget.min_time_len):
+            time_reached = cumulative_time > budget.min_time_len
+        else:
+            time_reached = torch.zeros(b, dtype=torch.bool)
+
+        if (is_eos_tokens.any(dim=-1) | time_reached).all():
             break
 
-    if exists(eos_token):
+    if exists(eos_tokens):
         # mask out everything after the eos tokens
         shifted_is_eos_tokens = F.pad(is_eos_tokens, (1, -1))
         mask = shifted_is_eos_tokens.float().cumsum(dim=-1) >= 1
