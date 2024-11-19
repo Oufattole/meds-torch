@@ -38,6 +38,6 @@ stage_configs:
   custom_text_normalization:
     _script: "python -m meds_torch.utils.custom_text_normalization"
   custom_multimodal_tokenization:
-    _script: "python -m meds_torch.utils.custom_multimodal_tokenization"
+    _script: "python -m meds_torch.utils.custom_text_tokenization"
   custom_text_tensorization:
-    _script: "python -m meds_torch.utils.custom_text_tensorization"
+    _script: "python -m meds_torch.utils.custom_multimodal_tensorization"

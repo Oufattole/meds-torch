@@ -10,10 +10,13 @@ columns of concern here thus are `subject_id`, `time`, `code`, `numeric_value`, 
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 
 import hydra
+import numpy as np
 import polars as pl
+import torch
 from loguru import logger
 from MEDS_transforms import PREPROCESS_CONFIG_YAML
 from MEDS_transforms.mapreduce.utils import rwlock_wrap, shard_iterator
@@ -26,19 +29,42 @@ SECONDS_PER_HOUR = SECONDS_PER_MINUTE * 60.0
 SECONDS_PER_DAY = SECONDS_PER_HOUR * 24.0
 
 
+@dataclass
 class MultimodalReader(ABC):
     """Abstract base class for reading multimodal data."""
 
+    base_path: str
+
     @abstractmethod
-    def read_modality(self, modality_fp: Path) -> dict:
+    def read_modality(self, relative_modality_fp: str) -> torch.Tensor:
         """Read and return modality data as a tensor or other structured format.
 
         Args:
-            modality_fp: Path to the modality data file.
+            relative_modality_fp: Relative path to the modality data file.
 
         Returns:
             Dictionary containing the processed modality data.
         """
+
+
+class NpyReader(MultimodalReader):
+    def read_modality(self, relative_modality_fp: str) -> torch.Tensor:
+        """Read and return modality data from a NumPy binary file (npz).
+
+        Args:
+            modality_fp: Relative path to the modality data file.
+
+        Returns:
+            Dictionary containing the processed modality data in NumPy format.
+        """
+        data = np.load(Path(self.base_path) / relative_modality_fp)
+        return torch.tensor(data)
+
+
+class DummyReader(MultimodalReader):
+    def read_modality(self, relative_modality_fp: str):
+        # Return a simple tensor for testing
+        return torch.tensor([1, 2, 3])
 
 
 def fill_to_nans(col: str | pl.Expr) -> pl.Expr:
@@ -139,27 +165,23 @@ def process_modality_data(df: pl.DataFrame, reader: MultimodalReader) -> dict[st
         Dictionary mapping f"{modality_idx}" to processed modality data.
 
     Examples:
-        >>> import torch
-        >>> class DummyReader(MultimodalReader):
-        ...     def read_modality(self, modality_fp):
-        ...         return torch.ones(3)
         >>> df = pl.DataFrame({
         ...     "code": [101, 201],
         ...     "modality_fp": ["path1.jpg", "path2.jpg"],
         ...     "modality_idx": [0, 1]
         ... })
-        >>> result = process_modality_data(df, DummyReader())
+        >>> result = process_modality_data(df, DummyReader("."))
         >>> sorted(result.keys())
         ['0', '1']
         >>> result['0']
-        tensor([1., 1., 1.])
+        tensor([1, 2, 3])
         >>> # Check empty case
         >>> df_empty = pl.DataFrame({
         ...     "code": [101],
         ...     "modality_fp": [None],
         ...     "modality_idx": [None]
         ... })
-        >>> process_modality_data(df_empty, DummyReader())
+        >>> process_modality_data(df_empty, DummyReader("."))
         {}
     """
     modality_mapping = {}
@@ -235,10 +257,6 @@ def extract_seq_of_subject_events(
 
     Examples:
         >>> from datetime import datetime
-        >>> import torch
-        >>> class DummyReader(MultimodalReader):
-        ...     def read_modality(self, modality_fp):
-        ...         return torch.ones(3)
         >>> df = pl.DataFrame({
         ...     "subject_id": [1, 1, 1, 2, 2],
         ...     "time": [None, datetime(2021, 1, 1), datetime(2021, 1, 13),
@@ -247,7 +265,7 @@ def extract_seq_of_subject_events(
         ...     "numeric_value": [1.0, 2.0, 3.0, 4.0, 5.0],
         ...     "modality_fp": [None, "path1.jpg", None, None, "path2.jpg"]
         ... }).lazy()
-        >>> result_df, modality_mapping = extract_seq_of_subject_events(df, DummyReader())
+        >>> result_df, modality_mapping = extract_seq_of_subject_events(df, DummyReader("."))
         >>> result_df.collect()
         shape: (2, 5)
         ┌────────────┬─────────────────┬─────────────────┬─────────────────┬─────────────────┐
@@ -259,7 +277,7 @@ def extract_seq_of_subject_events(
         │ 2          ┆ [NaN]           ┆ [[201]]         ┆ [[5.0]]         ┆ [[1.0]]         │
         └────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┘
         >>> modality_mapping  # Check modality mapping was created
-        {'0': tensor([1., 1., 1.]), '1': tensor([1., 1., 1.])}
+        {'0': tensor([1, 2, 3]), '1': tensor([1, 2, 3])}
     """
     _, dynamic = split_static_and_dynamic(df)
 
@@ -307,13 +325,6 @@ def tokenize(cfg: DictConfig):
         >>> from omegaconf import OmegaConf
         >>> from safetensors import safe_open
         >>> import torch
-        >>>
-        >>> # Create a dummy MultimodalReader for testing
-        >>> class DummyReader(MultimodalReader):
-        ...     def read_modality(self, modality_fp):
-        ...         # Return a simple tensor for testing
-        ...         return torch.tensor([1, 2, 3])
-        >>>
         >>> # Create temporary directory and test data
         >>> tmpdir_object = tempfile.TemporaryDirectory()
         >>> tmpdir = str(tmpdir_object.name)
@@ -330,8 +341,7 @@ def tokenize(cfg: DictConfig):
         >>> test_df.write_parquet(in_fp)
         >>>
         >>> # Create config
-        >>> from hydra.utils import instantiate
-        >>> cfg = instantiate({
+        >>> cfg = OmegaConf.create({
         ...     "stage": "tokenize",
         ...     "stage_cfg": {
         ...         "input_dir": str(tmpdir),
@@ -339,7 +349,9 @@ def tokenize(cfg: DictConfig):
         ...         "output_dir": str(tmpdir),
         ...         "file_pattern": "shard_*.parquet",
         ...         "do_sequential": True,
-        ...         "reader": DummyReader()
+        ...         "reader": {
+        ...             "_target_": "meds_torch.utils.custom_multimodal_tokenization.DummyReader",
+        ...             "base_path": "."},
         ...     },
         ...     "do_overwrite": True
         ... })
@@ -380,10 +392,9 @@ def tokenize(cfg: DictConfig):
     )
 
     output_dir = Path(cfg.stage_cfg.output_dir)
-    if not isinstance(cfg.stage_cfg.reader, MultimodalReader):
-        raise ValueError(
-            f"cfg.stage_cfg.reader must be a MultimodalReader, but is: {type(cfg.stage_cfg.reader)}"
-        )
+    reader = hydra.utils.instantiate(cfg.stage_cfg.reader)
+    if not hasattr(reader, "read_modality"):
+        raise ValueError("cfg.stage_cfg.reader must have a read_modality function.")
     if train_only := cfg.stage_cfg.get("train_only", False):
         raise ValueError(f"train_only={train_only} is not supported for this stage.")
     shards_single_output, include_only_train = shard_iterator(cfg)
@@ -421,7 +432,7 @@ def tokenize(cfg: DictConfig):
             event_seq_out_fp,
             pl.scan_parquet,
             write_fn,
-            lambda df: extract_seq_of_subject_events(df, cfg.stage_cfg.reader),
+            lambda df: extract_seq_of_subject_events(df, reader),
             do_overwrite=cfg.do_overwrite,
         )
 
