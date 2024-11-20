@@ -11,6 +11,7 @@ from meds_torch.data.components.pytorch_dataset import PytorchDataset
 from meds_torch.data.components.random_windows_pytorch_dataset import (
     RandomWindowPytorchDataset,
 )
+from meds_torch.data.components.bimodal_pytorch_dataset import BimodalPytorchDataset
 from meds_torch.utils.module_class import Module
 
 
@@ -21,6 +22,8 @@ def get_dataset(cfg: DictConfig, split) -> PytorchDataset:
         return PytorchDataset(cfg, split)
     elif cfg.name == "random_windows_pytorch_dataset":
         return RandomWindowPytorchDataset(cfg, split)
+    elif cfg.name == "bimodal_pytorch_dataset":
+        return BimodalPytorchDataset(cfg, split)
     else:
         raise NotImplementedError(f"{cfg.name} not implemented!")
 

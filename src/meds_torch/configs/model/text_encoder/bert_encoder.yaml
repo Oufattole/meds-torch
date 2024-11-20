@@ -1,0 +1,14 @@
+defaults:
+  - _self_
+
+_target_: meds_torch.models.components.text_encoder.TextEncoderModel.initialize
+
+logits_dim: ${model.token_dim}
+num_tokens: 28996
+max_seq_len: ${model._resolved_max_seq_len}
+emb_dropout: ${model.backbone.dropout}
+notes_emb_size: 512
+notes_num_layers: 2
+notes_num_heads: 8
+notes_dropout: 0.1
+notes_max_seq_len: 512
