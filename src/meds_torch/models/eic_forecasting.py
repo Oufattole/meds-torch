@@ -838,6 +838,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
                 "time_delta_years": time_deltas.cpu(),
             }
             input_batch[GENERATE_PREFIX + str(i)] = generated_data
+            logger.info(f"Completed generation for sample {i+1}")
 
             if self.cfg.get("zero_shot_labeler") is not None:
                 trajectory_batch = self.to_trajectory_batch(
