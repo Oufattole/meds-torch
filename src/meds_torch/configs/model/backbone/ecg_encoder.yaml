@@ -1,0 +1,5 @@
+_target_: meds_torch.models.components.ecg_encoder.ECGEncoder.initialize
+token_dim: ${model.token_dim}
+num_patches: 50
+patch_size: 100
+num_leads: 12

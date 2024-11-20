@@ -1,0 +1,5 @@
+_target_: meds_torch.input_encoder.ecg_triplet_encoder.ECGTripletEncoder.initialize
+early_fusion: True
+max_seq_len: ${model.max_seq_len}
+token_dim: ${model.token_dim}
+vocab_size: ${data.vocab_size}
