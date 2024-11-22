@@ -44,24 +44,27 @@ class MultiModalPytorchDataset(PytorchDataset):
         self.filter_index()
 
     def filter_index(self):
-        """Filters out subjects that have no modality data in their patient history."""
-        # TODO: make this optional and only run for supervised learning maybe?
-        new_index = []
-        if self.has_task:
-            for idx, (subject_id, start_idx, end_idx) in enumerate(self.index):
-                subject_dynamic_data, subject_id, st, end = self.load_subject_dynamic_data(idx)
+        """Filters out subjects that have no modality data in their patient history.
 
-                out = self.load_subject(subject_dynamic_data, subject_id, st, end)
-                modality_idxs = out["dynamic"].tensors["dim0/modality_idx"]
-                has_modality_data = bool((~np.isnan(modality_idxs)).any())
-                if has_modality_data:
-                    new_index.append((subject_id, start_idx, end_idx))
-            if len(new_index) < len(self.index):
-                logger.warning(
-                    f"Filtered index has {len(self.index)} entries "
-                    f"while full index has {len(new_index)} entries."
-                )
-            self.index = new_index
+        Requires a supervised task is defined.
+        """
+        if not self.has_task:
+            raise ValueError("A supervised task must be defined to filter index.")
+        new_index = []
+        for idx, (subject_id, start_idx, end_idx) in enumerate(self.index):
+            subject_dynamic_data, subject_id, st, end = self.load_subject_dynamic_data(idx)
+
+            out = self.load_subject(subject_dynamic_data, subject_id, st, end)
+            modality_idxs = out["dynamic"].tensors["dim0/modality_idx"]
+            has_modality_data = bool((~np.isnan(modality_idxs)).any())
+            if has_modality_data:
+                new_index.append((subject_id, start_idx, end_idx))
+        if len(new_index) < len(self.index):
+            logger.warning(
+                f"Filtered index has {len(self.index)} entries "
+                f"while full index has {len(new_index)} entries."
+            )
+        self.index = new_index
 
     @SeedableMixin.WithSeed
     @TimeableMixin.TimeAs

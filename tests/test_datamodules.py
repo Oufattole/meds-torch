@@ -90,13 +90,20 @@ def test_multimodal_pytorch_dataset(meds_dir, modality):
         f"paths.data_dir={modality_dir}",
         "data=multimodal_pytorch_dataset",
     ]
-    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir, supervised=True)
     cfg.data.collate_type = "triplet"
     cfg.data.tokenizer = "emilyalsentzer/Bio_ClinicalBERT"
     pyd = MultiModalPytorchDataset(cfg.data, split="train")
-    assert not pyd.has_task
+    assert pyd.has_task, "Only supports supervised models at the moment"
     item = pyd[0]
-    assert item.keys() == {"static_indices", "static_values", "dynamic", "modality", "modality_sequence_idx"}
+    assert item.keys() == {
+        "static_indices",
+        "static_values",
+        "dynamic",
+        "modality",
+        "modality_sequence_idx",
+        "boolean_value",
+    }
     batch = pyd.collate([pyd[i] for i in range(2)])
     assert batch.keys() == {
         "mask",
@@ -108,6 +115,7 @@ def test_multimodal_pytorch_dataset(meds_dir, modality):
         "modality_batch_idx",
         "modality_sequence_idx",
         "modality",
+        "boolean_value",
     }
 
 
