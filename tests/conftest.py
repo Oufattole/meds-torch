@@ -51,10 +51,11 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml", supervised=F
         cfg = compose(config_name=config_name, return_hydra_config=True, overrides=overrides)
 
         with open_dict(cfg):
-            if "data.collate_type=eic" in overrides:
-                cfg.paths.data_dir = str(meds_dir / "eic_tensors")
-            else:
-                cfg.paths.data_dir = str(meds_dir / "triplet_tensors")
+            if not any("data_dir" in override for override in overrides):
+                if "data.collate_type=eic" in overrides:
+                    cfg.paths.data_dir = str(meds_dir / "eic_tensors")
+                else:
+                    cfg.paths.data_dir = str(meds_dir / "triplet_tensors")
             if supervised:
                 cfg.data.task_name = SUPERVISED_TASK_NAME
                 cfg.data.task_root_dir = str(meds_dir / "tasks")

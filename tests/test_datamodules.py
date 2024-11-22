@@ -12,6 +12,9 @@ import torch
 from omegaconf import open_dict
 from torch.utils.data import DataLoader
 
+from meds_torch.data.components.multimodal_pytorch_dataset import (
+    MultiModalPytorchDataset,
+)
 from meds_torch.data.components.multiwindow_pytorch_dataset import (
     MultiWindowPytorchDataset,
 )
@@ -69,6 +72,43 @@ def test_pytorch_dataset(meds_dir, collate_type):
         }
     else:
         raise NotImplementedError(f"{collate_type} not implemented")
+
+
+@pytest.mark.parametrize(
+    "modality",
+    [
+        "text",
+        "ecg",
+    ],
+)
+def test_multimodal_pytorch_dataset(meds_dir, modality):
+    if modality == "ecg":
+        modality_dir = meds_dir / "ecg_triplet_tensors"
+    elif modality == "text":
+        modality_dir = meds_dir / "multimodal_triplet_tensors"
+    overrides = [
+        f"paths.data_dir={modality_dir}",
+        "data=multimodal_pytorch_dataset",
+    ]
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
+    cfg.data.collate_type = "triplet"
+    cfg.data.tokenizer = "emilyalsentzer/Bio_ClinicalBERT"
+    pyd = MultiModalPytorchDataset(cfg.data, split="train")
+    assert not pyd.has_task
+    item = pyd[0]
+    assert item.keys() == {"static_indices", "static_values", "dynamic", "modality"}
+    batch = pyd.collate([pyd[i] for i in range(2)])
+    assert batch.keys() == {
+        "mask",
+        "static_mask",
+        "code",
+        "numeric_value",
+        "time_delta_days",
+        "numeric_value_mask",
+        "modality_batch_idx",
+        "modality_sequence_idx",
+        "modality",
+    }
 
 
 @pytest.mark.parametrize("collate_type", ["triplet", "triplet_prompt", "eic"])
