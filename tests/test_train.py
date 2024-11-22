@@ -62,6 +62,56 @@ def get_kwargs(request, meds_dir) -> dict:
     return helper
 
 
+def test_ecg_early_fusion_train(meds_dir, tmp_path):  # noqa: F811
+    """Tests the early fusion of ecg and EHR data."""
+    modality_dir = meds_dir / "ecg_triplet_tensors"
+    overrides = [
+        f"paths.data_dir={modality_dir}",
+        "data=multimodal_pytorch_dataset",
+        "model/input_encoder=ecg_triplet_encoder",
+        "model.input_encoder.early_fusion=True",
+        "model=supervised",
+    ]
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir, supervised=True)
+
+    with open_dict(cfg):
+        cfg.trainer.accelerator = "cpu"
+        cfg.paths.output_dir = str(tmp_path)
+        cfg.model.input_encoder.num_patches = 3
+        cfg.model.input_encoder.patch_size = 2
+        cfg.model.input_encoder.num_leads = 2
+        cfg.data.dataloader.batch_size = 3
+
+    HydraConfig().set_config(cfg)
+
+    train_main(cfg)
+
+
+def test_ecg_intermediate_fusion_train(meds_dir, tmp_path):  # noqa: F811
+    """Tests the intermediate fusion of ecg and EHR data."""
+    modality_dir = meds_dir / "ecg_triplet_tensors"
+    overrides = [
+        f"paths.data_dir={modality_dir}",
+        "data=multimodal_pytorch_dataset",
+        "model/input_encoder=ecg_triplet_encoder",
+        "model.input_encoder.early_fusion=False",
+        "model=multimodal_supervised",
+    ]
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir, supervised=True)
+
+    with open_dict(cfg):
+        cfg.trainer.accelerator = "cpu"
+        cfg.paths.output_dir = str(tmp_path)
+        cfg.model.input_encoder.num_patches = 3
+        cfg.model.input_encoder.patch_size = 2
+        cfg.model.input_encoder.num_leads = 2
+        cfg.data.dataloader.batch_size = 3
+
+    HydraConfig().set_config(cfg)
+
+    train_main(cfg)
+
+
 def test_fast_dev_train(get_kwargs: dict, tmp_path):  # noqa: F811
     """Tests the training configuration provided by the `kwargs` pytest fixture.
 

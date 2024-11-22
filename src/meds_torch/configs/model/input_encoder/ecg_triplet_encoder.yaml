@@ -3,3 +3,8 @@ early_fusion: True
 max_seq_len: ${model.max_seq_len}
 token_dim: ${model.token_dim}
 vocab_size: ${data.vocab_size}
+
+# TODO: Move to a separate subyaml file
+num_patches: 50
+patch_size: 100
+num_leads: 12

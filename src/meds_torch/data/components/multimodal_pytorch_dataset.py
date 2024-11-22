@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from loguru import logger
 from mixins import SeedableMixin, TimeableMixin
 from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 from omegaconf import DictConfig
@@ -44,7 +45,23 @@ class MultiModalPytorchDataset(PytorchDataset):
 
     def filter_index(self):
         """Filters out subjects that have no modality data in their patient history."""
-        # TODO: Implement this to filter self.index
+        # TODO: make this optional and only run for supervised learning maybe?
+        new_index = []
+        if self.has_task:
+            for idx, (subject_id, start_idx, end_idx) in enumerate(self.index):
+                subject_dynamic_data, subject_id, st, end = self.load_subject_dynamic_data(idx)
+
+                out = self.load_subject(subject_dynamic_data, subject_id, st, end)
+                modality_idxs = out["dynamic"].tensors["dim0/modality_idx"]
+                has_modality_data = bool((~np.isnan(modality_idxs)).any())
+                if has_modality_data:
+                    new_index.append((subject_id, start_idx, end_idx))
+            if len(new_index) < len(self.index):
+                logger.warning(
+                    f"Filtered index has {len(self.index)} entries "
+                    f"while full index has {len(new_index)} entries."
+                )
+            self.index = new_index
 
     @SeedableMixin.WithSeed
     @TimeableMixin.TimeAs
@@ -160,8 +177,13 @@ class MultiModalPytorchDataset(PytorchDataset):
         safetensor_fp = Path(self.config.modality_files_root) / f"{shard}.safetensors"
         with safe_open(safetensor_fp, framework="pt") as f:
             modality_idxs = out["dynamic"].tensors["dim0/modality_idx"]
-            modality_idxs = modality_idxs[~np.isnan(modality_idxs)]
-            out["modality"] = torch.stack([f.get_tensor(str(int(k))) for k in modality_idxs])
+            out["modality_sequence_idx"] = torch.tensor(
+                np.where(~np.isnan(modality_idxs))[0], dtype=torch.int32
+            )
+            nonnull_modality_idxs = modality_idxs[~np.isnan(modality_idxs)]
+            out["modality"] = torch.stack([f.get_tensor(str(int(k))) for k in nonnull_modality_idxs]).to(
+                torch.float32
+            )
 
         return out
 
@@ -180,6 +202,13 @@ class MultiModalPytorchDataset(PytorchDataset):
             dict: A dictionary containing the collated batch data.
         """
         modality_data = [item.pop("modality") for item in batch]
+        list_modality_sequence_idx = [item.pop("modality_sequence_idx") for item in batch]
+        modality_sequence_idx = torch.concat(list_modality_sequence_idx)
+        modality_batch_idx = torch.repeat_interleave(
+            torch.arange(len(list_modality_sequence_idx)),
+            torch.tensor([len(t) for t in list_modality_sequence_idx]),
+        )
+
         data = JointNestedRaggedTensorDict.vstack([item["dynamic"] for item in batch]).to_dense()
         tensorized = {k: torch.as_tensor(v) for k, v in data.items()}
         tensorized["code"] = tensorized["code"].long()
@@ -187,9 +216,6 @@ class MultiModalPytorchDataset(PytorchDataset):
         tensorized["numeric_value_mask"] = ~torch.isnan(tensorized["numeric_value"])
         tensorized["time_delta_days"] = torch.nan_to_num(tensorized["time_delta_days"], nan=0).float()
         tensorized["numeric_value"] = torch.nan_to_num(tensorized["numeric_value"], nan=0).float()
-        modality_rows, modality_cols = get_nonnan_indices(tensorized["modality_idx"])
-        tensorized["modality_sequence_idx"] = modality_rows
-        tensorized["modality_batch_idx"] = modality_cols
         del tensorized["modality_idx"]
 
         # Add task labels to batch
@@ -200,4 +226,9 @@ class MultiModalPytorchDataset(PytorchDataset):
                 else:
                     tensorized[k] = torch.Tensor([item[k] for item in batch])
         tensorized["modality"] = torch.concat(modality_data)
+        tensorized["modality_sequence_idx"] = modality_sequence_idx
+        tensorized["modality_batch_idx"] = modality_batch_idx
+        assert (
+            tensorized["modality"].shape[0] == len(modality_sequence_idx) == len(modality_batch_idx)
+        ), "Modality shape mismatch"
         return tensorized
