@@ -59,7 +59,7 @@ class ECGTripletEncoder(nn.Module, Module):
     Example 1 -- early_fusion==True:
         >>> import torch
         >>> from omegaconf import OmegaConf
-        >>> cfg = OmegaConf.create({"token_dim": 128, "vocab_size": 100, "max_seq_len": 512, "early_fusion": True})
+        >>> cfg = OmegaConf.create({"token_dim": 128, "vocab_size": 100, "max_seq_len": 512, "early_fusion": True, "num_patches": 50, "patch_size": 100, "num_leads": 12})
         >>> encoder = ECGTripletEncoder(cfg)
         >>> # Create a dummy batch
         >>> #   - Batch size: 2
@@ -86,7 +86,7 @@ class ECGTripletEncoder(nn.Module, Module):
     Example 2 -- early_fusion==False:
         >>> import torch
         >>> from omegaconf import OmegaConf
-        >>> cfg = OmegaConf.create({"token_dim": 128, "vocab_size": 100, "max_seq_len": 512, "early_fusion": False})
+        >>> cfg = OmegaConf.create({"token_dim": 128, "vocab_size": 100, "max_seq_len": 512, "early_fusion": False, "num_patches": 50, "patch_size": 100, "num_leads": 12})
         >>> encoder = ECGTripletEncoder(cfg)
         >>> # Create a dummy batch
         >>> #   - Batch size: 2
