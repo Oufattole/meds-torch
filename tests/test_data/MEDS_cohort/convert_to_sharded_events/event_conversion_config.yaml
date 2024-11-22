@@ -54,3 +54,9 @@ admit_vitals:
         parent_codes:
           LOINC/{loinc}:
             lab_code: temp
+ecg:
+  ecg:
+    code: ECG
+    time: col(ecg_date)
+    time_format: '%m/%d/%Y, %H:%M:%S'
+    modality_fp: col(ecg_path)
