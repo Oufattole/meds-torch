@@ -168,7 +168,7 @@ class ECGTripletEncoder(nn.Module, Module):
             counts = torch.zeros(B, 1, device=ecg_emb.device)
 
             modality_batch_idx = torch.tensor(batch["modality_batch_idx"],
-                                              dtype=torch.long, device=ecg_emb.device)
+                                        dtype=torch.long, device=ecg_emb.device)
 
             # Accumulate ECG embeddings per batch index and count the number of
             # ECGs per batch index.
@@ -189,11 +189,7 @@ class ECGTripletEncoder(nn.Module, Module):
         # size (E), the number of ECGs. These tell you which batch and which
         # element in the time series to add each ECG into.
         fused_emb = ehr_emb
-        E = len(batch["modality_batch_idx"])
-        for i in range(E):
-            batch_idx = batch["modality_batch_idx"][i]
-            sequence_idx = batch["modality_sequence_idx"][i]
-            fused_emb[batch_idx, sequence_idx] += ecg_emb[i]
+        fused_emb[batch["modality_batch_idx"], batch["modality_sequence_idx"]] += ecg_emb
 
         assert fused_emb.isfinite().all(), "Fused embedding is not finite"
         return fused_emb
