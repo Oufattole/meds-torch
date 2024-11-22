@@ -50,7 +50,3 @@ class MultimodalSupervisedModule(SupervisedModule):
         batch[MODEL_PRED_PROBA_KEY] = torch.sigmoid(logits)
         batch[MODEL_BATCH_LOSS_KEY] = loss
         return batch
-
-if __name__ == "__main__":
-    import doctest
-    doctest.testmod(verbose=True)
