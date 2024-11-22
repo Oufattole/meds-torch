@@ -110,7 +110,7 @@ class ECGTripletEncoder(nn.Module, Module):
         >>> output[INPUT_ENCODER_TOKENS_KEY]["EHR_embedding"].shape
         torch.Size([2, 10, 128])
         >>> output[INPUT_ENCODER_TOKENS_KEY]["ECG_embedding"].shape
-        torch.Size([3, 128])
+        torch.Size([2, 128])
     """
 
     def __init__(self, cfg: DictConfig):
@@ -142,6 +142,7 @@ class ECGTripletEncoder(nn.Module, Module):
         )
 
         # Embed the ECGs.
+        # Shape: (E, token_dim).
         ecg_emb = self.ecg_embedder.forward(batch["modality"])
 
         # Sum the (time, code, value) triplets.
@@ -157,7 +158,30 @@ class ECGTripletEncoder(nn.Module, Module):
             )
 
         if not self.cfg.early_fusion:
-            return {"EHR_embedding": ehr_emb, "ECG_embedding": ecg_emb}
+            # Squash ECG embeddings from (E, token_dim) to (B, token_dim) by
+            # mean pooling ECGs that come from the same sample within the batch.
+            #
+            # Initialize tensors to accumulate embeddings and counts
+            B = ehr_emb.shape[0]
+            token_dim = ecg_emb.shape[1]
+            ecg_emb_sums = torch.zeros(B, token_dim, device=ecg_emb.device)
+            counts = torch.zeros(B, 1, device=ecg_emb.device)
+
+            modality_batch_idx = torch.tensor(batch["modality_batch_idx"],
+                                              dtype=torch.long, device=ecg_emb.device)
+
+            # Accumulate ECG embeddings per batch index and count the number of
+            # ECGs per batch index.
+            ecg_emb_sums.index_add_(0, modality_batch_idx, ecg_emb)
+            counts.index_add_(0, modality_batch_idx, torch.ones(len(modality_batch_idx), 1, device=ecg_emb.device))
+
+            # Avoid division by zero by setting counts to 1 where counts are zero
+            counts = counts + (counts == 0).float()
+
+            # Compute the mean ECG embedding per batch
+            ecg_mean_emb = ecg_emb_sums / counts
+
+            return {"EHR_embedding": ehr_emb, "ECG_embedding": ecg_mean_emb}
         
         # Add ECG embeddings to EHR embedding via early fusion.
         #
