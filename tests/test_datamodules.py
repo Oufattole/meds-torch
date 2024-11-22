@@ -96,7 +96,7 @@ def test_multimodal_pytorch_dataset(meds_dir, modality):
     pyd = MultiModalPytorchDataset(cfg.data, split="train")
     assert not pyd.has_task
     item = pyd[0]
-    assert item.keys() == {"static_indices", "static_values", "dynamic", "modality"}
+    assert item.keys() == {"static_indices", "static_values", "dynamic", "modality", "modality_sequence_idx"}
     batch = pyd.collate([pyd[i] for i in range(2)])
     assert batch.keys() == {
         "mask",
