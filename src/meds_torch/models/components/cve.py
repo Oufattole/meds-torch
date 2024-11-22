@@ -1,5 +1,5 @@
-import torch
 from torch import nn
+
 
 class CVE(nn.Module):
     """
@@ -17,9 +17,10 @@ class CVE(nn.Module):
             x (torch.Tensor): A tensor of shape (batch_size, 1) containing the continuous values to encode.
         Output:
             torch.Tensor: A tensor of shape (batch_size, token_dim) representing the encoded embeddings.
-    
+
     Example:
         >>> from omegaconf import OmegaConf
+        >>> import torch
         >>> cfg = OmegaConf.create({"token_dim": 128})
         >>> cve = CVE(cfg)
         >>> x = torch.tensor([[1.0], [2.0], [3.0]])  # Batch of 3 samples
@@ -34,6 +35,8 @@ class CVE(nn.Module):
     def forward(self, x):
         return self.layer(x)
 
+
 if __name__ == "__main__":
     import doctest
+
     doctest.testmod(verbose=True)
