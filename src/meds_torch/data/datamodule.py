@@ -4,6 +4,9 @@ from lightning import LightningDataModule
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, Dataset
 
+from meds_torch.data.components.multimodal_pytorch_dataset import (
+    MultiModalPytorchDataset,
+)
 from meds_torch.data.components.multiwindow_pytorch_dataset import (
     MultiWindowPytorchDataset,
 )
@@ -21,6 +24,8 @@ def get_dataset(cfg: DictConfig, split) -> PytorchDataset:
         return PytorchDataset(cfg, split)
     elif cfg.name == "random_windows_pytorch_dataset":
         return RandomWindowPytorchDataset(cfg, split)
+    elif cfg.name == "multimodal_pytorch_dataset":
+        return MultiModalPytorchDataset(cfg, split)
     else:
         raise NotImplementedError(f"{cfg.name} not implemented!")
 
