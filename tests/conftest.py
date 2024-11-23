@@ -62,8 +62,8 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml", supervised=F
             cfg.paths.meds_cohort_dir = str(meds_dir / "MEDS_cohort")
             cfg.trainer.max_epochs = 1
             cfg.trainer.limit_train_batches = 0.1
-            cfg.trainer.limit_val_batches = 0.25
-            cfg.trainer.limit_test_batches = 0.25
+            cfg.trainer.limit_val_batches = 0.5
+            cfg.trainer.limit_test_batches = 0.5
             cfg.trainer.accelerator = "cpu"
             cfg.trainer.devices = 1
             cfg.data.num_workers = 0

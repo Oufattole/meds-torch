@@ -1,9 +1,6 @@
 import torch
-import torchmetrics
-from loguru import logger
-from omegaconf import DictConfig
-from torch import nn
 
+from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models import (
     BACKBONE_EMBEDDINGS_KEY,
     MODEL_BATCH_LOSS_KEY,
@@ -11,8 +8,6 @@ from meds_torch.models import (
     MODEL_LOGITS_KEY,
     MODEL_PRED_PROBA_KEY,
 )
-
-from meds_torch.models.base_model import BaseModule
 from meds_torch.models.supervised_model import SupervisedModule
 
 
@@ -20,11 +15,17 @@ class MultimodalSupervisedModule(SupervisedModule):
     def forward(self, batch) -> dict:
         batched_embeddings = self.input_encoder(batch)
 
-        ehr_batch = batched_embeddings["EHR_embedding"]         # Shape: (B, seq_len, token_dim)
+        ehr_batch = {
+            INPUT_ENCODER_MASK_KEY: batched_embeddings[INPUT_ENCODER_MASK_KEY],
+            INPUT_ENCODER_TOKENS_KEY: batched_embeddings[INPUT_ENCODER_TOKENS_KEY]["EHR_embedding"],
+        }
+        # Shape: (B, seq_len, token_dim)
         ehr_batch = self.model(ehr_batch)
-        ehr_embeddings = ehr_batch[BACKBONE_EMBEDDINGS_KEY]     # Shape: (B, token_dim)
+        ehr_embeddings = ehr_batch[BACKBONE_EMBEDDINGS_KEY]  # Shape: (B, token_dim)
 
-        ecg_embeddings = batched_embeddings["ECG_embedding"]    # Shape: (B, token_dim)
+        ecg_embeddings = batched_embeddings[INPUT_ENCODER_TOKENS_KEY][
+            "ECG_embedding"
+        ]  # Shape: (B, token_dim)
 
         # Intermediate fusion
         #
@@ -49,4 +50,5 @@ class MultimodalSupervisedModule(SupervisedModule):
         batch[MODEL_LOGITS_KEY] = logits
         batch[MODEL_PRED_PROBA_KEY] = torch.sigmoid(logits)
         batch[MODEL_BATCH_LOSS_KEY] = loss
+
         return batch

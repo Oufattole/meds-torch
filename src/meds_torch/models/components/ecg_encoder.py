@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 
+
 class ECGEncoder(nn.Module):
     """
     ECG Encoder for processing 12-lead ECG signals.
@@ -53,7 +54,7 @@ class ECGEncoder(nn.Module):
     Outputs:
         torch.Tensor: A tensor of shape (E, token_dim), representing the final encoded
         ECG signals as fixed-size embeddings.
-    
+
     Example:
         >>> import torch
         >>> from omegaconf import OmegaConf
@@ -69,6 +70,7 @@ class ECGEncoder(nn.Module):
         >>> output.shape
         torch.Size([2, 128])
     """
+
     def __init__(self, cfg):
         super().__init__()
         self.token_dim = cfg.token_dim
@@ -85,15 +87,15 @@ class ECGEncoder(nn.Module):
 
         # Sinusoidal positional encodings for time dimension.
         self.time_pos_enc = self._generate_sinusoidal_positional_encoding(self.num_patches, self.token_dim)
-        self.register_buffer('time_pos_enc_buffer', self.time_pos_enc)
+        self.register_buffer("time_pos_enc_buffer", self.time_pos_enc)
 
         # Class token (learned parameter).
         self.cls_token = nn.Parameter(torch.zeros(1, 1, self.token_dim))
 
         # Transformer Encoder with 4 layers.
-        encoder_layer = nn.TransformerEncoderLayer(d_model=self.token_dim, nhead=8)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=self.token_dim, nhead=2)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=4)
-    
+
     def _generate_sinusoidal_positional_encoding(self, num_positions, dim):
         """
         Generates a sinusoidal positional encoding matrix.
@@ -112,7 +114,7 @@ class ECGEncoder(nn.Module):
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0)  # Shape: (1, num_positions, dim)
         return pe
-    
+
     def forward(self, x):
         """
         Forward pass of the ECGEncoder.
@@ -161,6 +163,8 @@ class ECGEncoder(nn.Module):
         cls_token_final = x[0, :, :]  # Shape: (E, token_dim)
         return cls_token_final
 
+
 if __name__ == "__main__":
     import doctest
+
     doctest.testmod(verbose=True)
