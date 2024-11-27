@@ -45,7 +45,7 @@ class MultimodalSupervisedModule(SupervisedModule):
         if self.cfg.get_representations:
             loss = None
         else:
-            loss = self.criterion(logits.squeeze(dim=-1), batch[self.task_name].float())
+            loss = self.criterion(logits.squeeze(dim=-1), batch["boolean_value"].float())
         batch[MODEL_EMBEDDINGS_KEY] = fused_embeddings
         batch[MODEL_LOGITS_KEY] = logits
         batch[MODEL_PRED_PROBA_KEY] = torch.sigmoid(logits)
