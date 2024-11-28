@@ -71,4 +71,17 @@ The `local_parallelism_runner.yaml` file (downloaded above) runs each stage via 
 launching machine. There are no additional arguments needed for this stage beyond the `N_WORKERS` environment
 variable and there is nothing to customize in this file.
 
-# TODO: Tensorization
+# MEDS Multimodal Tensorization
+
+To tensorize the ecgs and ehr data run:
+
+```bash
+ROOT_DIR=/storage/shared/mimic-iv/multimodal_ecg/
+export MIMICIV_MEDS_DIR=$ROOT_DIR/meds # set to the directory in which you want to store the MIMIC-IV MEDS data
+export MIMICIV_TRIPLET_TENSOR_DIR=$ROOT_DIR/ecg_triplet_tensors/ # set to the directory in which you want to output the tensorized MIMIC-IV data
+export N_PARALLEL_WORKERS=5 # set to the number of parallel workers you want to use
+export PIPELINE_CONFIG_PATH="$(pwd)/MULTIMODAL_TUTORIAL/configs/ecg_triplet_config.yaml" # set to the directory in which the config file is stored, must be an absolute path.
+export JOBLIB_RUNNER_CONFIG_PATH="$(pwd)/MULTIMODAL_TUTORIAL/configs/joblib_runner.yaml" # set to the directory in which the config file is stored, must be an absolute path.
+
+bash MULTIMODAL_TUTORIAL/meds_tensorize.sh $MIMICIV_MEDS_DIR $MIMICIV_TRIPLET_TENSOR_DIR $N_PARALLEL_WORKERS $PIPELINE_CONFIG_PATH stage_runner_fp=$JOBLIB_RUNNER_CONFIG_PATH
+```
