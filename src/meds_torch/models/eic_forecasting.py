@@ -401,7 +401,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
         # Shift the target to predict the next token
         shifted_code_target = code_target[:, 1:]  # Remove the first token
-        shifted_mask = mask[:, :-1]  # Remove the last position from the mask
+        shifted_mask = mask[:, 1:]  # Remove the first position from the mask too
 
         # Apply the mask to code_logits and shifted_code_target
         masked_code_logits = code_logits[:, :-1] * shifted_mask.unsqueeze(-1)  # Remove the last prediction
