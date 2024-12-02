@@ -3,6 +3,72 @@ defaults:
   - _self_
 name: bimodal_pytorch_dataset
 
+max_seq_len: 512
+_resolved_max_seq_len: ${resolve_max_seq_len:${data.max_seq_len}, ${data.postpend_eos_token}}
+
+pytorch_dataset_base: &pytorch_dataset_base
+  name: pytorch_dataset
+  # Path params
+  data_dir: ${paths.data_dir}
+  meds_cohort_dir: ${paths.meds_cohort_dir}
+  cache_dir: ${paths.data_dir}/.pytorch_dataset_cache_dir/
+  code_metadata_fp: ${paths.data_dir}/metadata/codes.parquet
+  schema_files_root: ${paths.data_dir}/tokenization/schemas
+  tasks_root: ${paths.meds_cohort_dir}/tasks
+
+  # Task params
+  task_root_dir: null
+  task_name: null
+  task_label_path: ${data.task_root_dir}/${task_name}.parquet
+  task_info_path: ${data.task_root_dir}/${task_name}_info.json
+
+  # Split params
+  train_subset_size: null
+  train_subset_seed: 1
+
+  # Tokenization params
+  collate_type: triplet
+  tokenizer: "emilyalsentzer/Bio_ClinicalBERT"
+  do_include_subject_id: false
+  do_include_subsequence_indices: false
+  do_include_start_time_min: false
+  do_prepend_static_data: false
+  num_value_code_quantiles: null
+
+  # Sequence Params
+  max_seq_len: 512
+  _resolved_max_seq_len: ${resolve_max_seq_len:${data.max_seq_len}, ${data.postpend_eos_token}}
+  min_seq_len: 1
+  subsequence_sampling_strategy: random
+  seq_padding_side: right
+  text_max_seq_len: 8
+
+  dataloader:
+    batch_size: 512
+    num_workers: 0
+    pin_memory: False
+
+  vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.VOCAB_SPECIAL_TOKEN_ID_OFFSET}}
+  eos_offset: 1
+  EOS_TOKEN_ID: ${get_eos_token_id:${data.vocab_size}, ${data.eos_offset}}
+  VOCAB_SPECIAL_TOKEN_ID_OFFSET: 1
+  postpend_eos_token: ${model.backbone.postpend_eos_token}
+
+eval_datasets:
+  - <<: *pytorch_dataset_base
+    name: bimodal_pytorch_dataset
+  - <<: *pytorch_dataset_base
+    task_name: mortality/in_hospital/first_24h
+    task_root_dir: ${data.task_root_dir}
+    task_label_path: ${data.task_root_dir}/mortality/in_hospital/first_24h.parquet
+    task_info_path: ${data.task_root_dir}/mortality/in_hospital/first_24h_info.json
+  - <<: *pytorch_dataset_base
+    task_name: mortality/in_icu/first_24h
+    task_root_dir: ${data.task_root_dir}
+    task_label_path: ${data.task_root_dir}/mortality/in_icu/first_24h.parquet
+    task_info_path: ${data.task_root_dir}/mortality/in_icu/first_24h_info.json
+
 max_window_size: ${data._resolved_max_seq_len}
 min_window_size: ${data.min_seq_len}
 n_windows: 1
+text_root: data.text_root

@@ -14,6 +14,9 @@ from meds_torch.data.components.random_windows_pytorch_dataset import (
 from meds_torch.data.components.bimodal_pytorch_dataset import BimodalPytorchDataset
 from meds_torch.utils.module_class import Module
 
+def get_datasets(cfg: DictConfig, split) -> [PytorchDataset]:
+    return [get_dataset(ds, split) for ds in cfg.eval_datasets]
+
 
 def get_dataset(cfg: DictConfig, split) -> PytorchDataset:
     if cfg.name == "multiwindow_pytorch_dataset":
@@ -70,8 +73,8 @@ class MEDSDataModule(LightningDataModule, Module):
         self.save_hyperparameters(logger=False)
 
         self.data_train: Dataset | None = None
-        self.data_val: Dataset | None = None
-        self.data_test: Dataset | None = None
+        self.data_vals: [Dataset] | None = None
+        self.data_tests: [Dataset] | None = None
 
     @property
     def num_classes(self) -> int:
@@ -90,7 +93,7 @@ class MEDSDataModule(LightningDataModule, Module):
         """
 
     def setup(self, stage: str | None = None) -> None:
-        """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
+        """Load data. Set variables: `self.data_train`, `self.data_vals`, `self.data_tests`.
 
         This method is called by Lightning before `trainer.fit()`, `trainer.validate()`, `trainer.test()`, and
         `trainer.predict()`, so be careful not to execute things like random split twice! Also, it is called
@@ -112,9 +115,9 @@ class MEDSDataModule(LightningDataModule, Module):
         # load and split datasets only if not loaded already
         self.data_train = get_dataset(self.cfg, split="train")
         if stage != "train":  # TODO: remove this after we have more test data
-            self.data_val = get_dataset(self.cfg, split="tuning")
+            self.data_vals = get_datasets(self.cfg, split="tuning")
         if stage in ["test", None]:
-            self.data_test = get_dataset(self.cfg, split="held_out")
+            self.data_tests = get_datasets(self.cfg, split="held_out")
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Create and return the train dataloader.
@@ -134,24 +137,28 @@ class MEDSDataModule(LightningDataModule, Module):
 
         :return: The validation dataloader.
         """
-        return DataLoader(
-            dataset=self.data_val,
-            shuffle=False,
-            collate_fn=self.data_val.collate,
-            **self.cfg.dataloader,
-        )
+        return [
+                DataLoader(
+                    dataset=dv,
+                    shuffle=False,
+                    collate_fn=dv.collate,
+                    **self.cfg.dataloader,
+                ) for dv in self.data_vals
+            ]
 
     def test_dataloader(self) -> DataLoader[Any]:
         """Create and return the test dataloader.
 
         :return: The test dataloader.
         """
-        return DataLoader(
-            dataset=self.data_test,
-            shuffle=False,
-            collate_fn=self.data_test.collate,
-            **self.cfg.dataloader,
-        )
+        return [
+            DataLoader(
+                    dataset=dt,
+                    shuffle=False,
+                    collate_fn=dt.collate,
+                    **self.cfg.dataloader,
+                ) for dt in self.data_tests
+            ]
 
     def teardown(self, stage: str | None = None) -> None:
         """Lightning hook for cleaning up after `trainer.fit()`, `trainer.validate()`, `trainer.test()`, and

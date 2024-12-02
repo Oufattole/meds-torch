@@ -26,6 +26,24 @@ setup_resolvers()
 log = RankedLogger(__name__, rank_zero_only=True)
 config_yaml = files("meds_torch").joinpath("configs/train.yaml")
 
+import torch
+from lightning.pytorch.callbacks import Callback
+from loguru import logger  # Assuming loguru is being used as your logger
+
+class LearningRateLogger(Callback):
+    def on_epoch_end(self, trainer, pl_module):
+        """Log learning rate at the end of each epoch."""
+        # Access the learning rate from the optimizer(s)
+        for i, param_group in enumerate(trainer.optimizers[0].param_groups):
+            lr = param_group['lr']
+            logger.info(f"Epoch {trainer.current_epoch}, Optimizer {i} learning rate: {lr:.6f}")
+            
+    def on_after_backward(self, trainer, pl_module):
+        """Log learning rate at the end of each batch."""
+        # Access the learning rate from the optimizer(s)
+        for i, param_group in enumerate(trainer.optimizers[0].param_groups):
+            lr = param_group['lr']
+            logger.info(f"Batch {trainer.global_step}, Optimizer {i} learning rate: {lr:.6f}")
 
 @task_wrapper
 def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -53,6 +71,8 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
 
     log.info("Instantiating callbacks...")
     callbacks: list[Callback] = instantiate_callbacks(cfg.get("callbacks"))
+
+    callbacks.append(LearningRateLogger())
 
     log.info("Instantiating loggers...")
     logger: list[Logger] = instantiate_loggers(cfg.get("logger"))
@@ -117,6 +137,8 @@ def main(cfg: DictConfig) -> float | None:
 
     # safely retrieve metric value for hydra-based hyperparameter optimization
     metric_value = get_metric_value(metric_dict=metric_dict, metric_name=cfg.get("optimized_metric"))
+
+    print(metric_value)
 
     checkpoint_dir = Path(cfg.paths.time_output_dir) / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)

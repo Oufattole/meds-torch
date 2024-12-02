@@ -3,7 +3,7 @@
 # specify here default configuration
 # order of defaults determines the order in which configs override each other
 defaults:
-  - override /data: pytorch_dataset
+  - override /data: bimodal_pytorch_dataset
   - override /logger: wandb
   - override /model/backbone: triplet_transformer_encoder
   - override /model/input_encoder: triplet_encoder
@@ -41,6 +41,14 @@ model:
     n_layers: 2
     nheads: 4
     dropout: 0
+
+callbacks:
+  early_stopping:
+    monitor: "val/loss/dataloader_idx_0"
+    patience: 3
+    mode: "min"
+  model_checkpoint:
+    monitor: "val/loss/dataloader_idx_0"
 
 
 logger:

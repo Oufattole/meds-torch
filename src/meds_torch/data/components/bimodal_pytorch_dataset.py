@@ -767,7 +767,7 @@ class BimodalPytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMix
         return [x[0] for x in self.index]
 
     def __len__(self):
-        return len(self.notes)
+        return len(self.notes) // 8
 
     @property
     def has_task(self) -> bool:

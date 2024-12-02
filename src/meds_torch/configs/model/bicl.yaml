@@ -12,19 +12,22 @@ optimizer:
   weight_decay: 0.01
 
 scheduler:
-  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  _target_: meds_torch.utils.custom_scheduler.CosineAnnealingWithLinearWarmup
   _partial_: true
-  mode: min
-  factor: 0.1
-  patience: 10
+  warmup_iters: min
 
 _resolved_max_seq_len: ${data._resolved_max_seq_len}
 token_dim: 4
 vocab_size: ${data.vocab_size}
 get_representations: false
-task_name: ${data.task_name}
+task_names: [
+  "${data.eval_datasets[1].task_name}", 
+  "${data.eval_datasets[2].task_name}",
+]
 batch_size: ${data.dataloader.batch_size}
 tau: 0.07
+tokenizer: "emilyalsentzer/Bio_ClinicalBERT"
+zeroshot_templates: ["patient deceased", "discharged today"]
 
 # compile model for faster training with pytorch 2.0
 compile: false
