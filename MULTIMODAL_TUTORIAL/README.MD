@@ -85,3 +85,23 @@ export JOBLIB_RUNNER_CONFIG_PATH="$(pwd)/MULTIMODAL_TUTORIAL/configs/joblib_runn
 
 bash ./meds_tensorize.sh $MIMICIV_MEDS_DIR $MIMICIV_TRIPLET_TENSOR_DIR $N_PARALLEL_WORKERS $PIPELINE_CONFIG_PATH stage_runner_fp=$JOBLIB_RUNNER_CONFIG_PATH
 ```
+
+# Train
+
+First pull tasks using ACES, follow the tutorial here: https://github.com/Oufattole/meds-torch/tree/ecg/MIMICIV_INDUCTIVE_EXPERIMENTS#use-aces-to-extract-labels-using-a-task-config-definition
+
+Run this from the root directory of the cloned meds-torch github repo:
+
+```bash
+ROOT_DIR=/storage/shared/mimic-iv/multimodal_ecg/
+MEDS_DIR=$ROOT_DIR/meds
+TENSOR_DIR=$ROOT_DIR/ecg_triplet_tensors/
+OUTPUT_DIR=$ROOT_DIR/tmp/results/
+CONFIGS_FOLDER=MULTIMODAL_TUTORIAL
+TASK_NAME=readmission/30d
+TASKS_DIR=${MEDS_DIR}/tasks/
+meds-torch-train experiment=triplet_mtr paths.data_dir=${TENSOR_DIR} \
+    paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
+    data.task_name=$TASK_NAME data.task_root_dir=$TASKS_DIR \
+    hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/${CONFIGS_FOLDER}/configs/meds-torch-configs]
+```
