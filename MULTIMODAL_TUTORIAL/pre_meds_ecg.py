@@ -25,32 +25,8 @@ from pathlib import Path
 
 import hydra
 import polars as pl
-import torch
-import wfdb
 from MEDS_transforms.utils import hydra_loguru_init
 from omegaconf import DictConfig
-
-
-class WaveformReader:
-    def read_modality(self, relative_modality_fp: str) -> torch.Tensor:
-        """
-        Convert a WFDB (Waveform Database) record to a NumPy array.
-
-        Parameters:
-        ----------
-        relative_modality_fp : str
-            relative Path to the WFDB record file. For example:
-            'files/p1000/p10000635/s45386375/45386375'
-
-        Returns:
-        -------
-        numpy.ndarray
-            A 2D NumPy array containing the signal data from the WFDB record,
-            shape (T, 12). Each row corresponds to a sample point in time and
-            each column corresponds to a different ECG lead.
-        """
-        data = wfdb.rdrecord(Path(self.base_path) / relative_modality_fp)
-        return data.p_signal
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="pre_MEDS")

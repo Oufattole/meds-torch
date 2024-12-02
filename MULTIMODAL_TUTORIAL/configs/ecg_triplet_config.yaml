@@ -33,7 +33,7 @@ stage_configs:
   custom_multimodal_tokenization:
     _script: "python -m meds_torch.utils.custom_multimodal_tokenization"
     reader:
-      _target_: "meds_torch.utils.custom_multimodal_tokenization.NpyReader"
-      base_path: ${hydra:runtime.cwd}/tests/test_data/raw_cohort/ecg/
+      _target_: "utils.WaveformReader"
+      base_path: ${oc.env:MIMICIV_ECG_RAW_DIR}/
   custom_multimodal_tensorization:
     _script: "python -m meds_torch.utils.custom_multimodal_tensorization"

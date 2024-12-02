@@ -330,3 +330,4 @@ record_list:
       - ECG
     time: col(ecg_time)
     time_format: "%Y-%m-%d %H:%M:%S"
+    modality_fp: col(path)

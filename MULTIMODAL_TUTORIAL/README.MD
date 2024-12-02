@@ -13,8 +13,8 @@ export VERSION=$LATEST_VERSION # or whatever version you want, at the time of wr
 pip install "MEDS_transforms[local_parallelism,slurm_parallelism]==${VERSION} wfdb"
 
 
-export MIMICIV_RAW_DIR=/storage/shared/mimic-iv/raw/ehr/2.2 # set to the directory in which you want to store the raw MIMIC-IV data
-export MIMICIV_ECG_RAW_DIR=/storage/shared/mimic-iv/raw/ecgs/1.0
+export MIMICIV_RAW_DIR=/storage/shared/mimic-iv/raw/ehr/2.2/ # set to the directory in which you want to store the raw MIMIC-IV data
+export MIMICIV_ECG_RAW_DIR=/storage/shared/mimic-iv/raw/ecgs/1.0/
 export MIMICIV_PRE_MEDS_DIR=/storage/shared/mimic-iv/multimodal_ecg/pre_meds/ # set to the directory in which you want to store the intermediate MEDS MIMIC-IV data
 export MIMICIV_MEDS_DIR=/storage/shared/mimic-iv/multimodal_ecg/meds/ # set to the directory in which you want to store the final MEDS MIMIC-IV data
 ```
@@ -83,5 +83,5 @@ export N_PARALLEL_WORKERS=5 # set to the number of parallel workers you want to 
 export PIPELINE_CONFIG_PATH="$(pwd)/MULTIMODAL_TUTORIAL/configs/ecg_triplet_config.yaml" # set to the directory in which the config file is stored, must be an absolute path.
 export JOBLIB_RUNNER_CONFIG_PATH="$(pwd)/MULTIMODAL_TUTORIAL/configs/joblib_runner.yaml" # set to the directory in which the config file is stored, must be an absolute path.
 
-bash MULTIMODAL_TUTORIAL/meds_tensorize.sh $MIMICIV_MEDS_DIR $MIMICIV_TRIPLET_TENSOR_DIR $N_PARALLEL_WORKERS $PIPELINE_CONFIG_PATH stage_runner_fp=$JOBLIB_RUNNER_CONFIG_PATH
+bash ./meds_tensorize.sh $MIMICIV_MEDS_DIR $MIMICIV_TRIPLET_TENSOR_DIR $N_PARALLEL_WORKERS $PIPELINE_CONFIG_PATH stage_runner_fp=$JOBLIB_RUNNER_CONFIG_PATH
 ```
