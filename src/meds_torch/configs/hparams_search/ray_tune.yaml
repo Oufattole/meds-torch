@@ -18,10 +18,6 @@ search_space:
     _target_: ray.tune.uniform
     lower: 0.0
     upper: 0.3
-  # seed:
-  #   _target_: ray.tune.randint
-  #   lower: 0
-  #   upper: 10000
 
 scheduler:
   _target_: ray.tune.schedulers.ASHAScheduler
