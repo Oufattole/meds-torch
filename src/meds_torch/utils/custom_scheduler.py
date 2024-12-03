@@ -32,6 +32,8 @@ class CosineAnnealingWithLinearWarmup(_LRScheduler):
             progress = (current_iter - self.warmup_iters) / float(max(1, self.max_iters - self.warmup_iters))
             lr_scale = 0.5 * (1 + math.cos(math.pi * progress))
 
+
         # Compute the learning rate for each parameter group
         lrs = [base_lr * lr_scale for base_lr in self.base_lrs]
+
         return lrs

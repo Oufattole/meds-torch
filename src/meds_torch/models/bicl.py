@@ -361,3 +361,14 @@ class BICLModule(BaseModule):
             self.test_zero_in_icu_auc.compute(),
         )
 
+    def configure_optimizers(self):
+        optimizer = self.optimizer(self.parameters())
+        scheduler = self.scheduler(optimizer)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step"  # or "epoch"
+            }
+        }
+

@@ -30,21 +30,6 @@ import torch
 from lightning.pytorch.callbacks import Callback
 from loguru import logger  # Assuming loguru is being used as your logger
 
-class LearningRateLogger(Callback):
-    def on_epoch_end(self, trainer, pl_module):
-        """Log learning rate at the end of each epoch."""
-        # Access the learning rate from the optimizer(s)
-        for i, param_group in enumerate(trainer.optimizers[0].param_groups):
-            lr = param_group['lr']
-            logger.info(f"Epoch {trainer.current_epoch}, Optimizer {i} learning rate: {lr:.6f}")
-            
-    def on_after_backward(self, trainer, pl_module):
-        """Log learning rate at the end of each batch."""
-        # Access the learning rate from the optimizer(s)
-        for i, param_group in enumerate(trainer.optimizers[0].param_groups):
-            lr = param_group['lr']
-            logger.info(f"Batch {trainer.global_step}, Optimizer {i} learning rate: {lr:.6f}")
-
 @task_wrapper
 def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     """Trains the model. Can additionally evaluate on a testset, using best weights obtained during training.
@@ -71,8 +56,6 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
 
     log.info("Instantiating callbacks...")
     callbacks: list[Callback] = instantiate_callbacks(cfg.get("callbacks"))
-
-    callbacks.append(LearningRateLogger())
 
     log.info("Instantiating loggers...")
     logger: list[Logger] = instantiate_loggers(cfg.get("logger"))

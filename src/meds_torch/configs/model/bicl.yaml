@@ -14,7 +14,8 @@ optimizer:
 scheduler:
   _target_: meds_torch.utils.custom_scheduler.CosineAnnealingWithLinearWarmup
   _partial_: true
-  warmup_iters: min
+  warmup_iters: 10000
+  max_iters: ${trainer.max_epochs} * 2076 # TODO: calculate the length of the dataset
 
 _resolved_max_seq_len: ${data._resolved_max_seq_len}
 token_dim: 4

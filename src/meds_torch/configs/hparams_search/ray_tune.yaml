@@ -1,6 +1,6 @@
 # Ray Tune configuration
 ray:
-  num_samples: 1
+  num_samples: 4
   resources_per_trial:
     gpu: 1
 
