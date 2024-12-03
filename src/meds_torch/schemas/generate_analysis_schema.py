@@ -13,8 +13,8 @@ import pyarrow as pa
 MEDS_TRAJECTORY_SCHEMA = OrderedDict(
     [
         ("subject_id", pa.int64()),
-        ("prediction_time", pa.timestamp("us")),
-        ("time", pa.timestamp("us")),
+        ("prediction_time", pa.timestamp("ns")),
+        ("time", pa.timestamp("ns")),
         ("code", pa.int64()),
         ("numeric_value", pa.float64()),
         ("TRAJECTORY_TYPE", pa.string()),
@@ -22,13 +22,9 @@ MEDS_TRAJECTORY_SCHEMA = OrderedDict(
 )
 
 
-def generation_analysis_schema(num_samples=0, do_include_actual=True):
+def generation_analysis_schema():
     """
     Generate the schema for trajectory analysis data with consistent field ordering.
-
-    Args:
-        num_samples (int): Number of generated samples
-        do_include_actual (bool): Whether to include actual future data
 
     Returns:
         pyarrow.Schema: The schema for trajectory analysis
@@ -60,15 +56,15 @@ def validate_generated_data(df):
     >>> validate_generated_data(df)
     pyarrow.Table
     subject_id: int64
-    prediction_time: timestamp[us]
-    time: timestamp[us]
+    prediction_time: timestamp[ns]
+    time: timestamp[ns]
     code: int64
     numeric_value: double
     TRAJECTORY_TYPE: string
     ----
     subject_id: [[109767,109767,109767]]
-    prediction_time: [[2024-07-18 16:21:41.000000,2024-07-18 16:21:41.000000,2024-07-18 16:21:41.000000]]
-    time: [[2024-07-18 16:21:41.000000,2024-07-18 16:21:41.000000,2024-07-18 16:21:41.000000]]
+    prediction_time: [[2024-07-18 16:21:41.000000000,2024-07-18 16:21:41.000000000,2024-07-18 16:21:41.00...]]
+    time: [[2024-07-18 16:21:41.000000000,2024-07-18 16:21:41.000000000,2024-07-18 16:21:41.000000000]]
     code: [[55,59,61]]
     numeric_value: [[0.625,0.625,nan]]
     TRAJECTORY_TYPE: [["INPUT_DATA","INPUT_DATA","INPUT_DATA"]]

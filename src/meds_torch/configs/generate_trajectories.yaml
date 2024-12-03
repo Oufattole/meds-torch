@@ -33,6 +33,8 @@ tags: ["dev"]
 ckpt_path: ???
 
 paths:
-  generated_trajectory_fp: ${paths.time_output_dir}/generated_trajectory.parquet
+  generated_trajectory_fp: ${paths.time_output_dir}/generated_trajectory_${model.generate_id}.parquet
+  predict_fp: ${paths.time_output_dir}/predictions_${model.generate_id}.parquet
 
+seed: ${model.generate_id}
 actual_future_name: null

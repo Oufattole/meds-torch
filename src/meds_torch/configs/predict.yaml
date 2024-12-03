@@ -24,7 +24,7 @@ defaults:
   - debug: null
 
 
-name: "generate_trajectory"
+name: "predict"
 
 task_name: null
 
@@ -33,5 +33,6 @@ tags: ["dev"]
 # passing checkpoint path is necessary for evaluation
 ckpt_path: ???
 
+seed: null
 paths:
   predict_fp: ${paths.time_output_dir}/predict.parquet

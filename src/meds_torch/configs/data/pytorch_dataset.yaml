@@ -52,8 +52,7 @@ dataloader:
   pin_memory: False
 
 # Tokenization params
-vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.VOCAB_SPECIAL_TOKEN_ID_OFFSET}}
+vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.postpend_eos_token}}
 eos_offset: 1
 EOS_TOKEN_ID: ${get_eos_token_id:${data.vocab_size}, ${data.eos_offset}}
-VOCAB_SPECIAL_TOKEN_ID_OFFSET: 1
 postpend_eos_token: ${model.backbone.postpend_eos_token}

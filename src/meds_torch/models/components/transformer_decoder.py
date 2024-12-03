@@ -216,7 +216,6 @@ def update_generation_budget(
             cumulative_time = cumulative_time + pred_time.squeeze(-1)
             # Mark sequences as ended if they exceed time budget
             ended_sequences = ended_sequences | (cumulative_time >= budget.value)
-            logger.info(ended_sequences)
             continue_generation = not ended_sequences.all()
 
         case BudgetType.SEQUENCE_LENGTH:
@@ -284,7 +283,7 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         torch.Size([2, 5, 4])
         >>> # Test generation with sequence length budget
         >>> prompts = torch.randint(0, vocab_size, (B, S))  # [batch_size, prompt_len]
-        >>> gen_output = model.generate(
+        >>> gen_output, _ = model.generate(
         ...     prompts=prompts,
         ...     mask=mask,
         ... )
@@ -300,7 +299,7 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         ...    'generation_budget': time_budget,
         ... })
         >>> model = TransformerDecoderModel(cfg)
-        >>> gen_output = model.generate(
+        >>> gen_output, _ = model.generate(
         ...     prompts=prompts,
         ...     mask=mask,
         ...     temperature=0.7,
@@ -435,7 +434,7 @@ def generate(
     >>> # Test basic generation
     >>> budget = GenerationBudget.from_seq_len(2)
     >>> prompts = torch.randint(0, vocab_size, (B, S))
-    >>> gen_tokens = generate(model=model,
+    >>> gen_tokens, _ = generate(model=model,
     ...     prompts=prompts,
     ...     budget=budget,
     ...     temperature=1.0,
@@ -448,7 +447,7 @@ def generate(
     >>> # Test with EOS token
     >>> eos_tokens = [vocab_size - 1]
     >>> budget = GenerationBudget.from_seq_len(2)
-    >>> gen_tokens = generate(model=model,
+    >>> gen_tokens, _ = generate(model=model,
     ...     prompts=prompts,
     ...     budget=budget,
     ...     eos_tokens=eos_tokens,
@@ -459,7 +458,7 @@ def generate(
 
     >>> # Test with variable length prompts
     >>> prompt_lens = torch.tensor([2, 3])
-    >>> gen_tokens = generate(model=model,
+    >>> gen_tokens, _ = generate(model=model,
     ...     prompts=prompts,
     ...     budget=budget,
     ...     prompt_lens=prompt_lens,
@@ -471,7 +470,7 @@ def generate(
     >>> # Test with KV caching
     >>> prompt_lens = torch.tensor([S-2] + [S]*(B-1))  # Mask out last two tokens of first sequence
     >>> budget = GenerationBudget.from_seq_len(3)
-    >>> gen_tokens = generate(model=model,
+    >>> gen_tokens, _ = generate(model=model,
     ...     prompts=prompts,
     ...     prompt_lens=prompt_lens,
     ...     budget=budget,
@@ -483,7 +482,7 @@ def generate(
 
     >>> # Test with all-True mask
     >>> prompt_lens = torch.tensor([S]*B, dtype=torch.int)  # Variable sequence lengths
-    >>> gen_tokens = generate(model=model,
+    >>> gen_tokens, _ = generate(model=model,
     ...     prompts=prompts,
     ...     prompt_lens=prompt_lens,
     ...     budget=budget,
@@ -496,7 +495,7 @@ def generate(
     >>> # Test with max sequence length restriction
     >>> long_prompts = torch.randint(0, vocab_size, (B, 8))  # Longer sequence
     >>> prompt_lens = torch.tensor([5] + [8]*(B-1))  # Variable sequence lengths
-    >>> gen_tokens = generate(model=model,
+    >>> gen_tokens, _ = generate(model=model,
     ...     prompts=long_prompts,
     ...     prompt_lens=prompt_lens,
     ...     budget=budget,
@@ -543,6 +542,7 @@ def generate(
     continue_generation = True
 
     num_generated_tokens = 0
+    out_lengths = torch.zeros(b, device=prompts.device, dtype=torch.int32)
     while continue_generation:
         if restrict_to_max_seq_len:
             max_len_exceeded = out.shape[-1] > max_seq_len
@@ -593,7 +593,7 @@ def generate(
             )
 
         # Update budget tracking and check stopping conditions
-        cumulative_time, ended_sequences, continue_generation = update_generation_budget(
+        cumulative_time, new_ended_sequences, continue_generation = update_generation_budget(
             cumulative_time=cumulative_time,
             current_sample=sample.squeeze(-1),
             num_generated_tokens=num_generated_tokens,
@@ -603,20 +603,17 @@ def generate(
             budget=budget,
         )
 
+        # Update the output lengths for trajectories that have ended generation
+        out_lengths[new_ended_sequences != ended_sequences] = num_generated_tokens
+        ended_sequences = new_ended_sequences
+
         # Append new token and check for stopping
         out = torch.cat((out, sample), dim=-1)
         if not continue_generation:
             break
 
-    if exists(eos_tokens):
-        is_eos_tokens = torch.isin(out, eos_tokens)
-        # mask out everything after the eos tokens
-        shifted_is_eos_tokens = F.pad(is_eos_tokens, (1, -1))
-        mask = shifted_is_eos_tokens.float().cumsum(dim=-1) >= 1
-        out = out.masked_fill(mask, pad_value)
-
     out = out[:, t:]
 
     (out,) = unpack(out, ps, "* n")
 
-    return out
+    return out, out_lengths
