@@ -21,44 +21,37 @@ description: >-
 
 predicates:
   hospital_admission:
-    code: { regex: "^HOSPITAL_ADMISSION//.*" }
+    code: {regex: "HOSPITAL_ADMISSION//.*"}
   hospital_discharge:
     code: { regex: "^HOSPITAL_DISCHARGE//.*" }
-
-  ED_registration:
-    code: { regex: "^ED_REGISTRATION//.*" }
-  ED_discharge:
-    code: { regex: "^ED_OUT//.*" }
-
-  icu_admission:
-    code: { regex: "^ICU_ADMISSION//.*" }
-  icu_discharge:
-    code: { regex: "^ICU_DISCHARGE//.*" }
+  ecg:
+    code: ECG
 
   death:
     code: MEDS_DEATH
   discharge_or_death:
-    expr: or(icu_discharge, death, hospital_discharge)
+    expr: or(death, hospital_discharge)
 
-trigger: icu_admission
+trigger: hospital_admission
 
 windows:
-  input:
+  admission:
     start: null
-    end: trigger + 24h
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    has:
+      death: (None, 0)
+  input:
+    start: admission.end
+    end: start -> ecg
     start_inclusive: True
     end_inclusive: True
     index_timestamp: end
-  gap:
-    start: trigger
-    end: start + 48h
-    start_inclusive: False
-    end_inclusive: True
     has:
-      icu_admission: (None, 0)
       discharge_or_death: (None, 0)
   target:
-    start: gap.end
+    start: input.end
     end: start -> discharge_or_death
     start_inclusive: False
     end_inclusive: True

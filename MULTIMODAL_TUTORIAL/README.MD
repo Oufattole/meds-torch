@@ -88,7 +88,40 @@ bash ./meds_tensorize.sh $MIMICIV_MEDS_DIR $MIMICIV_TRIPLET_TENSOR_DIR $N_PARALL
 
 # Train
 
-First pull tasks using ACES, follow the tutorial here: https://github.com/Oufattole/meds-torch/tree/ecg/MIMICIV_INDUCTIVE_EXPERIMENTS#use-aces-to-extract-labels-using-a-task-config-definition
+```console
+conda create -n aces python=3.12
+conda activate aces
+pip install --upgrade es-aces
+pip install hydra-joblib-launcher
+```
+
+Second, run the following command to extract the supervised task labels:
+
+```
+"mortality/in_icu/ecg"
+"mortality/in_hospital/ecg"
+```
+
+```console
+ROOT_DIR=/storage/shared/mimic-iv/multimodal_ecg/
+export MEDS_DIR=$ROOT_DIR/meds # set to the directory in which you want to store the MIMIC-IV MEDS data
+
+MEDS_DIR=${ROOT_DIR}/meds/
+TASKS_DIR=${MEDS_DIR}/tasks/
+
+TASKS=(
+    "mortality/in_icu/ecg"
+    "mortality/in_hospital/ecg"
+    "los/in_icu/ecg"
+    "los/in_hospital/ecg"
+)
+for TASK_NAME in "${TASKS[@]}"; do
+    SINGLE_TASK_DIR="${MEDS_DIR}/tasks/${TASK_NAME}"
+    mkdir -p $SINGLE_TASK_DIR # create a directory for the task
+    cp MULTIMODAL_TUTORIAL/configs/tasks/${TASK_NAME}.yaml "${SINGLE_TASK_DIR}.yaml"
+    aces-cli --multirun hydra/launcher=joblib data=sharded data.standard=meds data.root="$MEDS_DIR/data" "data.shard=$(expand_shards $MEDS_DIR/data)" cohort_dir="$TASKS_DIR" cohort_name="$TASK_NAME"
+done
+```
 
 Run this from the root directory of the cloned meds-torch github repo:
 

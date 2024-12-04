@@ -13,16 +13,27 @@ predicates:
     code: MEDS_DEATH
   discharge_or_death:
     expr: or(hospital_discharge, death)
+  ecg:
+    code: ECG
 
 trigger: hospital_admission
 
 windows:
+  admission:
+    start: null
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    has:
+      death: (None, 0)
   input:
-    start: NULL
-    end: trigger + 48h
+    start: admission.end
+    end: start -> ecg
     start_inclusive: True
     end_inclusive: True
     index_timestamp: end
+    has:
+      discharge_or_death: (None, 0)
   gap:
     start: input.end
     end: start + 24h
