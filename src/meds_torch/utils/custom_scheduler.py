@@ -3,7 +3,7 @@ import math
 from torch.optim.lr_scheduler import _LRScheduler
 
 class CosineAnnealingWithLinearWarmup(_LRScheduler):
-    def __init__(self, optimizer, warmup_iters, max_iters, min_lr=0.0, last_epoch=-1):
+    def __init__(self, optimizer, warmup_iters, max_iters, steps_per_epoch, min_lr=0.0, last_epoch=-1):
         """
         Args:
             optimizer (Optimizer): The optimizer instance.
@@ -13,7 +13,7 @@ class CosineAnnealingWithLinearWarmup(_LRScheduler):
             last_epoch (int, optional): The index of the last epoch. Default is -1, which means it's the first epoch.
         """
         self.warmup_iters = warmup_iters
-        self.max_iters = max_iters
+        self.max_iters = int(max_iters) * steps_per_epoch
         self.min_lr = min_lr
         super().__init__(optimizer, last_epoch)
 

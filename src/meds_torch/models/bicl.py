@@ -4,6 +4,7 @@ import torch
 import torchmetrics
 from omegaconf import DictConfig
 from torch import nn
+import torch.distributed as dist
 
 from transformers import AutoTokenizer
 
@@ -17,6 +18,7 @@ from meds_torch.models import (
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components.text_encoder import TextEncoderModel
 from meds_torch.utils.zeroshot_eval import CLIPZeroShotAUROC
+from meds_torch.models.utils import GatherLayer
 
 
 class BICLModule(BaseModule):
@@ -32,29 +34,29 @@ class BICLModule(BaseModule):
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.tokenizer)
         #  metrics
-        self.train_meas_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
-        self.train_meas_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+        self.train_meas_acc = torchmetrics.Accuracy(num_classes=batch_size * cfg.num_devices, task="multiclass")
+        self.train_meas_auc = torchmetrics.AUROC(num_classes=batch_size * cfg.num_devices, task="multiclass")
 
-        self.train_text_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
-        self.train_text_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+        self.train_text_acc = torchmetrics.Accuracy(num_classes=batch_size * cfg.num_devices, task="multiclass")
+        self.train_text_auc = torchmetrics.AUROC(num_classes=batch_size * cfg.num_devices, task="multiclass")
 
         self.val_zero_in_hospital_auc = CLIPZeroShotAUROC(num_classes=1)
         self.val_zero_in_icu_auc = CLIPZeroShotAUROC(num_classes=1)
 
-        self.val_meas_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
-        self.val_meas_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+        self.val_meas_acc = torchmetrics.Accuracy(num_classes=batch_size * cfg.num_devices, task="multiclass")
+        self.val_meas_auc = torchmetrics.AUROC(num_classes=batch_size * cfg.num_devices, task="multiclass")
 
-        self.val_text_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
-        self.val_text_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+        self.val_text_acc = torchmetrics.Accuracy(num_classes=batch_size * cfg.num_devices, task="multiclass")
+        self.val_text_auc = torchmetrics.AUROC(num_classes=batch_size * cfg.num_devices, task="multiclass")
 
         self.test_zero_in_hospital_auc = CLIPZeroShotAUROC(num_classes=1)
         self.test_zero_in_icu_auc = CLIPZeroShotAUROC(num_classes=1)
 
-        self.test_meas_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
-        self.test_meas_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+        self.test_meas_acc = torchmetrics.Accuracy(num_classes=batch_size * cfg.num_devices, task="multiclass")
+        self.test_meas_auc = torchmetrics.AUROC(num_classes=batch_size * cfg.num_devices, task="multiclass")
 
-        self.test_text_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
-        self.test_text_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+        self.test_text_acc = torchmetrics.Accuracy(num_classes=batch_size * cfg.num_devices, task="multiclass")
+        self.test_text_auc = torchmetrics.AUROC(num_classes=batch_size * cfg.num_devices, task="multiclass")
 
         # Model components
         self.meas_projection = nn.Linear(cfg.token_dim, cfg.token_dim)
@@ -85,6 +87,11 @@ class BICLModule(BaseModule):
         meas_norm_embeds = meas_embeds / meas_embeds.norm(dim=-1, keepdim=True)
         text_norm_embeds = text_embeds / text_embeds.norm(dim=-1, keepdim=True)
 
+        # Gather embeddings across all devices
+        if dist.is_initialized():
+            meas_norm_embeds = GatherLayer.apply(meas_norm_embeds)
+            text_norm_embeds = GatherLayer.apply(text_norm_embeds)
+
         logits = torch.mm(text_norm_embeds, meas_norm_embeds.T) * torch.exp(self.t)
         labels = torch.arange(meas_norm_embeds.shape[0], device=meas_norm_embeds.device)
         logits_per_text = logits
@@ -100,6 +107,7 @@ class BICLModule(BaseModule):
         output[MODEL_TOKENS_KEY] = None
         output[MODEL_LOSS_KEY] = loss
         output[MODEL_LOGITS_KEY] = logits
+
         return output
 
     def update_label_embeddings(self):
@@ -127,7 +135,15 @@ class BICLModule(BaseModule):
         self.train_text_auc.update(output[MODEL_LOGITS_KEY], labels)
 
         self.log("train/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
+
         return output[MODEL_LOSS_KEY]
+
+    # def on_after_backward(self) -> None:
+    #     print("on_before_opt enter")
+    #     for name, p in self.named_parameters():
+    #         if p.grad is None:
+    #             print(name)
+    #     print("on_before_opt exit")
 
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
@@ -141,21 +157,39 @@ class BICLModule(BaseModule):
 
             meas_norm_embeds = meas_embeds / meas_embeds.norm(dim=-1, keepdim=True)
 
-            self.val_zero_in_hospital_auc.update(
-                meas_norm_embeds,
-                self.zeroshot_label_emb,
-                batch[self.task_names[zeroshot_idx]],
-                tau=self.t
-            )
+
+            
             logits = torch.matmul(meas_norm_embeds, self.zeroshot_label_emb.T) * torch.exp(self.t) # Shape: (batch_size, num_classes)
             loss = self.zeroshot_criterion(logits[:,0], batch[self.task_names[zeroshot_idx]])
-            self.log(
-                "val/zero/in/hospital/auc",
-                self.val_zero_in_hospital_auc,
-                on_epoch=True,
-                batch_size=self.cfg.batch_size,
-                metric_attribute="val_zero_in_hospital_auc",
-            )
+            
+            if dataloader_idx == 1:
+                self.val_zero_in_hospital_auc.update(
+                    meas_norm_embeds,
+                    self.zeroshot_label_emb,
+                    batch[self.task_names[zeroshot_idx]],
+                    tau=self.t
+                )
+                self.log(
+                    "val/zero/in/hospital/auc",
+                    self.val_zero_in_hospital_auc,
+                    on_epoch=True,
+                    batch_size=self.cfg.batch_size,
+                    metric_attribute="val_zero_in_hospital_auc",
+                )
+            else:
+                self.val_zero_in_icu_auc.update(
+                    meas_norm_embeds,
+                    self.zeroshot_label_emb,
+                    batch[self.task_names[zeroshot_idx]],
+                    tau=self.t
+                )
+                self.log(
+                    "val/zero/in/icu/auc",
+                    self.val_zero_in_icu_auc,
+                    on_epoch=True,
+                    batch_size=self.cfg.batch_size,
+                    metric_attribute="val_zero_in_icu_auc",
+                )
             return loss
         else:
             output = self.forward(batch)
@@ -177,28 +211,44 @@ class BICLModule(BaseModule):
     def test_step(self, batch, batch_idx, dataloader_idx=0):
         if dataloader_idx > 0:
             zeroshot_idx = dataloader_idx - 1
-            self.update_label_embeddings()
+            if batch_idx == 0:
+                self.update_label_embeddings()
             batch = self.input_encoder(batch)
             batch = self.meas_model(batch)
             meas_embeds = batch[BACKBONE_EMBEDDINGS_KEY]
 
             meas_norm_embeds = meas_embeds / meas_embeds.norm(dim=-1, keepdim=True)
 
-            self.test_zero_in_hospital_auc.update(
-                meas_norm_embeds,
-                self.zeroshot_label_emb,
-                batch[self.task_names[zeroshot_idx]],
-                tau=self.t
-            )
             logits = torch.matmul(meas_norm_embeds, self.zeroshot_label_emb.T) * torch.exp(self.t) # Shape: (batch_size, num_classes)
             loss = self.zeroshot_criterion(logits[:,0], batch[self.task_names[zeroshot_idx]])
-            self.log(
-                "test/zero/in/hospital/auc",
-                self.test_zero_in_hospital_auc,
-                on_epoch=True,
-                batch_size=self.cfg.batch_size,
-                metric_attribute="test_zero_in_hospital_auc",
-            )
+            if dataloader_idx == 1:
+                self.test_zero_in_hospital_auc.update(
+                    meas_norm_embeds,
+                    self.zeroshot_label_emb,
+                    batch[self.task_names[zeroshot_idx]],
+                    tau=self.t
+                )
+                self.log(
+                    "test/zero/in/hospital/auc",
+                    self.test_zero_in_hospital_auc,
+                    on_epoch=True,
+                    batch_size=self.cfg.batch_size,
+                    metric_attribute="test_zero_in_hospital_auc",
+                )
+            else:
+                self.test_zero_in_icu_auc.update(
+                    meas_norm_embeds,
+                    self.zeroshot_label_emb,
+                    batch[self.task_names[zeroshot_idx]],
+                    tau=self.t
+                )
+                self.log(
+                    "test/zero/in/icu/auc",
+                    self.test_zero_in_icu_auc,
+                    on_epoch=True,
+                    batch_size=self.cfg.batch_size,
+                    metric_attribute="test_zero_in_icu_auc",
+                )
             return loss
         else:
             output = self.forward(batch)

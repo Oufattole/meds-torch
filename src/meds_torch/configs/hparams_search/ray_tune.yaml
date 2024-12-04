@@ -1,8 +1,8 @@
 # Ray Tune configuration
 ray:
-  num_samples: 4
+  num_samples: 200
   resources_per_trial:
-    gpu: 1
+    gpu: 2
 
 # choose metric which will be optimized by Ray Tune
 optimized_metric: "val/zero/in/hospital/auc/dataloader_idx_1"
@@ -14,10 +14,10 @@ search_space:
     _target_: ray.tune.loguniform
     lower: 1e-4
     upper: 1e-2
-  model.backbone.dropout:
-    _target_: ray.tune.uniform
-    lower: 0.0
-    upper: 0.3
+  # model.backbone.dropout:
+  #   _target_: ray.tune.uniform
+  #   lower: 0.0
+  #   upper: 0.3
 
 scheduler:
   _target_: ray.tune.schedulers.ASHAScheduler
