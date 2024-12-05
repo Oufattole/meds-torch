@@ -20,6 +20,7 @@ model:
     attn_dropout: ${model.backbone.dropout}  # dropout post-attention
     ff_dropout: ${model.backbone.dropout}  # feedforward dropout
     alibi_pos_bias: true
+    attn_flash: True
 
 token_emb: null # use x-transformers to embed tokens
 max_seq_len: ${model.max_seq_len} # is the sampling temperature, `0` corresponds to greedy sampling
