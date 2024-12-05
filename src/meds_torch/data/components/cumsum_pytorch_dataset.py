@@ -6,6 +6,7 @@ import torch
 from mixins import SeedableMixin, TimeableMixin
 from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 
+from meds_torch.data.components.pytorch_dataset import create_dummy_dataset  # noqa
 from meds_torch.data.components.pytorch_dataset import (
     PytorchDataset,
     SubsequenceSamplingStrategy,
