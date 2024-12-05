@@ -152,17 +152,15 @@ def create_dummy_dataset(
             {
                 "subject_id": subject_id,
                 "start_time": base_datetime,
-                "time": pl.Series(
-                    [
-                        base_datetime,
-                        base_datetime + relativedelta(years=1),
-                        base_datetime + relativedelta(years=2),
-                        base_datetime + relativedelta(years=3),
-                        base_datetime + relativedelta(years=4),
-                    ]
-                ),
-                "code": pl.Series([1, 2, 3]),
-                "numeric_value": pl.Series([0.1, 0.2, 0.3]),
+                "time": [
+                    base_datetime,
+                    base_datetime + relativedelta(years=1),
+                    base_datetime + relativedelta(years=2),
+                    base_datetime + relativedelta(years=3),
+                    base_datetime + relativedelta(years=4),
+                ],
+                "code": [1, 2, 3],
+                "numeric_value": [0.1, 0.2, 0.3],
             }
         )
     static_df = pl.DataFrame(static_data)
