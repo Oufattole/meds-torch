@@ -244,7 +244,7 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
     )
     if cfg.data.task_name:
         predict_df = predict_df.with_columns(
-            pl.Series(list(chain.from_iterable([batch[cfg.data.task_name] for batch in predictions])))
+            pl.Series(list(chain.from_iterable([batch["boolean_value"] for batch in predictions])))
             .alias("boolean_value")
             .cast(pl.Boolean)
         )
