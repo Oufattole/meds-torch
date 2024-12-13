@@ -69,7 +69,7 @@ def task_wrapper(task_func: Callable) -> Callable:
             outputs = task_func(cfg=cfg, **kwargs)
 
         # things to do if exception occurs
-        except Exception as ex:
+        except Exception as ex:  # pragma: no cover
             # save exception to `.log` file
             log.error(ex)
 

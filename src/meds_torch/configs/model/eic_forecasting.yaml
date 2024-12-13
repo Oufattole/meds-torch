@@ -32,11 +32,15 @@ code_metadata_fp: ${data.code_metadata_fp}
 compile: false
 
 # sampling parameters
-num_samples: 0 # number of samples to generate
+generate_id: null # null means no sampling, otherwise uses this id to generate the trajectory
+store_generated_trajectory: true # whether to store generated trajectory in the batch
+# set to false to speed up zero-shot generation
 temperature: 1.0 # sampling temperature
+eos_tokens: null
 
 # Autoregressive modeling metric params
 top_k_acc:
   - 1
   - 5
   - 10
+next_token_auc: false

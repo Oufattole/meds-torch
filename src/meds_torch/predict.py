@@ -6,12 +6,14 @@ from pathlib import Path
 from typing import Any
 
 import hydra
+import loguru
 import numpy as np
 import polars as pl
 import pyarrow.parquet as pq
 import torch
 from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
+from mixins.seedable import seed_everything
 from omegaconf import DictConfig
 
 from meds_torch.models import (
@@ -208,6 +210,53 @@ def process_predictions(predictions: list[dict[str, Any]], model_keys: dict[str,
     return predict_df
 
 
+def store_predictions(predict_fp, task_name, predictions):
+    # Extract input trajectory
+    dfs = {}
+
+    subject_ids = pl.Series(list(chain.from_iterable([batch["subject_id"] for batch in predictions]))).cast(
+        pl.Int64
+    )
+    prediction_times = pl.Series(
+        list(chain.from_iterable([batch["prediction_time"] for batch in predictions]))
+    )
+
+    # Extract real trajectory
+    predict_df = pl.DataFrame(
+        {
+            "subject_id": subject_ids,
+            "prediction_time": prediction_times,
+            **{name: df.to_struct() for name, df in dfs.items()},
+        }
+    )
+    if task_name:
+        predict_df = predict_df.with_columns(
+            pl.Series(list(chain.from_iterable([batch["boolean_value"] for batch in predictions])))
+            .alias("boolean_value")
+            .cast(pl.Boolean)
+        )
+
+    if MODEL_PRED_PROBA_KEY in predictions[0]:
+        predict_df = predict_df.with_columns(
+            pl.Series(
+                list(chain.from_iterable([batch[MODEL_PRED_PROBA_KEY] for batch in predictions]))
+            ).alias("predicted_boolean_probability")
+        )
+        predict_df = predict_df.with_columns(
+            pl.col("predicted_boolean_probability").gt(0.5).alias("predicted_boolean_value"),
+        )
+
+    predict_df = predict_df.hstack(process_predictions(predictions, MODEL_KEY_TO_PREDICT_SCHEMA_NAME))
+
+    Path(predict_fp).parent.mkdir(parents=True, exist_ok=True)
+    try:
+        validated_table = validate_prediction_data(predict_df)
+        pq.write_table(validated_table, predict_fp)
+    except:  # noqa: E722
+        loguru.warning("Could not validate, writing prediction table via polars instead of arrow")
+        predict_df.write_parquet(predict_fp)
+
+
 @task_wrapper
 def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str, Any]]:
     """Evaluates given checkpoint on a datamodule testset.
@@ -231,6 +280,7 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
     ...
     ...     # Create config
     ...     cfg = {
+    ...         "seed": 0,
     ...         "ckpt_path": str(ckpt_path),
     ...         "model": {"_target_": "meds_torch.predict.DummyModel"},
     ...         "data": {
@@ -258,13 +308,15 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
     ┌────────────┬─────────────────────┬───────────────┬─────────────────────────┬───────────────────────────┐
     │ subject_id ┆ prediction_time     ┆ boolean_value ┆ predicted_boolean_value ┆ predicted_boolean_probabi │
     │ ---        ┆ ---                 ┆ ---           ┆ ---                     ┆ lity                      │
-    │ i64        ┆ datetime[μs]        ┆ bool          ┆ bool                    ┆ ---                       │
+    │ i64        ┆ datetime[ns]        ┆ bool          ┆ bool                    ┆ ---                       │
     │            ┆                     ┆               ┆                         ┆ f64                       │
     ╞════════════╪═════════════════════╪═══════════════╪═════════════════════════╪═══════════════════════════╡
     │ 1          ┆ 2020-01-01 00:00:00 ┆ ...           ┆ ...                     ┆ ...                       │
     │ 2          ┆ 2020-01-02 00:00:00 ┆ ...           ┆ ...                     ┆ ...                       │
     └────────────┴─────────────────────┴───────────────┴─────────────────────────┴───────────────────────────┘
     """
+    seed_everything(cfg.seed)
+    loguru.logger.info(f"Set all seeds to {cfg.seed}")
     assert cfg.ckpt_path
     if not cfg.data.do_include_subject_id:
         raise ValueError("Subject ID is required for generating trajectories")
@@ -300,46 +352,7 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
     log.info("Starting Generating Predictions!")
     predictions = trainer.predict(model=model, dataloaders=datamodule)
 
-    # Extract input trajectory
-    dfs = {}
-
-    subject_ids = pl.Series(list(chain.from_iterable([batch["subject_id"] for batch in predictions]))).cast(
-        pl.Int64
-    )
-    prediction_times = pl.Series(
-        list(chain.from_iterable([batch["prediction_time"] for batch in predictions]))
-    )
-
-    # Extract real trajectory
-    predict_df = pl.DataFrame(
-        {
-            "subject_id": subject_ids,
-            "prediction_time": prediction_times,
-            **{name: df.to_struct() for name, df in dfs.items()},
-        }
-    )
-    if cfg.data.task_name:
-        predict_df = predict_df.with_columns(
-            pl.Series(list(chain.from_iterable([batch["boolean_value"] for batch in predictions])))
-            .alias("boolean_value")
-            .cast(pl.Boolean)
-        )
-
-    if MODEL_PRED_PROBA_KEY in predictions[0]:
-        predict_df = predict_df.with_columns(
-            pl.Series(
-                list(chain.from_iterable([batch[MODEL_PRED_PROBA_KEY] for batch in predictions]))
-            ).alias("predicted_boolean_probability")
-        )
-        predict_df = predict_df.with_columns(
-            pl.col("predicted_boolean_probability").gt(0.5).alias("predicted_boolean_value"),
-        )
-
-    predict_df = predict_df.hstack(process_predictions(predictions, MODEL_KEY_TO_PREDICT_SCHEMA_NAME))
-
-    Path(cfg.paths.predict_fp).parent.mkdir(parents=True, exist_ok=True)
-    validated_table = validate_prediction_data(predict_df)
-    pq.write_table(validated_table, cfg.paths.predict_fp)
+    store_predictions(cfg.paths.predict_fp, cfg.data.task_name, predictions)
 
 
 @hydra.main(version_base="1.3", config_path=str(config_yaml.parent.resolve()), config_name=config_yaml.stem)

@@ -22,7 +22,7 @@ seed: 0
 
 trainer:
   min_epochs: 1
-  max_epochs: 2
+  max_epochs: 10
   gradient_clip_val: 1.0
 
 data:

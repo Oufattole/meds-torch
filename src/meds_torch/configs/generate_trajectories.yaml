@@ -13,9 +13,6 @@ defaults:
   # e.g. best hyperparameters for given model and datamodule
   - experiment: null
 
-  # config for hyperparameter optimization
-  - hparams_search: null
-
   # optional local config for machine/user specific settings
   # it's optional since it doesn't need to exist and is excluded from version control
   - optional local: default
@@ -33,6 +30,8 @@ tags: ["dev"]
 ckpt_path: ???
 
 paths:
-  generated_trajectory_fp: ${paths.time_output_dir}/generated_trajectory.parquet
+  generated_trajectory_fp: ${paths.time_output_dir}/generated_trajectory_${model.generate_id}.parquet
+  predict_fp: ${paths.time_output_dir}/predictions_${model.generate_id}.parquet
 
+seed: ${model.generate_id}
 actual_future_name: null
