@@ -175,7 +175,7 @@ class NextTokenPredictionMetric(Metric):
         top_n_accuracy (dict): A dictionary of MulticlassAccuracy metrics for each n in top_n.
     """
 
-    def __init__(self, vocab_size: int, top_k_acc: list[int], dist_sync_on_step=False):
+    def __init__(self, vocab_size: int, top_k_acc: list[int], next_token_auc: bool, dist_sync_on_step=False):
         """
         Initialize the NextTokenPredictionMetric.
 
@@ -188,11 +188,14 @@ class NextTokenPredictionMetric(Metric):
         super().__init__(dist_sync_on_step=dist_sync_on_step)
         self.vocab_size = vocab_size
 
-        self.auroc = MulticlassAUROC(num_classes=vocab_size, average="weighted", thresholds=100)
         self.top_k_acc = top_k_acc
-        self.accuracy_metrics = MetricCollection(
+        self.next_token_metrics = MetricCollection(
             {f"top_{k}_accuracy": MulticlassAccuracy(num_classes=vocab_size, top_k=k) for k in top_k_acc}
         )
+        if next_token_auc:
+            self.next_token_metrics["auroc"] = MulticlassAUROC(
+                num_classes=vocab_size, average="macro", thresholds=100
+            )
 
     def update(self, logits: torch.Tensor, targets: torch.Tensor, mask: torch.Tensor):
         """
@@ -217,11 +220,8 @@ class NextTokenPredictionMetric(Metric):
         flat_logits = logits[:, :-1][shifted_mask].view(-1, self.vocab_size)
         flat_targets = shifted_targets[shifted_mask].view(-1)
 
-        # Update AUROC
-        self.auroc.update(flat_logits, flat_targets)
-
-        # Update top-n accuracy
-        self.accuracy_metrics.update(flat_logits, flat_targets)
+        # Update metrics
+        self.next_token_metrics.update(flat_logits, flat_targets)
 
     def compute(self):
         """
@@ -230,10 +230,7 @@ class NextTokenPredictionMetric(Metric):
         Returns:
             dict: A dictionary containing the computed AUROC and top-n accuracy for each n in top_n.
         """
-        results = {
-            "auroc": self.auroc.compute(),
-        }
-        results.update(self.accuracy_metrics.compute())
+        results = self.next_token_metrics.compute()
         return results
 
 
@@ -391,9 +388,15 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         num_future_codes = self.cfg.get("num_future_codes", None)
         if num_future_codes is not None:
             logger.info(f"Using {num_future_codes} future codes for forecasting")
-        self.train_next_token_metric = NextTokenPredictionMetric(self.cfg.vocab_size, self.cfg.top_k_acc)
-        self.val_next_token_metric = NextTokenPredictionMetric(self.cfg.vocab_size, self.cfg.top_k_acc)
-        self.test_next_token_metric = NextTokenPredictionMetric(self.cfg.vocab_size, self.cfg.top_k_acc)
+        self.train_next_token_metric = NextTokenPredictionMetric(
+            self.cfg.vocab_size, self.cfg.top_k_acc, self.cfg.next_token_auc
+        )
+        self.val_next_token_metric = NextTokenPredictionMetric(
+            self.cfg.vocab_size, self.cfg.top_k_acc, self.cfg.next_token_auc
+        )
+        self.test_next_token_metric = NextTokenPredictionMetric(
+            self.cfg.vocab_size, self.cfg.top_k_acc, self.cfg.next_token_auc
+        )
 
         self.metadata_df = pl.read_parquet(self.cfg.code_metadata_fp)
 

@@ -43,3 +43,4 @@ top_k_acc:
   - 1
   - 5
   - 10
+next_token_auc: false
