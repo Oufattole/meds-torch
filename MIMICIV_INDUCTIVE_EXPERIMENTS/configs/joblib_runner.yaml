@@ -2,10 +2,6 @@ parallelize:
   n_workers: ${oc.env:N_WORKERS}
   launcher: "joblib"
 
-custom_normalization:
-  parallelize:
-    n_workers: 1
-
 quantile_binning:
   parallelize:
     n_workers: 1
