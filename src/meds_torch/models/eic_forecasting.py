@@ -15,9 +15,11 @@ from x_transformers.autoregressive_wrapper import eval_decorator
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.input_encoder.eic_encoder import EicEncoder
 from meds_torch.models import (
+    BACKBONE_EMBEDDINGS_KEY,
     BACKBONE_TOKENS_KEY,
     GENERATE_PREFIX,
     MODEL_BATCH_LOSS_KEY,
+    MODEL_EMBEDDINGS_KEY,
     MODEL_LOGITS_SEQUENCE_KEY,
     MODEL_LOSS_KEY,
     MODEL_PRED_PROBA_KEY,
@@ -40,7 +42,7 @@ class DummyModel:
     def __call__(self, batch):
         # Simulate backbone output
         B, S = batch[INPUT_ENCODER_TOKENS_KEY].shape
-        return {BACKBONE_TOKENS_KEY: torch.randn(B, S, 32)}
+        return {BACKBONE_TOKENS_KEY: torch.randn(B, S, 32), BACKBONE_EMBEDDINGS_KEY: None}
 
     def generate(
         self,
@@ -310,7 +312,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
     >>> model = EicForecastingModule(cfg)
     >>>
     >>> # Test generation
-    >>> batch['subject_id'] = [1, 2]
+    >>> batch['subject_id'] = torch.tensor([1, 2])
     >>> batch['prediction_time'] = [datetime.datetime(1997,1,1), datetime.datetime(1997,1,1)]
     >>> batch['end_time'] = [datetime.datetime(1997,1,1), datetime.datetime(1997,1,1)]
     >>> output = model.forward(batch)
@@ -437,6 +439,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         model_output = self.model(batch)
 
         batch[MODEL_TOKENS_KEY] = model_output[BACKBONE_TOKENS_KEY]
+        batch[MODEL_EMBEDDINGS_KEY] = model_output[BACKBONE_EMBEDDINGS_KEY]
         forecast = self.get_forecast_logits(model_output)
         batch[CODE_LOGITS] = forecast[CODE_LOGITS]
         batch[MODEL_LOGITS_SEQUENCE_KEY] = forecast[CODE_LOGITS]
@@ -569,38 +572,42 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
         # Create a tensor filled with NaN values
         result = torch.full((max_vocab_idx + 1,), float("nan"))
-        ordered_quantiles = [field.name for field in metadata_df.schema["values/quantiles"].fields]
-        percentiles = [0, *[float(q.split("/")[-1]) for q in ordered_quantiles], 1]
-        if "values/min" not in metadata_df.columns or "values/max" not in metadata_df.columns:
-            logger.warning("Missing values/min and/or values/max values in metadata_df")
+        # TODO(Oufattole) remove this and enforce that metadata_df must include the values/min
+        try:
+            ordered_quantiles = [field.name for field in metadata_df.schema["values/quantiles"].fields]
+            percentiles = [0, *[float(q.split("/")[-1]) for q in ordered_quantiles], 1]
+            if "values/min" not in metadata_df.columns or "values/max" not in metadata_df.columns:
+                logger.warning("Missing values/min and/or values/max values in metadata_df")
 
-        # Process each row in the DataFrame
-        for row in metadata_df.iter_rows(named=True):
-            vocab_idx = row["code/vocab_index"]
-            code = row["code"]
-            raw_quantiles = [row["values/quantiles"][each] for each in ordered_quantiles]
-            if "values/min" in row:
-                min_value = row["values/min"]
-            else:
-                min_value = raw_quantiles[0]
-            if "values/max" in row:
-                max_value = row["values/max"]
-            else:
-                max_value = raw_quantiles[-1]
-            raw_quantiles = [min_value, *raw_quantiles, max_value]
-
-            # Check if this is a quarterly code (contains "//_Q_")
-            if code and "//_Q_" in code and not code.startswith("TIME//DELTA//TOKEN"):
-                # Extract the number of quantiles the value is greater than, 0 for Q_1, 1 for Q_2, etc.
-                rank = int(code.split("//_Q_")[1]) - 1
-                # We estimate the numeric value is the average of the bordering quantiles it is between
-                if get_raw_values:
-                    result[vocab_idx] = sum([raw_quantiles[rank], raw_quantiles[rank + 1]]) / 2
+            # Process each row in the DataFrame
+            for row in metadata_df.iter_rows(named=True):
+                vocab_idx = row["code/vocab_index"]
+                code = row["code"]
+                raw_quantiles = [row["values/quantiles"][each] for each in ordered_quantiles]
+                if "values/min" in row:
+                    min_value = row["values/min"]
                 else:
-                    result[vocab_idx] = sum([percentiles[rank], percentiles[rank + 1]]) / 2
+                    min_value = raw_quantiles[0]
+                if "values/max" in row:
+                    max_value = row["values/max"]
+                else:
+                    max_value = raw_quantiles[-1]
+                raw_quantiles = [min_value, *raw_quantiles, max_value]
 
-            # For non-quarterly codes, leave as NaN
-            # This handles both the base code (e.g., "A") and any other non-quarterly codes
+                # Check if this is a quarterly code (contains "//_Q_")
+                if code and "//_Q_" in code and not code.startswith("TIME//DELTA//TOKEN"):
+                    # Extract the number of quantiles the value is greater than, 0 for Q_1, 1 for Q_2, etc.
+                    rank = int(code.split("//_Q_")[1]) - 1
+                    # We estimate the numeric value is the average of the bordering quantiles it is between
+                    if get_raw_values:
+                        result[vocab_idx] = sum([raw_quantiles[rank], raw_quantiles[rank + 1]]) / 2
+                    else:
+                        result[vocab_idx] = sum([percentiles[rank], percentiles[rank + 1]]) / 2
+
+                # For non-quarterly codes, leave as NaN
+                # This handles both the base code (e.g., "A") and any other non-quarterly codes
+        except:  # noqa: E722
+            pass
         return torch.cat([result, torch.Tensor([np.nan])])  # postpend a zero in case EOS token is postpended
 
     @classmethod

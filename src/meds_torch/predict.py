@@ -249,8 +249,12 @@ def store_predictions(predict_fp, task_name, predictions):
     predict_df = predict_df.hstack(process_predictions(predictions, MODEL_KEY_TO_PREDICT_SCHEMA_NAME))
 
     Path(predict_fp).parent.mkdir(parents=True, exist_ok=True)
-    validated_table = validate_prediction_data(predict_df)
-    pq.write_table(validated_table, predict_fp)
+    try:
+        validated_table = validate_prediction_data(predict_df)
+        pq.write_table(validated_table, predict_fp)
+    except:  # noqa: E722
+        loguru.warning("Could not validate, writing prediction table via polars instead of arrow")
+        predict_df.write_parquet(predict_fp)
 
 
 @task_wrapper

@@ -79,7 +79,7 @@ def test_train_generate(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: 
             "data.do_include_subject_id=true",
             "data.do_include_prediction_time=true",
             "data.do_include_end_time=true",
-            "model.num_samples=2",
+            "model.generate_id=0",
             "data.max_seq_len=10",
             "model.max_seq_len=20",
         ]
