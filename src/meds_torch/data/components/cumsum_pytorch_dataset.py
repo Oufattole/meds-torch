@@ -8,6 +8,7 @@ from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 
 from meds_torch.data.components.pytorch_dataset import create_dummy_dataset  # noqa
 from meds_torch.data.components.pytorch_dataset import (
+    BINARY_LABEL_COL,
     PytorchDataset,
     SubsequenceSamplingStrategy,
 )
@@ -202,7 +203,7 @@ class CumSumPytorchDataset(PytorchDataset):
         ...     dataset = CumSumPytorchDataset(config, split='train')
         ...
         ...     # Test loading dynamic data for first subject
-        ...     dynamic_data, subject_id, st, end = dataset.load_subject_dynamic_data(0)
+        ...     dynamic_data, subject_id, st, end, _ = dataset.load_subject_dynamic_data(0)
         ...     print(f"Subject ID: {subject_id}")
         ...     print(f"Time range: {st} to {end}")
         ...     print(f"Dynamic data keys: {sorted(dynamic_data.tensors.keys())}")
@@ -216,7 +217,7 @@ class CumSumPytorchDataset(PytorchDataset):
         ...     dataset = CumSumPytorchDataset(config, split='train')
         ...
         ...     # Load second subject
-        ...     dynamic_data, subject_id, st, end = dataset.load_subject_dynamic_data(1)
+        ...     dynamic_data, subject_id, st, end, _ = dataset.load_subject_dynamic_data(1)
         ...     print(f"Subject ID: {subject_id}")
         ...     print(f"Time range: {st} to {end}")
         ...     # Verify data structure
@@ -243,9 +244,10 @@ class CumSumPytorchDataset(PytorchDataset):
 
         dynamic_data_fp = Path(self.config.data_dir) / "data" / f"{shard}.nrt"
 
-        subject_dynamic_data = JointNestedRaggedTensorDict(tensors_fp=dynamic_data_fp)[subject_idx, st:end]
+        all_data = JointNestedRaggedTensorDict(tensors_fp=dynamic_data_fp)[subject_idx]
+        subject_dynamic_data = all_data[st:end]
 
-        return subject_dynamic_data, subject_id, st, end
+        return subject_dynamic_data, subject_id, st, end, all_data
 
     @SeedableMixin.WithSeed
     @TimeableMixin.TimeAs
@@ -276,7 +278,7 @@ class CumSumPytorchDataset(PytorchDataset):
         ...     dataset = CumSumPytorchDataset(config, split='train')
         ...
         ...     # First get the dynamic data using load_subject_dynamic_data
-        ...     dynamic_data, subject_id, st, end = dataset.load_subject_dynamic_data(0)
+        ...     dynamic_data, subject_id, st, end, _ = dataset.load_subject_dynamic_data(0)
         ...
         ...     # Then load the complete subject data
         ...     subject_data = dataset.load_subject(dynamic_data, subject_id, st, end)
@@ -291,6 +293,8 @@ class CumSumPytorchDataset(PytorchDataset):
         Keys in subject data:
         dynamic
         end_idx
+        flat_end_idx
+        flat_start_idx
         prediction_time
         start_idx
         start_time
@@ -310,7 +314,7 @@ class CumSumPytorchDataset(PytorchDataset):
         ...     config.do_include_start_time_min = False
         ...
         ...     dataset = CumSumPytorchDataset(config, split='train')
-        ...     dynamic_data, subject_id, st, end = dataset.load_subject_dynamic_data(0)
+        ...     dynamic_data, subject_id, st, end, _ = dataset.load_subject_dynamic_data(0)
         ...     subject_data = dataset.load_subject(dynamic_data, subject_id, st, end)
         ...
         ...     # Verify the modified behavior
@@ -327,7 +331,7 @@ class CumSumPytorchDataset(PytorchDataset):
         ...     config.max_seq_len = 5  # Set small max sequence length
         ...
         ...     dataset = CumSumPytorchDataset(config, split='train')
-        ...     dynamic_data, subject_id, st, end = dataset.load_subject_dynamic_data(0)
+        ...     dynamic_data, subject_id, st, end, _ = dataset.load_subject_dynamic_data(0)
         ...     subject_data = dataset.load_subject(dynamic_data, subject_id, st, end)
         ...
         ...     # Verify sequence length constraints
@@ -371,6 +375,8 @@ class CumSumPytorchDataset(PytorchDataset):
         if self.config.do_include_subsequence_indices:
             out["start_idx"] = global_st
             out["end_idx"] = global_end
+            out["flat_start_idx"] = flat_start
+            out["flat_end_idx"] = flat_end
 
         tensors = subject_dynamic_data.tensors
 
@@ -407,6 +413,52 @@ class CumSumPytorchDataset(PytorchDataset):
         if self.config.do_include_prediction_time:
             out["prediction_time"] = static_row["time"].item().to_list()[global_end - 1]
 
+        return out
+
+    def _seeded_getitem(self, idx: int) -> dict[str, list[float]]:
+        """Returns a Returns a dictionary corresponding to a single subject's data.
+
+        This function is a seedable version of `__getitem__`.
+
+        Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> import polars as pl
+        >>> import numpy as np
+        >>> from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
+
+        >>> # Test basic subject loading
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     config = create_dummy_dataset(tmp_dir)
+        ...     dataset = CumSumPytorchDataset(config, split='train')
+        ...
+        ...     # First get the dynamic data using load_subject_dynamic_data
+        ...     dynamic_data, subject_id, st, end, _ = dataset.load_subject_dynamic_data(0)
+        ...
+        ...     # Then load the complete subject data
+        ...     out = dataset[0]
+        """
+        if not self.config.do_flatten_tensors:
+            raise NotImplementedError("Only flattened tensors are currently supported.")
+        subject_dynamic_data, subject_id, st, end, all_data = self.load_subject_dynamic_data(idx)
+
+        out = self.load_subject(subject_dynamic_data, subject_id, st, end)
+
+        if self.config.do_include_subject_id:
+            out["subject_id"] = subject_id
+        if self.config.do_include_prediction_time:
+            if not self.has_task:
+                raise ValueError("Cannot include prediction_time without a task specified!")
+            out["prediction_time"] = self.prediction_times[idx]
+
+        if self.labels is not None:
+            out[BINARY_LABEL_COL] = self.labels[idx]
+
+        # TODO: complete cumularive sum computation and generate hierarchical windows
+        codes = all_data.flatten().tensors["dim0/code"]
+        cum_sum = np.cumsum(codes[None, :] == np.arange(codes.max() + 1)[:, None], axis=1).T
+        reversed_cum_sum = cum_sum[:, ::-1]
+        out["cum_sum"] = reversed_cum_sum
         return out
 
     @TimeableMixin.TimeAs
