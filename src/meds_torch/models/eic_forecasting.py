@@ -291,6 +291,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
     ...     "code_head": {"_target_": "meds_torch.models.eic_forecasting.DummyCodeHead"},
     ...     "compile": False,
     ...     "top_k_acc": [1],
+    ...     "next_token_auc": False,
     ... }
     >>> cfg = instantiate(cfg)
     >>> # Create input batch
