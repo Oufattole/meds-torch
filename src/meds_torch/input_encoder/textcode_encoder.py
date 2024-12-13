@@ -52,60 +52,57 @@ class TextCodeEmbedder(nn.Module, Module):
         self.cfg = cfg
         self.code_to_tokens_map = self.build_code_to_tokens_map()
         self.code_embedder = AutoModel.from_pretrained(self.cfg.code_embedder)
-
-        # TODO: add caching for common embeddings
+        self.linear = nn.Linear(self.code_embedder.config.hidden_size, self.cfg.token_dim)
 
     def build_code_to_tokens_map(self):
+        """
+        Builds a mapping from code to tokens
+
+        Returns:
+            code_to_tokens_map: A dictionary mapping from code to tokens
+
+        """
         code_metadata = pl.scan_parquet(self.cfg.code_metadata_fp).select(["code/vocab_index", "description"])
+        code_metadata = code_metadata.sort("code/vocab_index").collect()
+        # check that there is no 0 -- this should be reserved for the padding token
+        assert (
+            code_metadata.select(["code/vocab_index"]).min().item() == 1
+        ), "Vocab index should start from 1."
+        # check that there is no missing index
+        assert (
+            code_metadata.select(["code/vocab_index"]).max().item() == code_metadata.shape[0]
+        ), "Vocab index should be continuous."
+
         tokenizer = AutoTokenizer.from_pretrained(self.cfg.code_tokenizer)
         tokenized_code_metadata = tokenizer(
-            code_metadata.select(["description"]).collect().fill_null("").to_series().to_list(),
+            ["[PAD]"] + code_metadata.select(["description"]).fill_null("").to_series().to_list(),
             **self.cfg.tokenizer_config,
         )
-        codes = code_metadata.select(["code/vocab_index"]).collect().get_column("code/vocab_index").to_list()
-
-        keys = tokenized_code_metadata.keys()
-        code_to_tokens_map = {
-            code: {key: tokenized_code_metadata[key][i] for key in keys} for i, code in enumerate(codes)
-        }
-        del code_metadata, tokenized_code_metadata, codes, tokenizer  # , attention_mask, tokens
-        return code_to_tokens_map
+        return tokenized_code_metadata
 
     def forward(self, codes, mask):
-        # mask codes
-        masked_codes = codes[mask]
+        unique_codes = codes.unique()
+        sorted_unique_codes, indices = torch.sort(unique_codes)
+        relative_codes = torch.searchsorted(sorted_unique_codes, codes)
+        # relative_codes corresponds to the indices of the sorted unique codes
+        # so that we can just use the output of the embedder without realigning
 
-        unique_codes = masked_codes.unique()
+        # sorted_unique_codes = sorted_unique_codes.to(codes.device)
+        # relative_codes = relative_codes.to(codes.device)
+        for key in self.code_to_tokens_map.keys():
+            self.code_to_tokens_map[key] = self.code_to_tokens_map[key].to(codes.device)
 
-        available_keys = list(self.code_to_tokens_map[unique_codes[0].item()].keys())
         embedder_inputs = {
-            key: torch.stack([self.code_to_tokens_map[code.item()][key] for code in unique_codes]).to(
-                codes.device
-            )
-            for key in available_keys
+            key: self.code_to_tokens_map[key][sorted_unique_codes].to(codes.device)
+            for key in self.code_to_tokens_map.keys()
         }
-        code_embeddings = self.code_embedder(**embedder_inputs)
-        keys = code_embeddings.keys()
-        code_to_embeddings = {
-            code.item(): {key: code_embeddings[key][i] for key in keys} for i, code in enumerate(unique_codes)
-        }
+        code_embeddings = self.code_embedder(**embedder_inputs).pooler_output
 
-        mask_embedding = torch.zeros_like(
-            code_to_embeddings[unique_codes[0].item()]["last_hidden_state"][:, 0]
-        )
+        code_embeddings = self.linear(code_embeddings)
 
-        embeddings = [
-            torch.stack(
-                [
-                    code_to_embeddings[code.item()]["last_hidden_state"][:, 0]
-                    if mask_row[i]
-                    else mask_embedding
-                    for i, code in enumerate(row)
-                ]
-            )
-            for row, mask_row in zip(codes, mask)
-        ]
-        embeddings = torch.stack(embeddings).to(codes.device)
+        embeddings = code_embeddings[relative_codes].to(codes.device)
+
+        # TODO: Masking -- not sure if this is needed as we can do it later
         return embeddings
 
 
