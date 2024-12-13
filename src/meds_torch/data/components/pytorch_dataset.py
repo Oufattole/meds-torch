@@ -29,6 +29,7 @@ class DummyConfig:
     do_include_subject_id: bool = True
     do_include_subsequence_indices: bool = True
     do_include_start_time_min: bool = True
+    do_include_end_time: bool = True
     do_include_prediction_time: bool = True
     subsequence_sampling_strategy: str = "from_start"
 
@@ -129,6 +130,7 @@ def create_dummy_dataset(
                     do_include_subject_id=True,
                     do_include_subsequence_indices=True,
                     do_include_start_time_min=True,
+                    do_include_end_time=True,
                     do_include_prediction_time=True,
                     subsequence_sampling_strategy='from_start')
     """
@@ -150,17 +152,15 @@ def create_dummy_dataset(
             {
                 "subject_id": subject_id,
                 "start_time": base_datetime,
-                "time": pl.Series(
-                    [
-                        base_datetime,
-                        base_datetime + relativedelta(years=1),
-                        base_datetime + relativedelta(years=2),
-                        base_datetime + relativedelta(years=3),
-                        base_datetime + relativedelta(years=4),
-                    ]
-                ),
-                "code": pl.Series([1, 2, 3]),
-                "numeric_value": pl.Series([0.1, 0.2, 0.3]),
+                "time": [
+                    base_datetime,
+                    base_datetime + relativedelta(years=1),
+                    base_datetime + relativedelta(years=2),
+                    base_datetime + relativedelta(years=3),
+                    base_datetime + relativedelta(years=4),
+                ],
+                "code": [1, 2, 3],
+                "numeric_value": [0.1, 0.2, 0.3],
             }
         )
     static_df = pl.DataFrame(static_data)
@@ -402,7 +402,7 @@ def get_task_indices_and_labels(
     >>>
     >>> # Run the function
     >>> BINARY_LABEL_COL = "boolean_value"  # Define the constant used in the function
-    >>> indices, labels = get_task_indices_and_labels(task_df, static_dfs)
+    >>> indices, labels, pred_times = get_task_indices_and_labels(task_df, static_dfs)
     >>>
     >>> # Check the results
     >>> print(indices)  # Only subjects 1 and 2 should be present (inner join)
@@ -427,8 +427,9 @@ def get_task_indices_and_labels(
 
     indexes = list(zip(label_df["subject_id"], label_df["end_idx"]))
     labels = label_df[BINARY_LABEL_COL].to_list()
+    prediction_times = label_df["prediction_time"].to_list()
 
-    return indexes, labels
+    return indexes, labels, prediction_times
 
 
 class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
@@ -471,24 +472,25 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         ...     # Remove task path to test taskless initialization
         ...     config.task_label_path = None
         ...     config.task_name = None
+        ...     config.do_include_prediction_time = False
         ...     dataset = PytorchDataset(config, split='train')
         ...     print(f"Dataset size: {len(dataset)}")
         ...     print(f"Has task: {dataset.has_task}")
         ...     # Test data loading
         ...     sample = dataset[0]
         ...     print("Sample keys:")
-        ...     for key in sample.keys(): print(f"\t{key}")
+        ...     for key in sorted(list(sample.keys())): print(f"\t{key}")
         Dataset size: 3
         Has task: False
         Sample keys:
-              static_indices
-              static_values
-              start_idx
-              end_idx
-              dynamic
-              start_time
-              prediction_time
-              subject_id
+                dynamic
+                end_idx
+                end_time
+                start_idx
+                start_time
+                static_indices
+                static_values
+                subject_id
         >>> # Test initialization with task
         >>> with tempfile.TemporaryDirectory() as tmp_dir:
         ...     config = create_dummy_dataset(tmp_dir)
@@ -590,7 +592,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             logger.info(f"Reading task constraints for {self.config.task_name} from {task_df_fp}")
             task_df = pl.read_parquet(task_df_fp)
 
-            subjs_and_ends, self.labels = get_task_indices_and_labels(task_df, self.static_dfs)
+            subjs_and_ends, self.labels, self.prediction_times = get_task_indices_and_labels(
+                task_df, self.static_dfs
+            )
             self.index = [(subj, 0, end) for subj, end in subjs_and_ends]
         else:
             self.index = [(subj, *bounds) for subj, bounds in self.subj_seq_bounds.items()]
@@ -747,11 +751,11 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         ...     print()
         ...     print(f"Has static indices: {len(subject_data['static_indices']) > 0}")
         ...     print(f"Has dynamic data: {isinstance(subject_data['dynamic'], JointNestedRaggedTensorDict)}")
-        ...     print(f"Has prediction time: {'prediction_time' in subject_data}")
+        ...     print(f"Has end time: {'end_time' in subject_data}")
         Keys in subject data:
         dynamic
         end_idx
-        prediction_time
+        end_time
         start_idx
         start_time
         static_indices
@@ -759,7 +763,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         <BLANKLINE>
         Has static indices: True
         Has dynamic data: True
-        Has prediction time: True
+        Has end time: True
 
         >>> # Test with different configuration settings
         >>> with tempfile.TemporaryDirectory() as tmp_dir:
@@ -863,8 +867,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         if self.config.do_include_start_time_min:
             out["start_time"] = static_row["time"].item().to_list()[global_st]
-        if self.config.do_include_prediction_time:
-            out["prediction_time"] = static_row["time"].item().to_list()[global_end - 1]
+        if self.config.do_include_end_time:
+            out["end_time"] = static_row["time"].item().to_list()[global_end - 1]
 
         return out
 
@@ -881,6 +885,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         if self.config.do_include_subject_id:
             out["subject_id"] = subject_id
+        if self.config.do_include_prediction_time:
+            if not self.has_task:
+                raise ValueError("Cannot include prediction_time without a task specified!")
+            out["prediction_time"] = self.prediction_times[idx]
 
         if self.labels is not None:
             out[BINARY_LABEL_COL] = self.labels[idx]

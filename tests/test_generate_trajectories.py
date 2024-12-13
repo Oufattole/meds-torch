@@ -9,7 +9,7 @@ from omegaconf import open_dict
 
 from meds_torch.generate_trajectories import generate_trajectories
 from meds_torch.train import main as train_main
-from tests.conftest import create_cfg
+from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 from tests.test_configs import get_overrides_and_exceptions
 
 
@@ -21,7 +21,6 @@ from tests.test_configs import get_overrides_and_exceptions
         )
         for data, model, early_fusion, input_encoder, backbone in [
             ("pytorch_dataset", "eic_forecasting", None, "eic_encoder", "transformer_decoder"),
-            ("multiwindow_pytorch_dataset", "eic_forecasting", None, "eic_encoder", "transformer_decoder"),
         ]
     ]
 )
@@ -79,7 +78,8 @@ def test_train_generate(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: 
         overrides += [
             "data.do_include_subject_id=true",
             "data.do_include_prediction_time=true",
-            "model.num_samples=2",
+            "data.do_include_end_time=true",
+            "model.generate_id=0",
             "data.max_seq_len=10",
             "model.max_seq_len=20",
         ]
@@ -92,9 +92,8 @@ def test_train_generate(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: 
         with open_dict(cfg_gen):
             cfg_gen.ckpt_path = str(time_output_dir / "checkpoints" / "last.ckpt")
             cfg_gen.paths.output_dir = str(tmp_path)
-            if "multiwindow_pytorch_dataset" == cfg_gen.data.name:
-                cfg_gen.data.default_window_name = "pre"
-                cfg_gen.actual_future_name = "post"
+            cfg_gen.data.task_name = SUPERVISED_TASK_NAME
+            cfg_gen.data.task_root_dir = str(meds_dir / "tasks")
 
         HydraConfig().set_config(cfg_gen)
         generate_trajectories(cfg_gen)

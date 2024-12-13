@@ -23,5 +23,3 @@ model:
 
 token_emb:
   _target_: torch.nn.Identity # assume data is pre-embedded by the input_encoder
-
-postpend_eos_token: true

@@ -170,7 +170,7 @@ def create_dummy_multiwindow_dataset(
 
     Example:
     >>> import tempfile
-    >>> _ = pl.Config.set_tbl_width_chars(110)
+    >>> _ = pl.Config.set_tbl_width_chars(106)
     >>> with tempfile.TemporaryDirectory() as tmp_dir:
     ...     config = create_dummy_multiwindow_dataset(tmp_dir)
     ...     task_df = pl.read_parquet(Path(config.data_dir) / "task_labels.parquet")
@@ -240,7 +240,7 @@ def get_window_indexes(static_df: pl.DataFrame, windows_df: pl.DataFrame) -> pl.
 
     Example:
     >>> import pprint
-    >>> _ = pl.Config.set_tbl_width_chars(110)
+    >>> _ = pl.Config.set_tbl_width_chars(106)
     >>> timeseries_df = pl.DataFrame({
     ...     "subject_id": [1, 2],
     ...     "time": [
@@ -454,7 +454,7 @@ class MultiWindowPytorchDataset(SeedableMixin, torch.utils.data.Dataset):
     end_idx: <class 'int'>
     dynamic: <class 'nested_ragged_tensors.ragged_numpy.JointNestedRaggedTensorDict'>
     start_time: <class 'datetime.datetime'>
-    prediction_time: <class 'datetime.datetime'>
+    end_time: <class 'datetime.datetime'>
     """
 
     def __init__(self, cfg: DictConfig, split: str):

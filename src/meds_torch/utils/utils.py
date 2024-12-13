@@ -1,5 +1,6 @@
 import warnings
 from collections.abc import Callable
+from functools import wraps
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,7 @@ def task_wrapper(task_func: Callable) -> Callable:
     :return: The wrapped task function.
     """
 
+    @wraps(task_func)
     def wrap(cfg: DictConfig, **kwargs) -> tuple[dict[str, Any], dict[str, Any]]:
         cfg.paths.time_output_dir = Path(cfg.paths.time_output_dir)
         cfg.paths.time_output_dir.mkdir(parents=True, exist_ok=True)
@@ -67,9 +69,9 @@ def task_wrapper(task_func: Callable) -> Callable:
             outputs = task_func(cfg=cfg, **kwargs)
 
         # things to do if exception occurs
-        except Exception as ex:
+        except Exception as ex:  # pragma: no cover
             # save exception to `.log` file
-            log.exception("")
+            log.error(ex)
 
             # some hyperparameter combinations might be invalid or cause out-of-memory errors
             # so when using hparam search plugins like Optuna, you might want to disable

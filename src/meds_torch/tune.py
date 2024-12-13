@@ -47,7 +47,9 @@ def ray_tune_runner(cfg: DictConfig, train_func: Callable):
     for key, value in cfg.hparams_search.search_space.items():
         search_space[key] = hydra.utils.instantiate(value)
 
-    scaling_config = ScalingConfig(use_gpu=True, resources_per_worker={"GPU": 1})
+    scaling_config = ScalingConfig(
+        use_gpu=True, resources_per_worker=OmegaConf.to_container(cfg.hparams_search.ray.resources_per_trial)
+    )
 
     run_config = RunConfig(
         checkpoint_config=CheckpointConfig(

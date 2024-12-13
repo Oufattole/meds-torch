@@ -1,6 +1,7 @@
 defaults:
   - input_encoder: eic_encoder
   - backbone: eic_transformer_decoder
+  - zero_shot_labeler: null
   - _self_
 _target_: meds_torch.models.eic_forecasting.EicForecastingModule.initialize
 
@@ -31,6 +32,15 @@ code_metadata_fp: ${data.code_metadata_fp}
 compile: false
 
 # sampling parameters
-temperature: 1 # is the sampling temperature, `0` corresponds to greedy sampling
-num_samples: 0 # number of samples to generate
-eos_token_id: null # stop sampling when this token is generated
+generate_id: null # null means no sampling, otherwise uses this id to generate the trajectory
+store_generated_trajectory: true # whether to store generated trajectory in the batch
+# set to false to speed up zero-shot generation
+temperature: 1.0 # sampling temperature
+eos_tokens: null
+
+# Autoregressive modeling metric params
+top_k_acc:
+  - 1
+  - 5
+  - 10
+next_token_auc: false

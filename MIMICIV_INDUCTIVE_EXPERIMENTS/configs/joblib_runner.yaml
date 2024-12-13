@@ -5,3 +5,7 @@ parallelize:
 custom_normalization:
   parallelize:
     n_workers: 1
+
+quantile_binning:
+  parallelize:
+    n_workers: 1

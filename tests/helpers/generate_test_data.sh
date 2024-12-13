@@ -35,8 +35,12 @@ export TASK_WINDOW_STATS_DIR=$(pwd)/tests/test_data/windows/raw/
 # export MODEL_DIR=$(pwd)/tests/test_data/triplet_tensors
 # MEDS_transform-runner "pipeline_config_fp=$PIPELINE_CONFIG_FP"
 
-export PIPELINE_CONFIG_FP=$(pwd)/tests/helpers/configs/eic_config.yaml
-export MODEL_DIR=$(pwd)/tests/test_data/eic_tensors
+# export PIPELINE_CONFIG_FP=$(pwd)/tests/helpers/configs/eic_config.yaml
+# export MODEL_DIR=$(pwd)/tests/test_data/eic_tensors
+# MEDS_transform-runner "pipeline_config_fp=$PIPELINE_CONFIG_FP"
+
+export PIPELINE_CONFIG_FP=$(pwd)/tests/helpers/configs/ethos_config.yaml
+export MODEL_DIR=$(pwd)/tests/test_data/ethos_tensors
 MEDS_transform-runner "pipeline_config_fp=$PIPELINE_CONFIG_FP"
 
 # export PIPELINE_CONFIG_FP=$(pwd)/tests/helpers/configs/multimodal_triplet_config.yaml

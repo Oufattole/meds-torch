@@ -10,7 +10,7 @@ SCHEMA_FIELD_ORDER = OrderedDict(
     [
         # Required fields
         ("subject_id", pa.int64()),
-        ("prediction_time", pa.timestamp("us")),
+        ("prediction_time", pa.timestamp("ns")),
         # Prediction fields
         ("boolean_value", pa.bool_()),
         ("predicted_boolean_value", pa.bool_()),

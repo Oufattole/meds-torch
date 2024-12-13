@@ -1,0 +1,33 @@
+predicates:
+  hospital_admission:
+    code: {regex: "HOSPITAL_ADMISSION//.*"}
+  lab:
+    code: "LAB//50912//mg/dL"
+  low_lab:
+    code: "LAB//50912//mg/dL"
+    value_max: 0.6
+    value_max_inclusive: True
+  high_lab:
+    code: "LAB//50912//mg/dL"
+    value_min: 1.5
+    value_min_inclusive: True
+  abnormal_lab:
+    expr: or(high_lab, low_lab)
+
+trigger: hospital_admission
+
+windows:
+  input:
+    start: NULL
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    index_timestamp: end
+  target:
+    start: input.end
+    end: start + 1m
+    start_inclusive: False
+    end_inclusive: True
+    has:
+      lab: (1, None)
+    label: abnormal_lab

@@ -2,7 +2,7 @@
 ray:
   num_samples: 8
   resources_per_trial:
-    gpu: 1
+    GPU: 1
 
 # choose metric which will be optimized by Ray Tune
 optimized_metric: "val/loss"

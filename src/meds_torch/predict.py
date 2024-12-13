@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 from importlib.resources import files
 from itertools import chain
 from pathlib import Path
@@ -8,10 +9,11 @@ import hydra
 import loguru
 import numpy as np
 import polars as pl
-import pyarrow as pa
+import pyarrow.parquet as pq
 import torch
 from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
+from mixins.seedable import seed_everything
 from omegaconf import DictConfig
 
 from meds_torch.models import (
@@ -34,7 +36,7 @@ from meds_torch.utils.resolvers import setup_resolvers
 
 setup_resolvers()
 log = RankedLogger(__name__, rank_zero_only=True)
-config_yaml = files("meds_torch").joinpath("configs/eval.yaml")
+config_yaml = files("meds_torch").joinpath("configs/predict.yaml")
 
 MODEL_KEY_TO_PREDICT_SCHEMA_NAME = {
     MODEL_EMBEDDINGS_KEY: "embeddings",
@@ -43,6 +45,37 @@ MODEL_KEY_TO_PREDICT_SCHEMA_NAME = {
     MODEL_TOKENS_KEY: "tokens",
     MODEL_LOSS_KEY: "loss",
 }
+
+
+# Create dummy config
+@dataclass
+class DummyTrainer:
+    logger: list[Logger] | None = None
+    task_name: str = "test_task"
+
+    def predict(self, model, dataloaders):
+        return [
+            {
+                "subject_id": [1, 2],
+                "prediction_time": ["2020-01-01", "2020-01-02"],
+                "boolean_value": [0, 1],
+                MODEL_PRED_PROBA_KEY: [0.2, 0.8],
+                self.task_name: [1, 1],
+            }
+        ]
+
+
+@dataclass
+class DummyModel(LightningModule):
+    def load_state_dict(self, state_dict):
+        pass
+
+
+@dataclass
+class DummyDataModule(LightningDataModule):
+    task_name: str
+    do_include_subject_id: bool
+    do_include_prediction_time: bool
 
 
 def process_tensor_batches(predictions: list[dict[str, Any]], key: str) -> list[torch.Tensor | np.ndarray]:
@@ -177,6 +210,53 @@ def process_predictions(predictions: list[dict[str, Any]], model_keys: dict[str,
     return predict_df
 
 
+def store_predictions(predict_fp, task_name, predictions):
+    # Extract input trajectory
+    dfs = {}
+
+    subject_ids = pl.Series(list(chain.from_iterable([batch["subject_id"] for batch in predictions]))).cast(
+        pl.Int64
+    )
+    prediction_times = pl.Series(
+        list(chain.from_iterable([batch["prediction_time"] for batch in predictions]))
+    )
+
+    # Extract real trajectory
+    predict_df = pl.DataFrame(
+        {
+            "subject_id": subject_ids,
+            "prediction_time": prediction_times,
+            **{name: df.to_struct() for name, df in dfs.items()},
+        }
+    )
+    if task_name:
+        predict_df = predict_df.with_columns(
+            pl.Series(list(chain.from_iterable([batch["boolean_value"] for batch in predictions])))
+            .alias("boolean_value")
+            .cast(pl.Boolean)
+        )
+
+    if MODEL_PRED_PROBA_KEY in predictions[0]:
+        predict_df = predict_df.with_columns(
+            pl.Series(
+                list(chain.from_iterable([batch[MODEL_PRED_PROBA_KEY] for batch in predictions]))
+            ).alias("predicted_boolean_probability")
+        )
+        predict_df = predict_df.with_columns(
+            pl.col("predicted_boolean_probability").gt(0.5).alias("predicted_boolean_value"),
+        )
+
+    predict_df = predict_df.hstack(process_predictions(predictions, MODEL_KEY_TO_PREDICT_SCHEMA_NAME))
+
+    Path(predict_fp).parent.mkdir(parents=True, exist_ok=True)
+    try:
+        validated_table = validate_prediction_data(predict_df)
+        pq.write_table(validated_table, predict_fp)
+    except:  # noqa: E722
+        loguru.warning("Could not validate, writing prediction table via polars instead of arrow")
+        predict_df.write_parquet(predict_fp)
+
+
 @task_wrapper
 def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str, Any]]:
     """Evaluates given checkpoint on a datamodule testset.
@@ -188,7 +268,55 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
         cfg: DictConfig configuration composed by Hydra.
     Returns:
         Tuple[dict, dict] with metrics and dict with all instantiated objects.
+
+    Examples:
+    >>> import tempfile
+    >>> from omegaconf import DictConfig
+    >>> _ = pl.Config.set_tbl_width_chars(106)
+    >>> # Create temporary checkpoint file
+    >>> with tempfile.TemporaryDirectory() as tmp_dir:
+    ...     ckpt_path = Path(tmp_dir) / "model.ckpt"
+    ...     torch.save({"state_dict": {}}, ckpt_path)
+    ...
+    ...     # Create config
+    ...     cfg = {
+    ...         "seed": 0,
+    ...         "ckpt_path": str(ckpt_path),
+    ...         "model": {"_target_": "meds_torch.predict.DummyModel"},
+    ...         "data": {
+    ...             "_target_": "meds_torch.predict.DummyDataModule",
+    ...             "task_name": "test_task",
+    ...             "do_include_subject_id": True,
+    ...             "do_include_prediction_time": True
+    ...         },
+    ...         "paths": {
+    ...             "predict_fp": str(Path(tmp_dir) / "predictions.parquet"),
+    ...             "time_output_dir": tmp_dir
+    ...         },
+    ...         "trainer": {"_target_": "meds_torch.predict.DummyTrainer"},
+    ...         "logger": None
+    ...     }
+    ...     cfg = DictConfig(cfg)
+    ...
+    ...     # Run prediction
+    ...     predict(cfg)
+    ...
+    ...     # Verify outputs
+    ...     assert Path(cfg.paths.predict_fp).exists()
+    ...     print(pl.read_parquet(cfg.paths.predict_fp))  # doctest: +NORMALIZE_WHITESPACE, +ELLIPSIS
+    shape: (2, 5)
+    ┌────────────┬─────────────────────┬───────────────┬─────────────────────────┬───────────────────────────┐
+    │ subject_id ┆ prediction_time     ┆ boolean_value ┆ predicted_boolean_value ┆ predicted_boolean_probabi │
+    │ ---        ┆ ---                 ┆ ---           ┆ ---                     ┆ lity                      │
+    │ i64        ┆ datetime[ns]        ┆ bool          ┆ bool                    ┆ ---                       │
+    │            ┆                     ┆               ┆                         ┆ f64                       │
+    ╞════════════╪═════════════════════╪═══════════════╪═════════════════════════╪═══════════════════════════╡
+    │ 1          ┆ 2020-01-01 00:00:00 ┆ ...           ┆ ...                     ┆ ...                       │
+    │ 2          ┆ 2020-01-02 00:00:00 ┆ ...           ┆ ...                     ┆ ...                       │
+    └────────────┴─────────────────────┴───────────────┴─────────────────────────┴───────────────────────────┘
     """
+    seed_everything(cfg.seed)
+    loguru.logger.info(f"Set all seeds to {cfg.seed}")
     assert cfg.ckpt_path
     if not cfg.data.do_include_subject_id:
         raise ValueError("Subject ID is required for generating trajectories")
@@ -224,47 +352,7 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
     log.info("Starting Generating Predictions!")
     predictions = trainer.predict(model=model, dataloaders=datamodule)
 
-    # Extract input trajectory
-    dfs = {}
-
-    subject_ids = pl.Series(list(chain.from_iterable([batch["subject_id"] for batch in predictions]))).cast(
-        pl.Int64
-    )
-    prediction_times = pl.Series(
-        list(chain.from_iterable([batch["prediction_time"] for batch in predictions]))
-    )
-
-    # Extract real trajectory
-    predict_df = pl.DataFrame(
-        {
-            "subject_id": subject_ids,
-            "prediction_time": prediction_times,
-            **{name: df.to_struct() for name, df in dfs.items()},
-        }
-    )
-    if cfg.data.task_name:
-        predict_df = predict_df.with_columns(
-            pl.Series(list(chain.from_iterable([batch[cfg.data.task_name] for batch in predictions])))
-            .alias("boolean_value")
-            .cast(pl.Boolean)
-        )
-
-    if MODEL_PRED_PROBA_KEY in predictions[0]:
-        predict_df = predict_df.with_columns(
-            pl.Series(
-                list(chain.from_iterable([batch[MODEL_PRED_PROBA_KEY] for batch in predictions]))
-            ).alias("predicted_boolean_probability")
-        )
-        predict_df = predict_df.with_columns(
-            pl.col("predicted_boolean_probability").gt(0.5).alias("predicted_boolean_value"),
-        )
-
-    predict_df = predict_df.hstack(process_predictions(predictions, MODEL_KEY_TO_PREDICT_SCHEMA_NAME))
-
-    Path(cfg.paths.predict_fp).parent.mkdir(parents=True, exist_ok=True)
-    validated_table = validate_prediction_data(predict_df)
-    pa.parquet.write_table(validated_table, cfg.paths.predict_fp)
-    loguru.logger.info(pl.from_arrow(validated_table).head())
+    store_predictions(cfg.paths.predict_fp, cfg.data.task_name, predictions)
 
 
 @hydra.main(version_base="1.3", config_path=str(config_yaml.parent.resolve()), config_name=config_yaml.stem)
