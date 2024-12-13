@@ -12,6 +12,8 @@ quadro:
 ROOT_DIR="/storage/shared/mimic-iv/meds_v0.3.2/"  # Replace with your actual root directory
 ```
 
+We first need to tensorize your meds data (cache it in a format such that meds-torch can efficiently train models on the dataset). We can tensorize 10 commone lab codes in MIMIC IV by running the tokenize script with the `eic_top_10.yaml`, which performs EIC tokenization on these common codes:
+
 ```bash
 export MEDS_DIR=${ROOT_DIR}/meds/
 export EIC_DIR=${ROOT_DIR}/eic_top10_tensors # set to the directory in which you want to output the tensorized MIMIC-IV data
@@ -22,9 +24,9 @@ export JOBLIB_RUNNER_CONFIG_PATH="$(pwd)/TUTORIAL/configs/local_parallelism_runn
 bash TUTORIAL/tokenize.sh $MEDS_DIR $EIC_DIR $N_WORKERS $PIPELINE_CONFIG_PATH stage_runner_fp=$JOBLIB_RUNNER_CONFIG_PATH
 ```
 
-Train a supervised model.
+Let's first train a supervised model which we will use as a baseline.
 
-Checkout (and modify if you wish) the experiment file `$(pwd)/TUTORIAL/configs/eic_top10_forecast_mtr.yaml` which defines most of the input args
+Checkout (and modify if you wish) the experiment file `$(pwd)/TUTORIAL/configs/eic_top10_forecast_mtr.yaml` which defines most of the input args for training this model:
 
 ```bash
 CUDA_VISIBLE_DEVICES=1
@@ -149,7 +151,7 @@ meds-torch-predict --multirun model=eic_forecasting \
 
 ## Run zero-shot by:
 
-- increasing the `model.num_samples`
+- increasing the `NUM_SAMPLES`
 - setting a zero-shot labeler for a task
   - for the task of predicting mortality within 48 hours given the first 24 hours of an icu admission, we add the zero-shot labeler args  `model/zero_shot_labeler=time_to_event_labeler model.zero_shot_labeler.target_codes=[203] model.zero_shot_labeler.time_length=0.0054757`. the Death code is code 203, check the \$\{TENSOR_DIR}/metadata/codes.parquet file to see the MEDS_DEATH code/vocab_index when you run this. The times are in years so 2/365.25 gives us 48 hours (2 days).
 - Optionally, select a time based budget, rather than a max_seq_len budget by setting `model/backbone/generation_budget=years model.backbone.generation_budget.value=0.0054757 and increase the batch size for more speed with data.dataloader.batch_size=1024`
@@ -167,8 +169,8 @@ TASKS_DIR=${MEDS_DIR}/tasks/
 TASK_NAME="mortality/in_icu/first_24h"
 
 # for max_seq_len budget
-meds-torch-predict model/zero_shot_labeler=time_to_event_labeler model=eic_forecasting \
-    model.num_samples=100 experiment=eic_top10_forecast_mtr \
+meds-torch-predict --multirun model/zero_shot_labeler=time_to_event_labeler model=eic_forecasting \
+    model.generate_id="range(0,100)" experiment=eic_top10_forecast_mtr \
     model.zero_shot_labeler.target_codes=[203] model.zero_shot_labeler.time_length=0.0054757 \
     data.do_include_subject_id=true data.do_include_prediction_time=true \
     data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
@@ -177,9 +179,9 @@ meds-torch-predict model/zero_shot_labeler=time_to_event_labeler model=eic_forec
     "hydra.searchpath=[$(pwd)/TUTORIAL/configs/]"
 
 # for time budget
-meds-torch-predict model/zero_shot_labeler=time_to_event_labeler model/backbone/generation_budget=years model=eic_forecasting \
+meds-torch-predict --multirun model/zero_shot_labeler=time_to_event_labeler model/backbone/generation_budget=years model=eic_forecasting \
     model.backbone.generation_budget.value=0.0054757 data.dataloader.batch_size=512 \
-    model.num_samples=10 experiment=eic_top10_forecast_mtr \
+    model.generate_id="range(0,10)" experiment=eic_top10_forecast_mtr \
     model.zero_shot_labeler.target_codes=[203] model.zero_shot_labeler.time_length=0.0054757 \
     data.do_include_subject_id=true data.do_include_prediction_time=true \
     data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
@@ -199,9 +201,10 @@ TASKS_DIR=${MEDS_DIR}/tasks/
 TASK_NAME="mortality/in_icu/first_24h"
 
 # for time budget -- /storage/nassim/tmp/zero-shot/2024-11-13_01-42-22_821171/
-meds-torch-predict model/zero_shot_labeler=time_to_event_labeler model/backbone/generation_budget=years model=eic_forecasting \
+meds-torch-predict --multirun model/zero_shot_labeler=time_to_event_labeler \
+    model/backbone/generation_budget=years model=eic_forecasting \
     model.backbone.generation_budget.value=0.0054757 data.dataloader.batch_size=64 \
-    model.num_samples=10 experiment=eic_top10_forecast_large_mtr \
+    model.generate_id="range(0,10)" experiment=eic_top10_forecast_large_mtr \
     model.zero_shot_labeler.target_codes=[203] model.zero_shot_labeler.time_length=0.0054757 \
     data.do_include_subject_id=true data.do_include_prediction_time=true \
     data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
@@ -221,9 +224,10 @@ TASKS_DIR=${MEDS_DIR}/tasks/
 TASK_NAME="mortality/in_icu/first_24h"
 
 # for time budget --
-meds-torch-predict model/zero_shot_labeler=time_to_event_labeler model/backbone/generation_budget=years model=eic_forecasting model.token_dim=16 \
+meds-torch-predict --multirun model/zero_shot_labeler=time_to_event_labeler \
+    model/backbone/generation_budget=years model=eic_forecasting model.token_dim=16 \
     model.backbone.generation_budget.value=0.0054757 data.dataloader.batch_size=64 \
-    model.num_samples=10 experiment=eic_top10_forecast_mtr \
+    model.generate_id="range(0,10)" experiment=eic_top10_forecast_mtr \
     model.zero_shot_labeler.target_codes=[203] model.zero_shot_labeler.time_length=0.0054757 \
     data.do_include_subject_id=true data.do_include_prediction_time=true \
     data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
@@ -258,9 +262,9 @@ TASKS_DIR=${MEDS_DIR}/tasks/
 TASK_NAME="mortality/in_icu/first_24h"
 
 
-meds-torch-generate model/backbone/generation_budget=years model=eic_forecasting \
+meds-torch-generate --multirun model/backbone/generation_budget=years model=eic_forecasting \
     model.backbone.generation_budget.value=0.0054757 data.dataloader.batch_size=64 \
-    model.num_samples=100 experiment=eic_top10_forecast_mtr \
+    model.generate_id="range(0,100)" experiment=eic_top10_forecast_mtr \
 	data.do_include_subject_id=true data.do_include_prediction_time=true \
     data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
     paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
@@ -280,9 +284,9 @@ TASKS_DIR=${MEDS_DIR}/tasks/
 TASK_NAME="mortality/in_icu/first_24h"
 
 
-meds-torch-generate model/backbone/generation_budget=years model=eic_forecasting \
+meds-torch-generate --multirun model/backbone/generation_budget=years model=eic_forecasting \
     model.backbone.generation_budget.value=0.0054757 data.dataloader.batch_size=64 \
-    model.num_samples=100 experiment=eic_top10_forecast_large_mtr \
+    model.generate_id="range(0,100)" experiment=eic_top10_forecast_large_mtr \
     data.do_include_subject_id=true data.do_include_prediction_time=true \
     data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
     paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
@@ -301,9 +305,9 @@ TASKS_DIR=${MEDS_DIR}/tasks/
 TASK_NAME="mortality/in_icu/first_24h"
 
 
-meds-torch-generate model/backbone/generation_budget=years model=eic_forecasting model.token_dim=16 \
+meds-torch-generate --multirun model/backbone/generation_budget=years model=eic_forecasting model.token_dim=16 \
     model.backbone.generation_budget.value=0.0054757 data.dataloader.batch_size=64 \
-    model.num_samples=100 experiment=eic_top10_forecast_mtr \
+     model.generate_id="range(0,100)" experiment=eic_top10_forecast_mtr \
 	data.do_include_subject_id=true data.do_include_prediction_time=true \
     data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
     paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \

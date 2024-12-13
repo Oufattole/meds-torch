@@ -32,8 +32,8 @@ stage_configs:
       - code/n_subjects
   custom_filter_measurements:
     _script: "python -m meds_torch.utils.custom_filter_measurements"
-    additional_codes: ["^MEDS_DEATH$", "^MEDS_BIRTH$", "^HOSPITAL_ADMISSION//.*", "^HOSPITAL_DISCHARGE//.*", "^ED_REGISTRATION//.*", "^ED_OUT//.*", "^ICU_ADMISSION//.*", "^ICU_DISCHARGE//.*", "^TIME.*$", "^GENDER//.*$", '^LAB//51221//%$', '^LAB//51265//K/uL$', '^LAB//51222//g/dL$', '^LAB//51301//K/uL$', '^LAB//51248//pg$', '^LAB//51250//fL$', '^LAB//51279//m/uL$', '^LAB//51277//%$', '^LAB//50912//mg/dL$', '^LAB//50920//UNK$']
-    min_subjects_per_code: 1000000
+    additional_codes: ["^MEDS_DEATH$", "^MEDS_BIRTH$", "^HOSPITAL_ADMISSION//.*", "^HOSPITAL_DISCHARGE//.*", "^ED_REGISTRATION//.*", "^ED_OUT//.*", "^ICU_ADMISSION//.*", "^ICU_DISCHARGE//.*", "^TIME.*$"]
+    min_subjects_per_code: 10000
   reorder_measurments:
     _script: "MEDS_transform-reorder_measurements"
     order: $(python -m meds_torch.utils.get_all_measurements metadata_fp=${oc.env:MODEL_DIR}/metadata/codes.parquet)
