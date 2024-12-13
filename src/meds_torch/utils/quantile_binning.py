@@ -619,7 +619,10 @@ def quantile_normalize(
     version_base=None, config_path=str(PREPROCESS_CONFIG_YAML.parent), config_name=PREPROCESS_CONFIG_YAML.stem
 )
 def main(cfg: DictConfig):
-    """TODO."""
+    """Bins the numeric values and collapses the bin number into the code name.
+
+    DO NOT RUN THIS WITH PARALLELISM as it will recursively perform quantile binning N workers times.
+    """
 
     def normalize(df, code_metadata, code_modifiers=None):
         return quantile_normalize(
