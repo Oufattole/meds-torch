@@ -20,7 +20,7 @@ from ray.train.torch import TorchTrainer
 from meds_torch.eval import evaluate
 from meds_torch.finetune import initialize_finetune_objects
 from meds_torch.train import initialize_train_objects
-from meds_torch.utils import RankedLogger, extras, task_wrapper
+from meds_torch.utils import RankedLogger, configure_logging, task_wrapper
 from meds_torch.utils.resolvers import setup_resolvers
 
 log = RankedLogger(__name__, rank_zero_only=True)
@@ -47,7 +47,9 @@ def ray_tune_runner(cfg: DictConfig, train_func: Callable):
     for key, value in cfg.hparams_search.search_space.items():
         search_space[key] = hydra.utils.instantiate(value)
 
-    scaling_config = ScalingConfig(use_gpu=True, resources_per_worker={"GPU": 1})
+    scaling_config = ScalingConfig(
+        use_gpu=True, resources_per_worker=OmegaConf.to_container(cfg.hparams_search.ray.resources_per_trial)
+    )
 
     run_config = RunConfig(
         checkpoint_config=CheckpointConfig(
@@ -132,7 +134,7 @@ def main(cfg: DictConfig) -> float | None:
     """
     os.environ["RAY_memory_monitor_refresh_ms"] = cfg.ray_memory_monitor_refresh_ms
     # apply extra utilities
-    extras(cfg)
+    configure_logging(cfg)
 
     if cfg.best_config_path:
         if not Path(cfg.best_config_path).exists():

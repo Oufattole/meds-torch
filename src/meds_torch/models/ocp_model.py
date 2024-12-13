@@ -7,9 +7,9 @@ from torch import nn
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models import (
     BACKBONE_EMBEDDINGS_KEY,
+    MODEL_BATCH_LOSS_KEY,
     MODEL_EMBEDDINGS_KEY,
     MODEL_LOGITS_KEY,
-    MODEL_LOSS_KEY,
     MODEL_TOKENS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
@@ -96,7 +96,6 @@ class OCPModule(BaseModule):
             # Repeat the same procedure for the token embeddings
             fused_batch = {INPUT_ENCODER_MASK_KEY: fusion_mask, INPUT_ENCODER_TOKENS_KEY: fusion_tokens}
             batch = self.model(fused_batch)
-            output = batch
             classifier_inputs = batch[BACKBONE_EMBEDDINGS_KEY]
         else:
             pre_batch = batch[self.cfg.pre_window_name]
@@ -113,20 +112,18 @@ class OCPModule(BaseModule):
             shuffled_pre_outputs = torch.where(random_flips, post_outputs, pre_outputs)
             shuffled_post_outputs = torch.where(random_flips, pre_outputs, post_outputs)
             classifier_inputs = torch.concat([shuffled_pre_outputs, shuffled_post_outputs], dim=1)
-            output = dict(
-                pre=pre_batch,
-                post=post_batch,
-            )
+            batch["pre"] = pre_batch
+            batch["post"] = pre_batch
         logits = self.projection(classifier_inputs)
         loss = self.criterion(logits, random_flips.float())
 
-        output[MODEL_EMBEDDINGS_KEY] = classifier_inputs
-        output[MODEL_TOKENS_KEY] = None
-        output[MODEL_LOSS_KEY] = loss
-        output[MODEL_LOGITS_KEY] = logits
-        output["MODEL//LABELS"] = random_flips
+        batch[MODEL_EMBEDDINGS_KEY] = classifier_inputs
+        batch[MODEL_TOKENS_KEY] = None
+        batch[MODEL_BATCH_LOSS_KEY] = loss
+        batch[MODEL_LOGITS_KEY] = logits
+        batch["MODEL//LABELS"] = random_flips
 
-        return output
+        return batch
 
     def training_step(self, batch):
         output = self.forward(batch)
@@ -135,8 +132,8 @@ class OCPModule(BaseModule):
         labels = output["MODEL//LABELS"].float()
         self.train_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.train_auc.update(output[MODEL_LOGITS_KEY], labels)
-        self.log("train/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
-        return output[MODEL_LOSS_KEY]
+        self.log("train/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def validation_step(self, batch):
         output = self.forward(batch)
@@ -144,8 +141,8 @@ class OCPModule(BaseModule):
         labels = output["MODEL//LABELS"].float()
         self.val_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.val_auc.update(output[MODEL_LOGITS_KEY], labels)
-        self.log("val/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
-        return output[MODEL_LOSS_KEY]
+        self.log("val/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def test_step(self, batch):
         output = self.forward(batch)
@@ -153,8 +150,8 @@ class OCPModule(BaseModule):
         labels = output["MODEL//LABELS"].float()
         self.test_acc.update(output[MODEL_LOGITS_KEY], labels)
         self.test_auc.update(output[MODEL_LOGITS_KEY], labels)
-        self.log("test/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
-        return output[MODEL_LOSS_KEY]
+        self.log("test/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def on_train_epoch_end(self):
         self.log(

@@ -109,6 +109,8 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
         )
         assert subject_data[SUPERVISED_TASK_NAME] == pyd.labels[index]
         # Check the supervised task matches the target indices
+        # The task is a deterministic function of the codes in this case
+        # so we can check the codes themeselves are loaded correctly via this check.
         data_label = bool(
             functools.reduce(
                 operator.or_, [subject_data["dynamic"].tensors["dim0/code"] == t for t in target_indices]
@@ -155,33 +157,43 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
         raise NotImplementedError(f"{collate_type} not implemented")
 
 
-@pytest.mark.parametrize("subject_level_sampling", [False, True])
+@pytest.mark.parametrize("do_early_fuse_windows", [False, True])
 @pytest.mark.parametrize("collate_type", ["triplet"])
-def test_contrastive_windows(meds_dir, subject_level_sampling, collate_type):
-    cfg = create_cfg(overrides=["data=multiwindow_pytorch_dataset"], meds_dir=meds_dir)
+@pytest.mark.parametrize("subject_level_sampling", [False, True])
+def test_contrastive_windows(meds_dir, subject_level_sampling, collate_type, do_early_fuse_windows):
+    overrides = [
+        "data=multiwindow_pytorch_dataset",
+        "data.do_include_subject_id=true",
+    ]
+    if do_early_fuse_windows:
+        overrides.append("data.early_fusion_windows=[pre,post]")
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
     cfg.data.collate_type = collate_type
     cfg.data.subject_level_sampling = subject_level_sampling
+    expected_item_keys = {"pre", "post", "subject_id"}
 
     assert cfg.data.cache_dir
     assert Path(cfg.data.raw_windows_fp).exists()
 
     pyd = MultiWindowPytorchDataset(cfg.data, split="train")
     item = pyd[0]
-    assert item.keys() == {"pre", "post"}
+    assert item.keys() == expected_item_keys
     assert item["pre"].keys() == {"static_indices", "static_values", "dynamic"}
     assert item["post"].keys() == {"static_indices", "static_values", "dynamic"}
 
+    expected_batch_keys = expected_item_keys | ({"FUSED"} if do_early_fuse_windows else set())
     batch = pyd.collate([pyd[i] for i in range(2)])
-    assert batch.keys() == {"pre", "post"}
-    for window in ["pre", "post"]:
-        assert batch[window].keys() == {
-            "mask",
-            "static_mask",
-            "code",
-            "numeric_value",
-            "time_delta_days",
-            "numeric_value_mask",
-        }
+    assert batch.keys() == expected_batch_keys
+    expected_window_keys = {
+        "mask",
+        "static_mask",
+        "code",
+        "numeric_value",
+        "time_delta_days",
+        "numeric_value_mask",
+    }
+    for window in expected_batch_keys - {"subject_id"}:
+        assert batch[window].keys() & expected_window_keys == expected_window_keys
 
 
 def test_full_datamodule(meds_dir):
@@ -281,8 +293,8 @@ def test_random_window_batch_sizes(meds_dir):
 
     rwd = RandomWindowPytorchDataset(cfg.data, split="train")
 
-    batch = rwd.collate([rwd[i] for i in range(4)])
-    assert len(batch["window_0"]["mask"]) == 4
+    batch = rwd.collate([rwd[i] for i in range(len(rwd))])
+    assert len(batch["window_0"]["mask"]) == len(rwd)
 
     # Check that window sizes are within the specified range
     window_sizes = batch["window_0"]["mask"].sum(dim=1)

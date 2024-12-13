@@ -1,0 +1,11 @@
+
+_target_: meds_torch.models.zero_shot_labeler.time_to_event_labeler.TaskLabeler
+
+target_codes: ???
+max_time: ???
+min_time: 0.0
+numeric_value_min: null
+numeric_value_max: null
+include_min_time: True
+include_max_time: True
+require_max_time: False

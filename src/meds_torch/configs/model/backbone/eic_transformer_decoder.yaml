@@ -1,4 +1,5 @@
 defaults:
+  - generation_budget: seq_len
   - default
   - _self_
 
@@ -21,4 +22,5 @@ model:
     rotary_pos_emb: true
 
 token_emb: null # use x-transformers to embed tokens
-postpend_eos_token: true
+max_seq_len: ${model.max_seq_len} # is the sampling temperature, `0` corresponds to greedy sampling
+eos_token_id: null # stop sampling when this token is generated
