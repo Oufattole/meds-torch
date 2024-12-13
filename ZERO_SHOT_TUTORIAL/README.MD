@@ -8,13 +8,13 @@ training_stultz:
 quadro:
 /home/shared/mimiciv2.2/meds_v0.3.2/
 
-```bash
+```console
 ROOT_DIR="/storage/shared/mimic-iv/meds_v0.3.2/"  # Replace with your actual root directory
 ```
 
 We first need to tensorize your meds data (cache it in a format such that meds-torch can efficiently train models on the dataset). We can tensorize 10 commone lab codes in MIMIC IV by running the tokenize script with the `eic_top_10.yaml`, which performs EIC tokenization on these common codes:
 
-```bash
+```console
 export MEDS_DIR=${ROOT_DIR}/meds/
 export EIC_DIR=${ROOT_DIR}/eic_top10_tensors # set to the directory in which you want to output the tensorized MIMIC-IV data
 export N_WORKERS=8 # set to the number of parallel workers you want to use
@@ -28,7 +28,7 @@ Let's first train a supervised model which we will use as a baseline.
 
 Checkout (and modify if you wish) the experiment file `$(pwd)/TUTORIAL/configs/eic_top10_forecast_mtr.yaml` which defines most of the input args for training this model:
 
-```bash
+```console
 CUDA_VISIBLE_DEVICES=1
 
 MEDS_DIR=${ROOT_DIR}/meds/
@@ -47,7 +47,7 @@ meds-torch-train \
 
 The experiment file uses a supervised model by default, let's override it by setting `model=eic_forecasting` to train on the autoregressive next token prediction task. Notice that this doesn't require labels, so we drop the task input args.
 
-```bash
+```console
 CUDA_VISIBLE_DEVICES=1
 
 MEDS_DIR=${ROOT_DIR}/meds/
@@ -73,7 +73,7 @@ Next let's do a distributed hyperparameter tuning of this autoregressive model. 
 - `hparams_search.ray.resources_per_trial.gpu=1` will make ray launch jobs in parallel assigning one job to each gpu (set this to a fraction to having multiple jobs on each gpu)
 - ` hparams_search.ray.num_samples=8` will randomly sample 8 hyperparameter draws, so ray will run a total of 8 jobs
 
-```bash
+```console
 # unset CUDA_VISIBLE_DEVICES # remove setting of CUDA_VISIBLE_DEVICES, so all gpus can be used
 # or set some specific devices
 export CUDA_VISIBLE_DEVICES=0,1,5
@@ -126,7 +126,7 @@ meds-torch-tune model=supervised trainer=gpu \
 
 We can now see the logits over the input data:
 
-```bash
+```console
 PRETRAIN_OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep/
 MODEL_SWEEP_DIR=$(meds-torch-latest-dir path=${PRETRAIN_OUTPUT_DIR})
 BEST_CHECKPOINT=${MODEL_SWEEP_DIR}/checkpoints/best_model.ckpt
@@ -156,7 +156,7 @@ meds-torch-predict --multirun model=eic_forecasting \
   - for the task of predicting mortality within 48 hours given the first 24 hours of an icu admission, we add the zero-shot labeler args  `model/zero_shot_labeler=time_to_event_labeler model.zero_shot_labeler.target_codes=[203] model.zero_shot_labeler.time_length=0.0054757`. the Death code is code 203, check the \$\{TENSOR_DIR}/metadata/codes.parquet file to see the MEDS_DEATH code/vocab_index when you run this. The times are in years so 2/365.25 gives us 48 hours (2 days).
 - Optionally, select a time based budget, rather than a max_seq_len budget by setting `model/backbone/generation_budget=years model.backbone.generation_budget.value=0.0054757 and increase the batch size for more speed with data.dataloader.batch_size=1024`
 
-```bash
+```console
 CUDA_VISIBLE_DEVICES=0
 PRETRAIN_OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep/
 MODEL_SWEEP_DIR=$(meds-torch-latest-dir path=${PRETRAIN_OUTPUT_DIR})
@@ -248,7 +248,7 @@ Results for 1 sample:
 
 ## Generate trajectories for analysis
 
-```bash
+```console
 
 CUDA_VISIBLE_DEVICES=2
 PRETRAIN_OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep/
@@ -323,7 +323,7 @@ Let's train a much larger model now, we add the args:
 - - 100 samples small: /storage/nassim/tmp/generate/2024-11-13_02-17-06_228003/generated_trajectory.parquet
   - 100 samples big: ???
 
-```bash
+```console
 # unset CUDA_VISIBLE_DEVICES # remove setting of CUDA_VISIBLE_DEVICES, so all gpus can be used
 # or set some specific devices
 export CUDA_VISIBLE_DEVICES=2,3,4,5
