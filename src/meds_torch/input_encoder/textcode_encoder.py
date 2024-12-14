@@ -3,6 +3,7 @@ import enum
 
 import polars as pl
 import torch
+from mixins import TimeableMixin
 from omegaconf import DictConfig
 from torch import nn
 from transformers import AutoModel, AutoTokenizer
@@ -46,7 +47,7 @@ class CVE(nn.Module):
         return self.layer(x)
 
 
-class TextCodeEmbedder(nn.Module, Module):
+class TextCodeEmbedder(nn.Module, Module, TimeableMixin):
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
@@ -54,6 +55,7 @@ class TextCodeEmbedder(nn.Module, Module):
         self.code_embedder = AutoModel.from_pretrained(self.cfg.code_embedder)
         self.linear = nn.Linear(self.code_embedder.config.hidden_size, self.cfg.token_dim)
 
+    @TimeableMixin.TimeAs
     def build_code_to_tokens_map(self):
         """
         Builds a mapping from code to tokens
@@ -80,6 +82,7 @@ class TextCodeEmbedder(nn.Module, Module):
         )
         return tokenized_code_metadata
 
+    @TimeableMixin.TimeAs
     def forward(self, codes, mask):
         unique_codes = codes.unique()
         sorted_unique_codes, indices = torch.sort(unique_codes)
@@ -106,7 +109,7 @@ class TextCodeEmbedder(nn.Module, Module):
         return embeddings
 
 
-class TextCodeEncoder(nn.Module, Module):
+class TextCodeEncoder(nn.Module, Module, TimeableMixin):
     """Container module with an encoder, a recurrent or transformer module, and a decoder.
 
     Copied from: https://github.com/pytorch/examples/blob/main/word_language_model/model.py
@@ -120,10 +123,12 @@ class TextCodeEncoder(nn.Module, Module):
         self.code_embedder = TextCodeEmbedder(cfg)
         self.numeric_value_embedder = CVE(cfg)
 
+    @TimeableMixin.TimeAs
     def embed_func(self, embedder, x):
         out = embedder.forward(x[None, :].transpose(2, 0)).permute(1, 2, 0)
         return out
 
+    @TimeableMixin.TimeAs
     def get_embedding(self, batch):
         static_mask = batch["static_mask"]
         code = batch["code"]
@@ -153,6 +158,7 @@ class TextCodeEncoder(nn.Module, Module):
             )
         return embedding.transpose(1, 2)
 
+    @TimeableMixin.TimeAs
     def forward(self, batch):
         embedding = self.get_embedding(batch)
         batch[INPUT_ENCODER_MASK_KEY] = batch["mask"]
