@@ -15,10 +15,9 @@ from x_transformers.autoregressive_wrapper import (
 )
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
-from meds_torch.input_encoder.text_encoder import TextCodeEncoder
 from meds_torch.input_encoder.triplet_encoder import TripletEncoder
 from meds_torch.input_encoder.triplet_prompt_encoder import TripletPromptEncoder
-from meds_torch.models import BACKBONE_TOKENS_KEY, MODEL_LOSS_KEY
+from meds_torch.models import BACKBONE_TOKENS_KEY, MODEL_BATCH_LOSS_KEY
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
 
@@ -97,7 +96,7 @@ class TripletForecastingModule(BaseModule):
         self.setup_heads()
 
     def setup_heads(self):
-        if isinstance(self.input_encoder, (TripletEncoder, TextCodeEncoder)):
+        if isinstance(self.input_encoder, TripletEncoder):
             self.numeric_value_head = nn.Linear(
                 self.cfg.token_dim,
                 self.cfg.vocab_size,
@@ -125,7 +124,7 @@ class TripletForecastingModule(BaseModule):
             raise NotImplementedError(f"Unsupported input encoder type: {type(self.input_encoder)}")
 
     def process_numeric_values(self, numeric_value_logits, code_target):
-        if isinstance(self.input_encoder, (TripletEncoder, TextCodeEncoder)):
+        if isinstance(self.input_encoder, TripletEncoder):
             return select_values_from_logits(numeric_value_logits, code_target)
         elif isinstance(self.input_encoder, TripletPromptEncoder):
             return numeric_value_logits.squeeze(dim=-1)
@@ -133,7 +132,7 @@ class TripletForecastingModule(BaseModule):
             raise NotImplementedError(f"Unsupported input encoder type: {type(self.input_encoder)}")
 
     def get_time_loss(self, time_logits, time_delta_days_target, dynamic_mask):
-        if isinstance(self.input_encoder, (TripletEncoder, TextCodeEncoder)):
+        if isinstance(self.input_encoder, TripletEncoder):
             # Time Loss
             time_loss = F.mse_loss(time_logits, time_delta_days_target.unsqueeze(-1), reduction="none")
             time_loss = (time_loss.squeeze(dim=-1) * dynamic_mask).sum() / dynamic_mask.sum()
@@ -180,7 +179,7 @@ class TripletForecastingModule(BaseModule):
 
         total_loss = code_loss + numeric_value_loss + time_loss
 
-        batch[MODEL_LOSS_KEY] = total_loss
+        batch[MODEL_BATCH_LOSS_KEY] = total_loss
         batch[numeric_VALUE_LOSS] = numeric_value_loss
         batch[CODE_LOSS] = code_loss
         batch[TIME_LOSS] = time_loss
@@ -193,7 +192,7 @@ class TripletForecastingModule(BaseModule):
             all_token_embeddings = model_output[BACKBONE_TOKENS_KEY]
         numeric_value_logits = self.numeric_value_head(all_token_embeddings)
         code_logits = self.code_head(all_token_embeddings)
-        if isinstance(self.input_encoder, (TripletEncoder, TextCodeEncoder)):
+        if isinstance(self.input_encoder, TripletEncoder):
             time_logits = self.time_head(all_token_embeddings)
         else:
             time_logits = None
@@ -219,25 +218,25 @@ class TripletForecastingModule(BaseModule):
         self.log(split + "/code_loss", batch[CODE_LOSS])
         self.log(split + "/numeric_value_loss", batch[numeric_VALUE_LOSS])
         self.log(split + "/time_loss", batch[TIME_LOSS])
-        self.log(split + "/loss", batch[MODEL_LOSS_KEY])
+        self.log(split + "/loss", batch[MODEL_BATCH_LOSS_KEY])
 
     def training_step(self, batch):
         batch = self(batch)
-        assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
+        assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "train")
-        return batch[MODEL_LOSS_KEY]
+        return batch[MODEL_BATCH_LOSS_KEY]
 
     def validation_step(self, batch):
         batch = self(batch)
-        assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
+        assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "val")
-        return batch[MODEL_LOSS_KEY]
+        return batch[MODEL_BATCH_LOSS_KEY]
 
     def test_step(self, batch):
         batch = self(batch)
-        assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
+        assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "test")
-        return batch[MODEL_LOSS_KEY]
+        return batch[MODEL_BATCH_LOSS_KEY]
 
     @torch.no_grad()
     @eval_decorator
@@ -262,7 +261,7 @@ class TripletForecastingModule(BaseModule):
         model = AutoregressiveWrapper(self.model.model)
         batch = self.input_encoder(batch)
         prompts, mask = batch[INPUT_ENCODER_TOKENS_KEY].transpose(1, 2), batch[INPUT_ENCODER_MASK_KEY]
-        max_seq_len, greedy = model._resolved_max_seq_len, temperature == 0.0
+        max_seq_len, greedy = model.max_seq_len, temperature == 0.0
 
         t = prompts.shape[1]
         prompt_lens = mask.sum(axis=1)
@@ -364,7 +363,7 @@ class TripletForecastingModule(BaseModule):
                 code_sample = torch.multinomial(probs, 1)
 
             numeric_value_sample = self.process_numeric_values(forecast[numeric_VALUE_LOGITS], code_sample)
-            if isinstance(self.input_encoder, (TripletEncoder, TextCodeEncoder)):
+            if isinstance(self.input_encoder, TripletEncoder):
                 time_sample = forecast[TIME_LOGITS].squeeze(dim=-1)
             else:
                 time_sample = torch.zeros_like(numeric_value_sample) * torch.nan

@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, "release/*", "dev"]
 
 jobs:
   run_tests_ubuntu:
@@ -26,7 +25,7 @@ jobs:
 
       - name: Install packages
         run: |
-          pip install .[tests]
+          pip install -e .[tests]
 
       #----------------------------------------------
       #              run test suite

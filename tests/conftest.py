@@ -15,7 +15,7 @@ from .helpers.package_available import _DO_LOG
 
 setup_resolvers()
 
-SUPERVISED_TASK_NAME = "supervised_task"
+SUPERVISED_TASK_NAME = "boolean_value"
 
 
 @pytest.fixture(scope="package")
@@ -26,11 +26,10 @@ def meds_dir(tmp_path_factory) -> Path:
     shutil.copytree(Path("./tests/test_data"), meds_dir, dirs_exist_ok=True)
     meds_df = pl.read_parquet(meds_dir / "MEDS_cohort" / "data/*/*.parquet")
     meds_df = meds_df.sort(["subject_id", "time"]).filter(pl.col("time").is_not_null())
-    start_time_expr = pl.col("time").get(0).alias("start_time")
-    end_time_expr = pl.col("time").get(pl.len() // 2).alias("end_time")
-    labels_df = meds_df.group_by("subject_id", maintain_order=True).agg(start_time_expr, end_time_expr)
+    prediction_time_expr = pl.col("time").get(pl.len() // 2).alias("prediction_time")
+    labels_df = meds_df.group_by("subject_id", maintain_order=True).agg(prediction_time_expr)
     filter_meds_df = meds_df.join(labels_df, on="subject_id", how="left").filter(
-        (pl.col("time") >= pl.col("start_time")) & (pl.col("time") <= pl.col("end_time"))
+        pl.col("time") <= pl.col("prediction_time")
     )
     label_expr = (
         (pl.col("code").eq("ADMISSION//ONCOLOGY") | pl.col("code").eq("ADMISSION//CARDIAC"))
@@ -76,7 +75,7 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml", supervised=F
 
             # Additional settings for specific fixtures
             if "data=multiwindow_pytorch_dataset" in overrides:
-                cfg.data.raw_windows_fp = str(meds_dir / "windows" / "raw_windows.parquet")
+                cfg.data.raw_windows_fp = str(meds_dir / "windows" / "raw" / "random_windows.parquet")
                 cfg.model.pre_window_name = "pre"
                 cfg.model.post_window_name = "post"
                 cfg.model.input_window_name = "pre"

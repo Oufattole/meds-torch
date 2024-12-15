@@ -13,7 +13,6 @@ def cfg(request):
 
 from meds_torch.data.datamodule import MEDSDataModule
 from meds_torch.input_encoder.eic_encoder import EicEncoder
-from meds_torch.input_encoder.text_encoder import TextCodeEncoder
 from meds_torch.input_encoder.triplet_encoder import TripletEncoder
 from meds_torch.models.components.lstm import LstmModel
 from meds_torch.models.components.transformer_decoder import TransformerDecoderModel
@@ -23,17 +22,14 @@ from tests.conftest import create_cfg
 
 def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backbone):
     token_type = input_encoder.split("_")[0]
-    if token_type == "text":
-        backbone_token_type = "triplet"
-    else:
-        backbone_token_type = token_type
+    backbone_token_type = token_type
 
-    if token_type == "text":
-        collate_type_override = "data.collate_type=text_code"
-    elif token_type == "triplet":
+    if token_type == "triplet":
         collate_type_override = "data.collate_type=triplet"
     elif token_type == "eic":
         collate_type_override = "data.collate_type=eic"
+    elif token_type == "textcode":
+        collate_type_override = "data.collate_type=triplet"
     else:
         raise NotImplementedError(f"Unsupported token type {token_type}!")
 
@@ -76,7 +72,7 @@ def get_overrides_and_exceptions(data, model, early_fusion, input_encoder, backb
             ("multiwindow_pytorch_dataset", "ocp", "true"),
             ("multiwindow_pytorch_dataset", "ocp", "false"),
         ]
-        for input_encoder in ["triplet_encoder", "eic_encoder", "text_code_encoder"]
+        for input_encoder in ["triplet_encoder", "eic_encoder"]
         for backbone in ["transformer_decoder", "transformer_encoder", "lstm", "transformer_encoder_attn_avg"]
     ]
 )
@@ -125,8 +121,6 @@ def test_train_config(get_kwargs) -> None:  # cfg: DictConfig,
         assert isinstance(hydra.utils.instantiate(cfg.model.input_encoder), TripletEncoder)
     elif input_encoder == "eic_encoder":
         assert isinstance(hydra.utils.instantiate(cfg.model.input_encoder), EicEncoder)
-    elif input_encoder == "text_code_encoder":
-        assert isinstance(hydra.utils.instantiate(cfg.model.input_encoder), TextCodeEncoder)
     else:
         raise NotImplementedError(f"Unsupported input_encoder {input_encoder}!")
 

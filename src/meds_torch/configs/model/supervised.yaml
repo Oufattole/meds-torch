@@ -1,23 +1,12 @@
 defaults:
   - input_encoder: triplet_encoder
   - backbone: triplet_transformer_encoder
+  - optimizer: adam
+  - scheduler: null
   - _self_
 _target_: meds_torch.models.supervised_model.SupervisedModule.initialize
 
-optimizer:
-  _target_: torch.optim.Adam
-  _partial_: true
-  lr: 0.001
-  weight_decay: 0.0
-
-scheduler:
-  _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
-  _partial_: true
-  mode: min
-  factor: 0.1
-  patience: 10
-
-_resolved_max_seq_len: ${data._resolved_max_seq_len}
+max_seq_len: ${data.max_seq_len}
 token_dim: 4
 vocab_size: ${data.vocab_size}
 get_representations: false

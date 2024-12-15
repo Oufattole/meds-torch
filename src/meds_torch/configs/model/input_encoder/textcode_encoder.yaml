@@ -1,0 +1,13 @@
+_target_: meds_torch.input_encoder.textcode_encoder.TextCodeEncoder.initialize
+collate_style: triplet
+max_seq_len: ${model.max_seq_len}
+token_dim: ${model.token_dim}
+vocab_size: ${data.vocab_size}
+code_metadata_fp: ${data.code_metadata_fp}
+code_embedder: "nlpie/tiny-clinicalbert" # pretrained path from huggingface
+code_tokenizer: "nlpie/tiny-clinicalbert" # pretrained path from huggingface
+tokenizer_config:
+  padding: true
+  truncation: true
+  max_length: ${model.token_dim}
+  return_tensors: pt

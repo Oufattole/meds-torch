@@ -31,6 +31,8 @@ name: "finetune"
 # task name, determines output directory path
 task_name: null
 
+test_devices: "1"
+
 # tags to help you identify your experiments
 # you can overwrite this in experiment configs
 # overwrite from command line with `python train.py tags="[first_tag, second_tag]"`
@@ -53,3 +55,6 @@ ckpt_path: null
 
 # seed for random number generators in pytorch, numpy and python.random
 seed: null
+
+# When tuning, setting this to 0 will desable ray memory monitor, which often crashes
+ray_memory_monitor_refresh_ms: "0"

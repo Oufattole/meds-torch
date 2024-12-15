@@ -27,10 +27,8 @@ from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
     "collate_type",
     [
         "triplet",
-        "event_stream",
         "triplet_prompt",
         "eic",
-        "text_code",
     ],
 )
 def test_pytorch_dataset(meds_dir, collate_type):
@@ -42,32 +40,11 @@ def test_pytorch_dataset(meds_dir, collate_type):
     item = pyd[0]
     assert item.keys() == {"static_indices", "static_values", "dynamic"}
     batch = pyd.collate([pyd[i] for i in range(2)])
-    if collate_type == "event_stream":
-        assert batch.keys() == {
-            "event_mask",
-            "dynamic_values_mask",
-            "time_delta_days",
-            "dynamic_indices",
-            "dynamic_values",
-            "static_indices",
-            "static_values",
-        }
-    elif collate_type == "triplet":
+    if collate_type == "triplet":
         assert batch.keys() == {
             "mask",
             "static_mask",
             "code",
-            "numeric_value",
-            "time_delta_days",
-            "numeric_value_mask",
-        }
-    elif collate_type == "text_code":
-        assert set(batch.keys()) == {
-            "mask",
-            "static_mask",
-            "code",
-            "code_tokens",
-            "code_mask",
             "numeric_value",
             "time_delta_days",
             "numeric_value_mask",
@@ -94,7 +71,7 @@ def test_pytorch_dataset(meds_dir, collate_type):
         raise NotImplementedError(f"{collate_type} not implemented")
 
 
-@pytest.mark.parametrize("collate_type", ["triplet", "event_stream", "triplet_prompt", "text_code", "eic"])
+@pytest.mark.parametrize("collate_type", ["triplet", "triplet_prompt", "eic"])
 def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir, supervised=True)
     with open_dict(cfg):
@@ -106,8 +83,8 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     assert len(pyd) == 70
     assert pyd.has_task
     item = pyd[0]
-    assert item.keys() == {"static_indices", "static_values", "dynamic", "supervised_task"}
-    task_df = pl.read_parquet(meds_dir / "tasks/supervised_task.parquet")
+    assert item.keys() == {"static_indices", "static_values", "dynamic", "boolean_value"}
+    task_df = pl.read_parquet(meds_dir / "tasks/boolean_value.parquet")
     code_index_df = pl.read_parquet(meds_dir / "triplet_tensors/metadata/codes.parquet")[
         "code", "code/vocab_index"
     ]
@@ -117,46 +94,36 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     items = []
     for index in range(len(pyd)):
         subject_data = pyd[index]
-        if not collate_type == "event_stream":
-            subject_id, _, __loader__ = pyd.index[index]
-            pyd.subj_map[subject_id]
-            static_df_index = pyd.static_dfs[pyd.subj_map[subject_id]][pyd.subj_indices[subject_id]][
-                "subject_id"
-            ].item()
-            # Check the subject ids match
-            assert static_df_index == subject_id, f"Subject ids do not match for index {index}"
+        subject_id, _, __loader__ = pyd.index[index]
+        pyd.subj_map[subject_id]
+        static_df_index = pyd.static_dfs[pyd.subj_map[subject_id]][pyd.subj_indices[subject_id]][
+            "subject_id"
+        ].item()
+        # Check the subject ids match
+        assert static_df_index == subject_id, f"Subject ids do not match for index {index}"
 
-            # Check the supervised task matches the label
-            assert (
-                task_df.filter(pl.col("subject_id").eq(subject_id))[SUPERVISED_TASK_NAME].item()
-                == subject_data[SUPERVISED_TASK_NAME]
-            )
-            assert subject_data[SUPERVISED_TASK_NAME] == pyd.labels[SUPERVISED_TASK_NAME][index]
-            # Check the supervised task matches the target indices
-            data_label = bool(
-                functools.reduce(
-                    operator.or_, [subject_data["dynamic"]["dim1/code"] == t for t in target_indices]
-                ).any()
-            )
-            assert (
-                data_label == subject_data[SUPERVISED_TASK_NAME]
-            ), f"Supervised task does not match target indices for index {index}"
+        # Check the supervised task matches the label
+        assert (
+            task_df.filter(pl.col("subject_id").eq(subject_id))[SUPERVISED_TASK_NAME].item()
+            == subject_data[SUPERVISED_TASK_NAME]
+        )
+        assert subject_data[SUPERVISED_TASK_NAME] == pyd.labels[index]
+        # Check the supervised task matches the target indices
+        # The task is a deterministic function of the codes in this case
+        # so we can check the codes themeselves are loaded correctly via this check.
+        data_label = bool(
+            functools.reduce(
+                operator.or_, [subject_data["dynamic"].tensors["dim0/code"] == t for t in target_indices]
+            ).any()
+        )
+        assert (
+            data_label == subject_data[SUPERVISED_TASK_NAME]
+        ), f"Supervised task does not match target indices for index {index}"
 
         items.append(subject_data)
 
     batch = pyd.collate(items)
-    if collate_type == "event_stream":
-        assert batch.keys() == {
-            "event_mask",
-            "dynamic_values_mask",
-            "time_delta_days",
-            "dynamic_indices",
-            "dynamic_values",
-            "static_indices",
-            "static_values",
-            SUPERVISED_TASK_NAME,
-        }
-    elif collate_type in ["triplet", "triplet_prompt"]:
+    if collate_type in ["triplet", "triplet_prompt"]:
         assert batch.keys() == {
             "mask",
             "static_mask",
@@ -186,49 +153,47 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
             "numeric_value_mask",
             SUPERVISED_TASK_NAME,
         }
-    elif collate_type == "text_code":
-        assert set(batch.keys()) == {
-            "mask",
-            "static_mask",
-            "code",
-            "code_tokens",
-            "code_mask",
-            "numeric_value",
-            "time_delta_days",
-            "numeric_value_mask",
-            SUPERVISED_TASK_NAME,
-        }
     else:
         raise NotImplementedError(f"{collate_type} not implemented")
 
 
-@pytest.mark.parametrize("subject_level_sampling", [False, True])
+@pytest.mark.parametrize("do_early_fuse_windows", [False, True])
 @pytest.mark.parametrize("collate_type", ["triplet"])
-def test_contrastive_windows(meds_dir, subject_level_sampling, collate_type):
-    cfg = create_cfg(overrides=["data=multiwindow_pytorch_dataset"], meds_dir=meds_dir)
+@pytest.mark.parametrize("subject_level_sampling", [False, True])
+def test_contrastive_windows(meds_dir, subject_level_sampling, collate_type, do_early_fuse_windows):
+    overrides = [
+        "data=multiwindow_pytorch_dataset",
+        "data.do_include_subject_id=true",
+    ]
+    if do_early_fuse_windows:
+        overrides.append("data.early_fusion_windows=[pre,post]")
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
     cfg.data.collate_type = collate_type
     cfg.data.subject_level_sampling = subject_level_sampling
+    expected_item_keys = {"pre", "post", "subject_id"}
 
     assert cfg.data.cache_dir
     assert Path(cfg.data.raw_windows_fp).exists()
 
     pyd = MultiWindowPytorchDataset(cfg.data, split="train")
     item = pyd[0]
-    assert item.keys() == {"pre", "post"}
+    assert item.keys() == expected_item_keys
     assert item["pre"].keys() == {"static_indices", "static_values", "dynamic"}
     assert item["post"].keys() == {"static_indices", "static_values", "dynamic"}
 
+    expected_batch_keys = expected_item_keys | ({"FUSED"} if do_early_fuse_windows else set())
     batch = pyd.collate([pyd[i] for i in range(2)])
-    assert batch.keys() == {"pre", "post"}
-    for window in ["pre", "post"]:
-        assert batch[window].keys() == {
-            "mask",
-            "static_mask",
-            "code",
-            "numeric_value",
-            "time_delta_days",
-            "numeric_value_mask",
-        }
+    assert batch.keys() == expected_batch_keys
+    expected_window_keys = {
+        "mask",
+        "static_mask",
+        "code",
+        "numeric_value",
+        "time_delta_days",
+        "numeric_value_mask",
+    }
+    for window in expected_batch_keys - {"subject_id"}:
+        assert batch[window].keys() & expected_window_keys == expected_window_keys
 
 
 def test_full_datamodule(meds_dir):
@@ -259,10 +224,8 @@ def test_full_datamodule(meds_dir):
     "collate_type",
     [
         "triplet",
-        "event_stream",
         "triplet_prompt",
         "eic",
-        "text_code",
     ],
 )
 def test_random_windows_pytorch_dataset(meds_dir, collate_type):
@@ -285,36 +248,14 @@ def test_random_windows_pytorch_dataset(meds_dir, collate_type):
     assert set(batch.keys()) == {"window_0"}
 
     window = batch["window_0"]
-    if collate_type == "event_stream":
-        assert set(window.keys()) == {
-            "event_mask",
-            "dynamic_values_mask",
-            "time_delta_days",
-            "dynamic_indices",
-            "dynamic_values",
-            "static_indices",
-            "static_values",
-        }
-    elif collate_type in ["triplet", "triplet_prompt", "eic"]:
-        assert set(window.keys()) == {
-            "mask",
-            "static_mask",
-            "code",
-            "numeric_value",
-            "time_delta_days",
-            "numeric_value_mask",
-        }
-    elif collate_type == "text_code":
-        assert set(window.keys()) == {
-            "mask",
-            "static_mask",
-            "code",
-            "code_tokens",
-            "code_mask",
-            "numeric_value",
-            "time_delta_days",
-            "numeric_value_mask",
-        }
+    assert set(window.keys()) == {
+        "mask",
+        "static_mask",
+        "code",
+        "numeric_value",
+        "time_delta_days",
+        "numeric_value_mask",
+    }
 
 
 def test_random_window_generation(meds_dir):
@@ -352,8 +293,8 @@ def test_random_window_batch_sizes(meds_dir):
 
     rwd = RandomWindowPytorchDataset(cfg.data, split="train")
 
-    batch = rwd.collate([rwd[i] for i in range(4)])
-    assert len(batch["window_0"]["mask"]) == 4
+    batch = rwd.collate([rwd[i] for i in range(len(rwd))])
+    assert len(batch["window_0"]["mask"]) == len(rwd)
 
     # Check that window sizes are within the specified range
     window_sizes = batch["window_0"]["mask"].sum(dim=1)

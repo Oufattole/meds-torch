@@ -1,0 +1,35 @@
+# @package _global_
+
+defaults:
+  - _self_
+  - data: pytorch_dataset # choose datamodule with `test_dataloader()` for evaluation
+  - model: supervised
+  - logger: null
+  - trainer: default
+  - paths: default
+  - extras: default
+  - hydra: default
+  # experiment configs allow for version control of specific hyperparameters
+  # e.g. best hyperparameters for given model and datamodule
+  - experiment: null
+
+  # optional local config for machine/user specific settings
+  # it's optional since it doesn't need to exist and is excluded from version control
+  - optional local: default
+
+  # debugging config (enable through command line, e.g. `python train.py debug=default)
+  - debug: null
+
+
+name: "predict"
+
+task_name: null
+
+tags: ["dev"]
+
+# passing checkpoint path is necessary for evaluation
+ckpt_path: ???
+
+seed: null
+paths:
+  predict_fp: ${paths.time_output_dir}/predict.parquet

@@ -1,5 +1,6 @@
 _target_: meds_torch.data.datamodule.MEDSDataModule.initialize
-name: pytorch_dataset
+dataset_cls: meds_torch.data.components.pytorch_dataset.PytorchDataset
+
 # Path params
 data_dir: ${paths.data_dir}
 meds_cohort_dir: ${paths.meds_cohort_dir}
@@ -7,6 +8,13 @@ cache_dir: ${paths.data_dir}/.pytorch_dataset_cache_dir/
 code_metadata_fp: ${paths.data_dir}/metadata/codes.parquet
 schema_files_root: ${paths.data_dir}/tokenization/schemas
 tasks_root: ${paths.meds_cohort_dir}/tasks
+split_names:
+    train: train # training data is in ${paths.data_dir}/${split_names.train}**/*.nrt
+    validate: tuning # tuning data is in ${paths.data_dir}/${split_names.validate}/**/*.nrt
+    test: held_out # held_out data is in ${paths.data_dir}/${split_names.test}/**/*.nrt
+
+# Prediction params
+predict_dataset: val # train, val, or test, which dataset to predict on
 
 # Task params
 task_root_dir: null
@@ -24,24 +32,27 @@ tokenizer: "emilyalsentzer/Bio_ClinicalBERT"
 do_include_subject_id: false
 do_include_subsequence_indices: false
 do_include_start_time_min: false
+do_include_end_time: false
+do_include_prediction_time: false
 do_prepend_static_data: false
 num_value_code_quantiles: null
 
 # Sequence Params
 max_seq_len: 512
-_resolved_max_seq_len: ${resolve_max_seq_len:${data.max_seq_len}, ${data.postpend_eos_token}}
 min_seq_len: 1
 subsequence_sampling_strategy: random
 seq_padding_side: right
 text_max_seq_len: 8
+do_flatten_tensors: true
 
+# Data Loader params
 dataloader:
   batch_size: 128 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
   num_workers: 0
   pin_memory: False
 
-vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.VOCAB_SPECIAL_TOKEN_ID_OFFSET}}
+# Tokenization params
+vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.postpend_eos_token}}
 eos_offset: 1
 EOS_TOKEN_ID: ${get_eos_token_id:${data.vocab_size}, ${data.eos_offset}}
-VOCAB_SPECIAL_TOKEN_ID_OFFSET: 1
 postpend_eos_token: ${model.backbone.postpend_eos_token}

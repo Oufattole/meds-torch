@@ -1,21 +1,27 @@
 import warnings
 from collections.abc import Callable
+from functools import wraps
 from importlib.util import find_spec
+from pathlib import Path
 from typing import Any
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from meds_torch.utils import pylogger, rich_utils
 
 log = pylogger.RankedLogger(__name__, rank_zero_only=True)
 
 
-def extras(cfg: DictConfig) -> None:
+def configure_logging(cfg: DictConfig) -> None:
     """Applies optional utilities before the task is started.
 
-    Utilities:     - Ignoring python warnings     - Setting tags from command line     - Rich config printing
+    Utilities:
+        - Ignoring python warnings
+        - Setting tags from command line
+        - Rich config printing
 
-    :param cfg: A DictConfig object containing the config tree.
+    Args:
+        cfg (DictConfig): A DictConfig object containing the config tree.
     """
     # return if no `extras` config
     if not cfg.get("extras"):
@@ -53,15 +59,19 @@ def task_wrapper(task_func: Callable) -> Callable:
     :return: The wrapped task function.
     """
 
+    @wraps(task_func)
     def wrap(cfg: DictConfig, **kwargs) -> tuple[dict[str, Any], dict[str, Any]]:
+        cfg.paths.time_output_dir = Path(cfg.paths.time_output_dir)
+        cfg.paths.time_output_dir.mkdir(parents=True, exist_ok=True)
+        OmegaConf.save(config=cfg, f=Path(cfg.paths.time_output_dir) / "hydra_config.yaml")
         # execute the task
         try:
             outputs = task_func(cfg=cfg, **kwargs)
 
         # things to do if exception occurs
-        except Exception as ex:
+        except Exception as ex:  # pragma: no cover
             # save exception to `.log` file
-            log.exception("")
+            log.error(ex)
 
             # some hyperparameter combinations might be invalid or cause out-of-memory errors
             # so when using hparam search plugins like Optuna, you might want to disable

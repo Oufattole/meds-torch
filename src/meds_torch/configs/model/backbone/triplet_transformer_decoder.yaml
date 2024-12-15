@@ -8,7 +8,7 @@ model:
   _target_: x_transformers.TransformerWrapper
   logits_dim: ${model.token_dim}
   num_tokens: ${data.vocab_size}
-  max_seq_len: ${model._resolved_max_seq_len}
+  max_seq_len: ${model.max_seq_len}
   emb_dropout: ${model.backbone.dropout}
   use_abs_pos_emb: false
   attn_layers:
@@ -23,5 +23,3 @@ model:
 
 token_emb:
   _target_: torch.nn.Identity # assume data is pre-embedded by the input_encoder
-
-postpend_eos_token: true

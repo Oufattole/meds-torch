@@ -4,13 +4,12 @@ from pathlib import Path
 
 import pytest
 
+from meds_torch.latest_dir import get_latest_directory
 from tests.conftest import SUPERVISED_TASK_NAME
 from tests.helpers.run_if import RunIf
 from tests.helpers.run_sh_command import run_command
 
 
-@RunIf(sh=True)
-@pytest.mark.slow
 def test_train_experiments_fast_dev(tmp_path: Path, meds_dir) -> None:
     """Test running all available experiment configs with `fast_dev_run=True.`
 
@@ -30,9 +29,11 @@ def test_train_experiments_fast_dev(tmp_path: Path, meds_dir) -> None:
         "callbacks.model_checkpoint.save_top_k": -1,
     }
     run_command(script=script, args=args, hydra_kwargs=kwargs, test_name="train")
+    output_dir = Path(get_latest_directory(tmp_path / "train"))
+    assert (output_dir / "hydra_config.yaml").exists()
 
 
-@RunIf(sh=True, min_gpus=1)
+@RunIf(min_gpus=1)
 @pytest.mark.slow
 def test_train_experiments(tmp_path: Path, meds_dir) -> None:
     """Test running all available experiment configs with `fast_dev_run=True.`
@@ -54,10 +55,11 @@ def test_train_experiments(tmp_path: Path, meds_dir) -> None:
         "trainer.accelerator": "gpu",
     }
     run_command(script=script, args=args, hydra_kwargs=kwargs, test_name="train")
-    assert "last.ckpt" in os.listdir(tmp_path / "train" / "checkpoints")
+    output_dir = Path(get_latest_directory(tmp_path / "train"))
+    assert "last.ckpt" in os.listdir(output_dir / "checkpoints")
 
 
-@RunIf(sh=True, min_gpus=1)
+@RunIf(min_gpus=1)
 @pytest.mark.slow
 def test_tune_experiments(tmp_path: Path, meds_dir) -> None:
     """Test running all available experiment configs with `fast_dev_run=True.`
@@ -69,7 +71,8 @@ def test_tune_experiments(tmp_path: Path, meds_dir) -> None:
     kwargs = {
         "logger": "[]",
         "hparams_search": "ray_tune",
-        "callbacks": "ray",
+        "callbacks": "tune_default",
+        "trainer": "ray",
         "hparams_search.ray.num_samples": 2,
         "experiment": "example",
         "paths.data_dir": str(meds_dir / "triplet_tensors"),
@@ -77,10 +80,10 @@ def test_tune_experiments(tmp_path: Path, meds_dir) -> None:
         "paths.output_dir": str(tmp_path / "train"),
         "data.task_name": SUPERVISED_TASK_NAME,
         "data.task_root_dir": str(meds_dir / "tasks"),
-        "callbacks.model_checkpoint.save_top_k": -1,
         "trainer.max_epochs": 4,
         "trainer.accelerator": "gpu",
     }
     run_command(script=script, args=args, hydra_kwargs=kwargs, test_name="train")
-    subdirectory_count = sum(1 for entry in os.scandir(tmp_path / "train" / "ray_tune") if entry.is_dir())
+    output_dir = Path(get_latest_directory(tmp_path / "train"))
+    subdirectory_count = sum(1 for entry in os.scandir(output_dir / "ray_tune") if entry.is_dir())
     assert subdirectory_count == 2

@@ -5,10 +5,9 @@ from torch import nn
 
 from meds_torch.models import (
     BACKBONE_EMBEDDINGS_KEY,
+    MODEL_BATCH_LOSS_KEY,
     MODEL_EMBEDDINGS_KEY,
     MODEL_LOGITS_KEY,
-    MODEL_LOSS_KEY,
-    MODEL_TOKENS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
 
@@ -17,8 +16,6 @@ class EBCLModule(BaseModule):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
         batch_size = cfg.batch_size
-        self.optimizer = cfg.optimizer
-        self.scheduler = cfg.scheduler
         self.pre_model = self.model
         self.post_model = self.model
         #  metrics
@@ -74,15 +71,12 @@ class EBCLModule(BaseModule):
         loss_post = self.criterion(logits_per_post, labels)
         loss_pre = self.criterion(logits_per_pre, labels)
         loss = (loss_pre + loss_post) / 2
-        output = dict(
-            pre=pre_batch,
-            post=post_batch,
-        )
-        output[MODEL_EMBEDDINGS_KEY] = torch.concat([pre_norm_embeds, post_norm_embeds], dim=0)
-        output[MODEL_TOKENS_KEY] = None
-        output[MODEL_LOSS_KEY] = loss
-        output[MODEL_LOGITS_KEY] = logits
-        return output
+        batch["pre"] = pre_batch
+        batch["post"] = pre_batch
+        batch[MODEL_EMBEDDINGS_KEY] = torch.concat([pre_norm_embeds, post_norm_embeds], dim=1)
+        batch[MODEL_BATCH_LOSS_KEY] = loss
+        batch[MODEL_LOGITS_KEY] = logits
+        return batch
 
     def training_step(self, batch):
         output = self.forward(batch)
@@ -96,8 +90,8 @@ class EBCLModule(BaseModule):
         self.train_post_acc.update(torch.diag(output[MODEL_LOGITS_KEY]), labels)
         self.train_post_auc.update(output[MODEL_LOGITS_KEY], labels)
 
-        self.log("train/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
-        return output[MODEL_LOSS_KEY]
+        self.log("train/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def validation_step(self, batch):
         output = self.forward(batch)
@@ -112,8 +106,8 @@ class EBCLModule(BaseModule):
         self.val_post_acc.update(torch.diag(output[MODEL_LOGITS_KEY]), labels)
         if output[MODEL_LOGITS_KEY].shape[0] == self.cfg.batch_size:
             self.val_post_auc.update(output[MODEL_LOGITS_KEY], labels)
-        self.log("val/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
-        return output[MODEL_LOSS_KEY]
+        self.log("val/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def test_step(self, batch):
         output = self.forward(batch)
@@ -128,8 +122,8 @@ class EBCLModule(BaseModule):
         self.test_post_acc.update(torch.diag(output[MODEL_LOGITS_KEY]), labels)
         if output[MODEL_LOGITS_KEY].shape[0] == self.cfg.batch_size:
             self.test_post_auc.update(output[MODEL_LOGITS_KEY], labels)
-        self.log("test/loss", output[MODEL_LOSS_KEY], batch_size=self.cfg.batch_size)
-        return output[MODEL_LOSS_KEY]
+        self.log("test/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        return output[MODEL_BATCH_LOSS_KEY]
 
     def on_train_epoch_end(self):
         self.log(
