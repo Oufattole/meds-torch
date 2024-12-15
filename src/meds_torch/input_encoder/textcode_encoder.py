@@ -47,13 +47,82 @@ class CVE(nn.Module):
         return self.layer(x)
 
 
+def fast_unique_with_inverse(x):
+    """Efficiently computes unique elements and their inverse mapping for a 2D tensor.
+
+    The function returns a tuple containing:
+    - unique: tensor of unique values in sorted order
+    - inverse: tensor of same shape as input, where each element is replaced by
+              its index in the unique tensor
+
+    Args:
+        x (torch.Tensor): 2D input tensor with values in range [0, 10]
+
+    Returns:
+        tuple: (unique values tensor, inverse mapping tensor)
+
+    Example:
+        >>> x = torch.tensor([[0, 1, 0],
+        ...                   [2, 1, 0]], device='cpu')
+        >>> unique, inverse = fast_unique_with_inverse(x)
+        >>> print(unique)
+        tensor([0, 1, 2])
+        >>> print(inverse)
+        tensor([[0, 1, 0],
+                [2, 1, 0]])
+
+        >>> # Test with repeated values
+        >>> x = torch.tensor([[5, 5, 5],
+        ...                   [3, 3, 5]], device='cpu')
+        >>> unique, inverse = fast_unique_with_inverse(x)
+        >>> print(unique)
+        tensor([3, 5])
+        >>> print(inverse)
+        tensor([[1, 1, 1],
+                [0, 0, 1]])
+
+        >>> # Test with all possible values
+        >>> x = torch.tensor([[0, 10, 5],
+        ...                   [7, 3, 1]], device='cpu')
+        >>> unique, inverse = fast_unique_with_inverse(x)
+        >>> print(unique)
+        tensor([ 0,  1,  3,  5,  7, 10])
+        >>> print(inverse)
+        tensor([[0, 5, 3],
+                [4, 2, 1]])
+    """
+    # Pre-allocate an empty tensor spanning the range of possible values
+    B = torch.zeros(x.max().item() + 1, device=x.device, dtype=torch.int64)
+
+    # First mark which positions have values (with 1s)
+    B.scatter_(0, x.flatten(), torch.ones_like(x.flatten()))
+
+    # Get unique values
+    unique = torch.nonzero(B).flatten()
+
+    # Create a dense mapping (0 to num_unique-1)
+    B.zero_()  # Reset B
+    B.scatter_(0, unique, torch.arange(len(unique), device=x.device))
+
+    # Get inverse mapping using the dense indices
+    inverse = B[x.flatten()]
+
+    return unique, inverse.reshape(x.shape)
+
+
 class TextCodeEmbedder(nn.Module, Module, TimeableMixin):
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
+        self.device = torch.device(cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
         self.code_to_tokens_map = self.build_code_to_tokens_map()
-        self.code_embedder = AutoModel.from_pretrained(self.cfg.code_embedder)
-        self.linear = nn.Linear(self.code_embedder.config.hidden_size, self.cfg.token_dim)
+        self.code_embedder = AutoModel.from_pretrained(self.cfg.code_embedder).to(self.device)
+        self.linear = nn.Linear(self.code_embedder.config.hidden_size, self.cfg.token_dim).to(self.device)
+
+        # Move code_to_tokens_map to device once during initialization
+        self.code_to_tokens_map = {
+            key: tensor.to(self.device) for key, tensor in self.code_to_tokens_map.items()
+        }
 
     @TimeableMixin.TimeAs
     def build_code_to_tokens_map(self):
@@ -62,7 +131,6 @@ class TextCodeEmbedder(nn.Module, Module, TimeableMixin):
 
         Returns:
             code_to_tokens_map: A dictionary mapping from code to tokens
-
         """
         code_metadata = pl.scan_parquet(self.cfg.code_metadata_fp).select(["code/vocab_index", "description"])
         code_metadata = code_metadata.sort("code/vocab_index").collect()
@@ -84,29 +152,20 @@ class TextCodeEmbedder(nn.Module, Module, TimeableMixin):
 
     @TimeableMixin.TimeAs
     def forward(self, codes, mask):
-        unique_codes = codes.unique()
-        sorted_unique_codes, indices = torch.sort(unique_codes)
-        relative_codes = torch.searchsorted(sorted_unique_codes, codes)
-        # relative_codes corresponds to the indices of the sorted unique codes
-        # so that we can just use the output of the embedder without realigning
-
-        # sorted_unique_codes = sorted_unique_codes.to(codes.device)
-        # relative_codes = relative_codes.to(codes.device)
-        for key in self.code_to_tokens_map.keys():
-            self.code_to_tokens_map[key] = self.code_to_tokens_map[key].to(codes.device)
+        with torch.no_grad():
+            unique_codes, inverse_indices = fast_unique_with_inverse(codes)
 
         embedder_inputs = {
-            key: self.code_to_tokens_map[key][sorted_unique_codes].to(codes.device)
-            for key in self.code_to_tokens_map.keys()
+            key: self.code_to_tokens_map[key][unique_codes] for key in self.code_to_tokens_map.keys()
         }
+
         code_embeddings = self.code_embedder(**embedder_inputs).pooler_output
 
         code_embeddings = self.linear(code_embeddings)
 
-        embeddings = code_embeddings[relative_codes].to(codes.device)
+        embeddings = code_embeddings[inverse_indices]
 
-        # TODO: Masking -- not sure if this is needed as we can do it later
-        return embeddings
+        return torch.zeros_like(embeddings)
 
 
 class TextCodeEncoder(nn.Module, Module, TimeableMixin):
