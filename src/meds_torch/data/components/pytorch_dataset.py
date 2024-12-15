@@ -803,10 +803,13 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin, Mod
 
         max_seq_len = self.config.max_seq_len
 
-        out = {
-            "static_indices": static_row["static_indices"].item().to_list(),
-            "static_values": static_row["static_values"].item().to_list(),
-        }
+        if static_row["static_indices"].item() is None: 
+            out = {"static_indices": [], "static_values": []}
+        else:
+            out = {
+                "static_indices": static_row["static_indices"].item().to_list(),
+                "static_values": static_row["static_values"].item().to_list(),
+            }
 
         if self.config.do_prepend_static_data:
             n_static = len(out["static_indices"])
