@@ -1,6 +1,8 @@
 # MIMIC-IV Example
 
-This is an example of how to extract a MEDS dataset from MIMIC-IV. All scripts in this README are assumed to
+This is an example of how to extract a MEDS dataset from MIMIC-IV. To see a faster demo on smaller public medical datasets with meds-torch and other meds community models, please go to this [MEDS-DEV demo page](https://github.com/mmcdermott/MEDS-DEV/blob/demo_independent_data_generation/demo/README.MD).
+
+All scripts in this README are assumed to
 be run **not** from this directory but from the root directory of this entire repository (e.g., one directory
 up from this one).
 
