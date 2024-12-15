@@ -114,15 +114,20 @@ class TextCodeEmbedder(nn.Module, Module, TimeableMixin):
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
-        self.device = torch.device(cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
-        self.code_to_tokens_map = self.build_code_to_tokens_map()
-        self.code_embedder = AutoModel.from_pretrained(self.cfg.code_embedder).to(self.device)
-        self.linear = nn.Linear(self.code_embedder.config.hidden_size, self.cfg.token_dim).to(self.device)
 
-        # Move code_to_tokens_map to device once during initialization
-        self.code_to_tokens_map = {
-            key: tensor.to(self.device) for key, tensor in self.code_to_tokens_map.items()
-        }
+        # Build tokens map first
+        token_map = self.build_code_to_tokens_map()
+
+        # Initialize models
+        self.code_embedder = AutoModel.from_pretrained(self.cfg.code_embedder)
+        self.linear = nn.Linear(self.code_embedder.config.hidden_size, self.cfg.token_dim)
+
+        # Register each tensor as a buffer
+        self.key_to_buffer = {}
+        for key, tensor in token_map.items():
+            buffer_name = f"tokens_{key}"
+            self.register_buffer(buffer_name, tensor)
+            self.key_to_buffer[key] = buffer_name
 
     @TimeableMixin.TimeAs
     def build_code_to_tokens_map(self):
@@ -155,14 +160,13 @@ class TextCodeEmbedder(nn.Module, Module, TimeableMixin):
         with torch.no_grad():
             unique_codes, inverse_indices = fast_unique_with_inverse(codes)
 
+        # Access the tensors through their registered buffer names
         embedder_inputs = {
-            key: self.code_to_tokens_map[key][unique_codes] for key in self.code_to_tokens_map.keys()
+            key: getattr(self, self.key_to_buffer[key])[unique_codes] for key in self.key_to_buffer.keys()
         }
 
         code_embeddings = self.code_embedder(**embedder_inputs).pooler_output
-
         code_embeddings = self.linear(code_embeddings)
-
         embeddings = code_embeddings[inverse_indices]
 
         return torch.zeros_like(embeddings)
