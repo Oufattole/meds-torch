@@ -60,7 +60,7 @@ def test_train_generate(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: 
         cfg_train.trainer.max_epochs = 1
         cfg_train.test = True
         cfg_train.paths.output_dir = str(tmp_path)
-        if "multiwindow_pytorch_dataset" == cfg_train.data.name:
+        if "MultiWindowPytorchDataset" in cfg_train.data.dataset_cls:
             cfg_train.data.default_window_name = "pre"
     HydraConfig().set_config(cfg_train)
     if raises_value_error:
