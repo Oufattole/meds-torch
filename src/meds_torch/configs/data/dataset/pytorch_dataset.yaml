@@ -42,10 +42,6 @@ text_max_seq_len: 8
 do_flatten_tensors: true
 
 # Data Loader params
-dataloader:
-  batch_size: 128 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
-  num_workers: 0
-  pin_memory: False
 
 # Tokenization params
 vocab_size: ${get_vocab_size:${data.dataset.code_metadata_fp}, ${data.dataset.VOCAB_SPECIAL_TOKEN_ID_OFFSET}}

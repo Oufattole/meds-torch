@@ -88,12 +88,12 @@ class MEDSDataModule(LightningDataModule, Module):
         """
         # Divide batch size by the number of devices.
         if self.trainer is not None:
-            if self.hparams.cfg.dataloader.batch_size % self.trainer.world_size != 0:
+            if self.cfg.dataloader.batch_size % self.trainer.world_size != 0:
                 raise RuntimeError(
-                    f"Batch size ({self.hparams.cfg.dataloader.batch_size}) is not divisible by "
+                    f"Batch size ({self.cfg.dataloader.batch_size}) is not divisible by "
                     f"the number of devices ({self.trainer.world_size})."
                 )
-            self.batch_size_per_device = self.hparams.cfg.dataloader.batch_size // self.trainer.world_size
+            self.batch_size_per_device = self.cfg.dataloader.batch_size // self.trainer.world_size
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Create and return the train dataloader.
