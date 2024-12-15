@@ -16,8 +16,6 @@ class EBCLModule(BaseModule):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
         batch_size = cfg.batch_size
-        self.optimizer = cfg.optimizer
-        self.scheduler = cfg.scheduler
         self.pre_model = self.model
         self.post_model = self.model
         #  metrics

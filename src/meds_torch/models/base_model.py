@@ -25,12 +25,18 @@ class BaseModule(L.LightningModule, Module):
         self.cfg = cfg
         # shared components
         self.optimizer = cfg.optimizer
-        self.scheduler = cfg.scheduler
+        self.scheduler = cfg.get("scheduler", None)
         self.model = cfg.backbone
         self.input_encoder = cfg.input_encoder
 
     def configure_optimizers(self):
         optimizer = self.optimizer(self.parameters())
+        if self.scheduler is not None:
+            scheduler = self.scheduler.instantiate(optimizer)
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {"scheduler": scheduler, **self.scheduler.extra_kwargs},
+            }
         return optimizer
 
     def setup(self, stage: str) -> None:

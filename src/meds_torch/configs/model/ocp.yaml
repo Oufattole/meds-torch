@@ -1,21 +1,10 @@
 defaults:
   - input_encoder: triplet_encoder
   - backbone: triplet_transformer_encoder
+  - optimizer: adam
+  - scheduler: null
   - _self_
 _target_: meds_torch.models.ocp_model.OCPModule.initialize
-
-optimizer:
-  _target_: torch.optim.Adam
-  _partial_: true
-  lr: 0.001
-  weight_decay: 0.0
-
-scheduler:
-  _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
-  _partial_: true
-  mode: min
-  factor: 0.1
-  patience: 10
 
 early_fusion: true
 max_seq_len: ${data.max_seq_len} # doubled if early fusion

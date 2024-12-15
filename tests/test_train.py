@@ -85,6 +85,40 @@ def test_fast_dev_train(get_kwargs: dict, tmp_path):  # noqa: F811
         train_main(cfg)
 
 
+def test_fast_dev_train_lr_scheduler(tmp_path, meds_dir):  # noqa: F811
+    """Tests the training configuration provided by the `kwargs` pytest fixture.
+
+    :param kwargs: A dictionary containing the configuration and a flag for expected ValueError.
+    """
+    data, model, early_fusion, input_encoder, backbone = (
+        "pytorch_dataset",
+        "supervised",
+        None,
+        "textcode_encoder",
+        "transformer_encoder",
+    )
+    overrides, raises_value_error, supervised = get_overrides_and_exceptions(
+        data, model, early_fusion, input_encoder, backbone
+    )
+    cfg = create_cfg(
+        overrides=overrides + ["model/scheduler=reduce_lr_on_plateau"],
+        meds_dir=meds_dir,
+        supervised=supervised,
+    )
+
+    with open_dict(cfg):
+        cfg.trainer.fast_dev_run = True
+        cfg.trainer.accelerator = "cpu"
+        cfg.paths.output_dir = str(tmp_path)
+    HydraConfig().set_config(cfg)
+
+    if raises_value_error:
+        with pytest.raises(hydra.errors.InstantiationException):
+            train_main(cfg)
+    else:
+        train_main(cfg)
+
+
 @RunIf(min_gpus=1)
 def test_gpu_train(get_kwargs, tmp_path) -> None:  # noqa: F811
     """Tests the training configuration provided by the `cfg_train` pytest fixture.
