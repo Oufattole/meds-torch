@@ -62,8 +62,15 @@ meds-torch-train trainer.max_epochs=20 data.batch_size=64 $PATHS_KWARGS $TASK_KW
 5. Hyperparameter search
 
 ```bash
-meds-torch-tune experiment=experiment.yaml callbacks=tune_default $PATHS_KWARGS $TASK_KWARGS hparams_search=ray_tune hydra.searchpath=[pkg://meds_torch.configs,/PATH/TO/CUSTOM/CONFIGS]
+meds-torch-tune trainer=ray callbacks=tune_default hparams_search=ray_tune experiment=triplet_mtr $PATHS_KWARGS $TASK_KWARGS hydra.searchpath=[pkg://meds_torch.configs,/PATH/TO/CUSTOM/CONFIGS/WITH/experiment/triplet_mtr]
 ```
+
+### Advanced Examples
+
+For detailed examples and tutorials:
+
+- Check `MIMICIV_INDUCTIVE_EXPERIMENTS/README.md` for a comprehensive guide to using MEDS-torch with MIMIC-IV data, including data preparation, task extraction, and running experiments with different tokenization and transfer learning methods.
+- See `ZERO_SHOT_TUTORIAL/README.md` for a rough WIP walkthrough of zero-shot prediction (and please share feedback on improving this! 🙂)
 
 ### Example Experiment Configuration
 
