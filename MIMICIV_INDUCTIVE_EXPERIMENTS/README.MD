@@ -84,7 +84,7 @@ for TASK_NAME in "${TASKS[@]}"; do
     SINGLE_TASK_DIR="${MIMICIV_MEDS_DIR}/tasks/${TASK_NAME}"
     mkdir -p $SINGLE_TASK_DIR # create a directory for the task
     cp MIMICIV_INDUCTIVE_EXPERIMENTS/configs/tasks/${TASK_NAME}.yaml "${SINGLE_TASK_DIR}.yaml"
-    aces-cli --multirun hydra/launcher=joblib data=sharded data.standard=meds data.root="$MIMICIV_MEDS_DIR/data" "data.shard=$(expand_shards $MIMICIV_MEDS_DIR/data)" cohort_dir="$TASKS_DIR" cohort_name="$TASK_NAME"
+    aces-cli --multirun hydra/launcher=joblib data=sharded data.standard=meds data.root="$MIMICIV_MEDS_DIR/data" "data.shard=$(expand_shards $MIMICIV_MEDS_DIR/data)" cohort_dir="${MIMICIV_MEDS_DIR}/tasks/" cohort_name="$TASK_NAME"
 done
 ```
 
