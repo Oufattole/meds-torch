@@ -1,28 +1,16 @@
 from typing import Any
 
+from hydra.utils import get_class
 from lightning import LightningDataModule
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, Dataset
 
-from meds_torch.data.components.multiwindow_pytorch_dataset import (
-    MultiWindowPytorchDataset,
-)
-from meds_torch.data.components.pytorch_dataset import PytorchDataset
-from meds_torch.data.components.random_windows_pytorch_dataset import (
-    RandomWindowPytorchDataset,
-)
 from meds_torch.utils.module_class import Module
 
 
-def get_dataset(cfg: DictConfig, split) -> PytorchDataset:
-    if cfg.name == "multiwindow_pytorch_dataset":
-        return MultiWindowPytorchDataset(cfg, split)
-    elif cfg.name == "pytorch_dataset":
-        return PytorchDataset(cfg, split)
-    elif cfg.name == "random_windows_pytorch_dataset":
-        return RandomWindowPytorchDataset(cfg, split)
-    else:
-        raise NotImplementedError(f"{cfg.name} not implemented!")
+def get_dataset(cfg: DictConfig, split):
+    dataset_cls = get_class(cfg.dataset_cls)
+    return dataset_cls(cfg, split)
 
 
 class MEDSDataModule(LightningDataModule, Module):

@@ -1,7 +1,7 @@
 defaults:
   - pytorch_dataset
   - _self_
-name: random_windows_pytorch_dataset
+dataset_cls: meds_torch.data.components.random_windows_pytorch_dataset.RandomWindowPytorchDataset
 
 max_window_size: ${data.max_seq_len}
 min_window_size: ${data.min_seq_len}

@@ -1,7 +1,7 @@
 defaults:
   - pytorch_dataset
   - _self_
-name: multiwindow_pytorch_dataset
+dataset_cls: meds_torch.data.components.multiwindow_pytorch_dataset.MultiWindowPytorchDataset
 
 subject_level_sampling: false
 raw_windows_fp: ???
