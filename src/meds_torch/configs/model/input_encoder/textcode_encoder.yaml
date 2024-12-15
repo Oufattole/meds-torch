@@ -4,8 +4,8 @@ max_seq_len: ${model.max_seq_len}
 token_dim: ${model.token_dim}
 vocab_size: ${data.vocab_size}
 code_metadata_fp: ${data.code_metadata_fp}
-code_embedder: "google-bert/bert-base-cased" # pretrained path from huggingface
-code_tokenizer: "google-bert/bert-base-cased" # pretrained path from huggingface
+code_embedder: "nlpie/tiny-clinicalbert" # pretrained path from huggingface
+code_tokenizer: "nlpie/tiny-clinicalbert" # pretrained path from huggingface
 tokenizer_config:
   padding: true
   truncation: true
