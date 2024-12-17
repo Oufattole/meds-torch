@@ -6,7 +6,6 @@ site_author: Nassim Oufattole
 nav:
   - Home: index.md
   - "Inductive Experiments": inductive_experiments.md
-  - "MIMICIV Tutorial": tutorial.md
   - "Terminology": terminology.md
   - "Input Encoding Methods": input_encoding_methods.md
   - API Reference: reference/api/
