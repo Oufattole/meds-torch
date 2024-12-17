@@ -48,7 +48,7 @@ class SupervisedModule(BaseModule):
         if self.cfg.get_representations:
             loss = None
         else:
-            loss = self.criterion(logits.squeeze(dim=-1), batch["boolean_value"].float())
+            loss = self.criterion(logits.squeeze(dim=-1), batch["boolean_value"].float().flatten())
         batch[MODEL_EMBEDDINGS_KEY] = embeddings
         batch[MODEL_LOGITS_KEY] = logits
         batch[MODEL_PRED_PROBA_KEY] = torch.sigmoid(logits)
@@ -58,9 +58,9 @@ class SupervisedModule(BaseModule):
     def training_step(self, batch):
         output = self.forward(batch)
         # logs metrics for each training_step, and the average across the epoch
-        self.train_acc.update(output[MODEL_LOGITS_KEY].squeeze(), batch["boolean_value"].float())
-        self.train_auc.update(output[MODEL_LOGITS_KEY].squeeze(), batch["boolean_value"].float())
-        self.train_apr.update(output[MODEL_LOGITS_KEY].squeeze(), batch["boolean_value"].int())
+        self.train_acc.update(output[MODEL_LOGITS_KEY].flatten(), batch["boolean_value"].float().flatten())
+        self.train_auc.update(output[MODEL_LOGITS_KEY].flatten(), batch["boolean_value"].float().flatten())
+        self.train_apr.update(output[MODEL_LOGITS_KEY].flatten(), batch["boolean_value"].int().flatten())
         self.log(
             "train/step_loss", output[MODEL_BATCH_LOSS_KEY], on_step=True, batch_size=self.cfg.batch_size
         )
@@ -92,9 +92,9 @@ class SupervisedModule(BaseModule):
     def validation_step(self, batch):
         output = self.forward(batch)
         # logs metrics for each training_step, and the average across the epoch
-        self.val_acc.update(output[MODEL_LOGITS_KEY].squeeze(), batch["boolean_value"].float())
-        self.val_auc.update(output[MODEL_LOGITS_KEY].squeeze(), batch["boolean_value"].float())
-        self.val_apr.update(output[MODEL_LOGITS_KEY].squeeze(), batch["boolean_value"].int())
+        self.val_acc.update(output[MODEL_LOGITS_KEY].flatten(), batch["boolean_value"].float().flatten())
+        self.val_auc.update(output[MODEL_LOGITS_KEY].flatten(), batch["boolean_value"].float().flatten())
+        self.val_apr.update(output[MODEL_LOGITS_KEY].flatten(), batch["boolean_value"].int().flatten())
 
         self.log(
             "val/loss",
@@ -135,9 +135,9 @@ class SupervisedModule(BaseModule):
     def test_step(self, batch, batch_idx):
         output = self.forward(batch)
         # logs metrics for each training_step, and the average across the epoch
-        self.test_acc.update(output[MODEL_LOGITS_KEY].squeeze(), batch["boolean_value"].float())
-        self.test_auc.update(output[MODEL_LOGITS_KEY].squeeze(), batch["boolean_value"].float())
-        self.test_apr.update(output[MODEL_LOGITS_KEY].squeeze(), batch["boolean_value"].int())
+        self.test_acc.update(output[MODEL_LOGITS_KEY].flatten(), batch["boolean_value"].float().flatten())
+        self.test_auc.update(output[MODEL_LOGITS_KEY].flatten(), batch["boolean_value"].float().flatten())
+        self.test_apr.update(output[MODEL_LOGITS_KEY].flatten(), batch["boolean_value"].int().flatten())
 
         self.log("test/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
         return output[MODEL_BATCH_LOSS_KEY]
