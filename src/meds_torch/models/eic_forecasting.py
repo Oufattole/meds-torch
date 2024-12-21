@@ -29,6 +29,7 @@ from meds_torch.models.zero_shot_labeler.utils import (
     TrajectoryBatch,
     get_time_days_delta,
 )
+from meds_torch.utils.custom_time_token import TIME_DELTA_TOKEN
 
 
 def create_dummy_sequence_labeler(batch_size: int = 2):
@@ -247,61 +248,6 @@ class DummyScheduler:
 
 CODE_LOGITS = "MODEL//CODE_LOGITS"
 
-# Time quantiles for the EIC dataset
-TIME_QUANTILE_VALUES = [
-    0,
-    1.8697990981546083e-06,
-    6.042738570007656e-06,
-    1.5023761280952375e-05,
-    3.7040579000812096e-05,
-    9.407141472104954e-05,
-    0.00021470011508317946,
-    0.000483380440410716,
-    0.0010109219329935046,
-    0.0018344958495578154,
-    0.0041425300336417024,
-    0.008303153066089282,
-    0.015989647084188808,
-    0.029314912679925205,
-    0.0594034167939482,
-    0.11676680580396949,
-    0.23320547561943775,
-    0.5373471820293758,
-    1.354175718970152,
-    3.012664764359352,
-    6.511592621764305,
-    18.78151017351385,
-    29.61825810321306,
-    64.47917702102863,
-]
-
-TIME_QUANTILE_NAMES = [
-    "TIME//DELTA//TOKEN",
-    "TIME//DELTA//TOKEN//_Q_1",
-    "TIME//DELTA//TOKEN//_Q_2",
-    "TIME//DELTA//TOKEN//_Q_3",
-    "TIME//DELTA//TOKEN//_Q_4",
-    "TIME//DELTA//TOKEN//_Q_5",
-    "TIME//DELTA//TOKEN//_Q_6",
-    "TIME//DELTA//TOKEN//_Q_7",
-    "TIME//DELTA//TOKEN//_Q_8",
-    "TIME//DELTA//TOKEN//_Q_9",
-    "TIME//DELTA//TOKEN//_Q_10",
-    "TIME//DELTA//TOKEN//_Q_11",
-    "TIME//DELTA//TOKEN//_Q_12",
-    "TIME//DELTA//TOKEN//_Q_13",
-    "TIME//DELTA//TOKEN//_Q_14",
-    "TIME//DELTA//TOKEN//_Q_15",
-    "TIME//DELTA//TOKEN//_Q_16",
-    "TIME//DELTA//TOKEN//_Q_17",
-    "TIME//DELTA//TOKEN//_Q_18",
-    "TIME//DELTA//TOKEN//_Q_19",
-    "TIME//DELTA//TOKEN//_Q_20",
-    "TIME//DELTA//TOKEN//_Q_21",
-    "TIME//DELTA//TOKEN//_Q_22",
-    "TIME//DELTA//TOKEN//_Q_23",
-]
-
 
 # Function to pad a single array
 def pad_array(arr, max_len):
@@ -446,9 +392,6 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         >>> assert (status_vals == WindowStatus.SATISFIED.value).any()  # Some sequences complete
     """
 
-    TIME_QUANTILE_VALUES = TIME_QUANTILE_VALUES
-    TIME_QUANTILE_NAMES = TIME_QUANTILE_NAMES
-
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
         self.code_head = self.cfg.code_head
@@ -571,6 +514,15 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         self.test_next_token_metric.reset()
 
     @classmethod
+    def get_metadata_means(cls, metadata_df):
+        if "values/sum" not in metadata_df or "values/n_occurrences" not in metadata_df:
+            raise ValueError("Missing 'values/sum' and/or 'values/n_occurrences' columns in metadata_df")
+        metadata_df = metadata_df.with_columns(
+            (pl.col("values/sum") / pl.col("values/n_occurrences")).alias("values/mean")
+        )
+        return metadata_df
+
+    @classmethod
     def get_code_to_time_map(cls, metadata_df) -> dict:
         """Convert the metadata DataFrame to a dictionary mapping code to time.
 
@@ -584,21 +536,23 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         Example:
         >>> metadata_df = pl.DataFrame({
         ...     "code": ["A", "B", "C", "TIME//DELTA//TOKEN//_Q_17"],
-        ...     "code/vocab_index": [0, 1, 2, 3]
+        ...     "code/vocab_index": [0, 1, 2, 3],
+        ...     "values/sum": [None, None, None, 1],
+        ...     "values/n_occurrences": [None, None, None, 1],
         ... })
-        >>> # Note that the code "TIME//DELTA//TOKEN//_Q_17" maps to 1 year
-        >>> EicForecastingModule.TIME_QUANTILE_VALUES = [1.0 for _ in range(24)]
         >>> EicForecastingModule.get_code_to_time_map(metadata_df)
         tensor([0., 0., 0., 1., 0.])
         """
+        metadata_df = cls.get_metadata_means(metadata_df)
         assert metadata_df["code/vocab_index"].is_sorted()
-        code_to_time_map = torch.tensor(
-            [
-                cls.TIME_QUANTILE_VALUES[cls.TIME_QUANTILE_NAMES.index(code)]
-                if code in set(TIME_QUANTILE_NAMES)
-                else 0
-                for code in metadata_df["code"]
-            ]
+        code_to_time_map = (
+            metadata_df.select(
+                pl.when(pl.col("code").str.starts_with(TIME_DELTA_TOKEN))
+                .then(pl.col("values/mean"))
+                .otherwise(pl.lit(0.0))
+            )
+            .to_torch(dtype=pl.Float32)
+            .flatten()
         )
         code_to_time_map = torch.cat([code_to_time_map, torch.zeros(1)])
         return code_to_time_map
@@ -650,11 +604,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         percentiles = [0, *[float(q.split("/")[-1]) for q in ordered_quantiles], 1]
         if "values/min" not in metadata_df.columns or "values/max" not in metadata_df.columns:
             raise ValueError("Missing values/min and/or values/max values in metadata_df")
-        if "values/sum" not in metadata_df or "values/n_occurrences" not in metadata_df:
-            raise ValueError("Missing 'values/sum' and/or 'values/n_occurrences' columns in metadata_df")
-        metadata_df = metadata_df.with_columns(
-            (pl.col("values/sum") / pl.col("values/n_occurrences")).alias("values/mean")
-        )
+        metadata_df = cls.get_metadata_means(metadata_df)
 
         # Process each row in the DataFrame
         for row in metadata_df.iter_rows(named=True):
@@ -718,8 +668,8 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         ...     "code/vocab_index": [0, 1, 2, 3, 4, 5],
         ...     'values/min': [0, 0, 0, 0, 0, None],
         ...     'values/max': [4, 4, 4, 4, 4, None],
-        ...     'values/sum': [None, .5, 1.5, 2.5, 3.5, None],
-        ...     'values/n_occurrences': [None, 1, 1, 1, 1, None],
+        ...     'values/sum': [None, .5, 1.5, 2.5, 3.5, 1],
+        ...     'values/n_occurrences': [None, 1, 1, 1, 1, 1],
         ...     "values/quantiles": [
         ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
         ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
@@ -767,7 +717,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         **kwargs,
     ):
         """Generate evaluation metrics for the model."""
-        if self.cfg.backbone.max_tokens_budget is None and self.cfg.get("trajectory_labeler") is None:
+        if self.model.cfg.max_tokens_budget is None and self.cfg.get("trajectory_labeler") is None:
             raise ValueError(
                 "At least one of model.backbone.max_tokens_budget or model.trajectory_labeler must be "
                 "set in the configuration."
