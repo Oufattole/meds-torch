@@ -1,5 +1,4 @@
 defaults:
-  - generation_budget: seq_len
   - default
   - _self_
 
@@ -25,3 +24,4 @@ model:
 token_emb: null # use x-transformers to embed tokens
 max_seq_len: ${model.max_seq_len} # is the sampling temperature, `0` corresponds to greedy sampling
 eos_token_id: null # stop sampling when this token is generated
+max_tokens_budget: null

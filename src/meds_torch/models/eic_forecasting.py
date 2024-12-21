@@ -1,10 +1,9 @@
-from collections.abc import Callable
-
 import numpy as np
 import polars as pl
 import torch
 import torch.nn.functional as F
 import torch.utils
+from clinical_zeroshot_labeler.labeler import WindowStatus
 from loguru import logger
 from mixins import TimeableMixin
 from omegaconf import DictConfig
@@ -13,7 +12,6 @@ from torchmetrics.classification import MulticlassAccuracy, MulticlassAUROC
 from x_transformers.autoregressive_wrapper import eval_decorator
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
-from meds_torch.input_encoder.eic_encoder import EicEncoder
 from meds_torch.models import (
     BACKBONE_EMBEDDINGS_KEY,
     BACKBONE_TOKENS_KEY,
@@ -23,53 +21,206 @@ from meds_torch.models import (
     MODEL_LOGITS_SEQUENCE_KEY,
     MODEL_LOSS_KEY,
     MODEL_PRED_PROBA_KEY,
+    MODEL_PRED_STATUS_KEY,
     MODEL_TOKENS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
-from meds_torch.models.components import AUTOREGRESSIVE_MODELS
-from meds_torch.models.zero_shot_labeler.time_to_event_labeler import TaskLabeler
 from meds_torch.models.zero_shot_labeler.utils import (
     TrajectoryBatch,
     get_time_days_delta,
 )
 
-# Create dummy components for testing
+
+def create_dummy_sequence_labeler(batch_size: int = 2):
+    """Create a dummy sequence labeler with a simple ACES task configuration.
+
+    Args:
+        batch_size: Number of sequences to process in parallel
+
+    Returns:
+        Tuple containing:
+            - Dummy labeler instance
+            - Metadata DataFrame
+            - Sample input batch
+            - ACES task configuration string
+
+    Examples:
+        >>> labeler, metadata_df, batch, task_config = create_dummy_sequence_labeler()
+        >>> import torch
+        >>> assert isinstance(batch['code'], torch.Tensor)
+        >>> assert batch['code'].shape == (2, 3)  # batch_size=2, seq_len=3
+        >>> assert 'mask' in batch
+        >>> # Test indices are within vocab range
+        >>> max_idx = batch['code'].max()
+        >>> assert max_idx < len(metadata_df)
+    """
+    from datetime import datetime
+
+    import polars as pl
+    import torch
+    from clinical_zeroshot_labeler.labeler import SequenceLabeler
+
+    # Define simple ACES task configuration
+    task_config = """
+    predicates:
+        hospital_discharge:
+            code: {regex: "HOSPITAL_DISCHARGE//.*"}
+        lab:
+            code: {regex: "LAB//.*"}
+        abnormal_lab:
+            code: {regex: "LAB//HIGH"}
+
+    trigger: hospital_discharge
+
+    windows:
+        input:
+            start: NULL
+            end: trigger
+            start_inclusive: True
+            end_inclusive: True
+            index_timestamp: end
+        target:
+            start: input.end
+            end: start + 4d
+            start_inclusive: False
+            end_inclusive: True
+            has:
+                lab: (1, None)
+            label: abnormal_lab
+    """
+
+    # Create metadata DataFrame with test codes
+    metadata_df = pl.DataFrame(
+        {
+            "code": [
+                "PAD",
+                "HOSPITAL_DISCHARGE//MEDICAL",
+                "LAB//_Q_1",
+                "LAB//_Q_2",
+                "LAB//_Q_3",
+                "TIME//DELTA//TOKEN//_Q_1",
+                "TIME//DELTA//TOKEN//_Q_2",
+                "TIME//DELTA//TOKEN//_Q_3",
+            ],
+            "code/vocab_index": [0, 1, 2, 3, 4, 5, 6, 7],
+            "values/min": [None, None, 2.0, 0.0, 1.0, 0, 1, 2],
+            "values/max": [None, None, 3.0, 1.0, 2.0, 1, 2, 3],
+            "values/sum": [None, None, 0.5, 1.5, 2.5, 0.5, 1.5, 2.5],
+            "values/n_occurrences": [None, None, 1, 1, 1, 1, 1, 1],
+            "values/quantiles": [
+                {"values/quantile/0.5": None},
+                {"values/quantile/0.5": None},
+                {"values/quantile/0.5": 1},
+                {"values/quantile/0.5": 1},
+                {"values/quantile/0.5": 1},
+                {"values/quantile/0.5": 1},
+                {"values/quantile/0.5": 1},
+                {"values/quantile/0.5": 1},
+            ],
+        }
+    )
+
+    # Create sample input batch
+    # Sequence 1: Hospital discharge -> High lab value -> Time token
+    # Sequence 2: Hospital discharge -> Normal lab value -> Time token
+    # Note: All indices should be < len(metadata_df)
+    batch = {
+        "code": torch.tensor([[1, 2, 4], [1, 3, 4]]),  # Using vocab indices
+        "mask": torch.ones(2, 3, dtype=torch.bool),
+        "subject_id": torch.tensor([1, 2]),
+        "prediction_time": [datetime(2020, 1, 1), datetime(2020, 1, 1)],
+        "end_time": [datetime(2020, 1, 1), datetime(2020, 1, 1)],
+    }
+
+    # Initialize sequence labeler
+    labeler = SequenceLabeler.from_yaml_str(task_config, metadata_df, batch_size=batch_size)
+
+    return labeler, metadata_df, batch, task_config
+
+
+def create_model_config(metadata_df_path: str):
+    """Create a model configuration for testing.
+
+    Args:
+        metadata_df_path: Path to metadata DataFrame parquet file
+
+    Returns:
+        Instantiated model configuration
+
+    Examples:
+        >>> import tempfile, polars as pl
+        >>> with tempfile.NamedTemporaryFile(suffix='.parquet') as temp_file:
+        ...     df = pl.DataFrame({"code": ["A"], "code/vocab_index": [0]})
+        ...     df.write_parquet(temp_file.name)
+        ...     cfg = create_model_config(temp_file.name)
+        >>> assert cfg.vocab_size == 2  # Original size + pad token
+    """
+    from hydra.utils import instantiate
+
+    vocab_size = pl.read_parquet(metadata_df_path).height + 1
+    cfg = {
+        "code_metadata_fp": metadata_df_path,
+        "backbone": {"_target_": "meds_torch.models.eic_forecasting.DummyModel"},
+        "vocab_size": vocab_size,  # Add 1 for pad token
+        "generate_id": None,
+        "store_generated_trajectory": True,
+        "max_seq_len": 10,
+        "temperature": 1.0,
+        "eos_tokens": None,
+        "optimizer": {"_target_": "meds_torch.models.eic_forecasting.DummyOptimizer", "_partial_": True},
+        "scheduler": {"_target_": "meds_torch.models.eic_forecasting.DummyScheduler", "_partial_": True},
+        "input_encoder": {"_target_": "meds_torch.models.eic_forecasting.DummyEncoder"},
+        "code_head": {
+            "_target_": "meds_torch.models.eic_forecasting.DummyCodeHead",
+            "vocab_size": vocab_size,
+        },
+        "compile": False,
+        "top_k_acc": [1],
+        "next_token_auc": False,
+    }
+    return instantiate(cfg)
 
 
 class DummyModel:
-    cfg = DictConfig(dict(token_emb=None))
+    """Dummy model that generates two fixed sequences."""
+
+    cfg = DictConfig(dict(token_emb=None, max_tokens_budget=5))
 
     def __call__(self, batch):
-        # Simulate backbone output
-        B, S = batch[INPUT_ENCODER_TOKENS_KEY].shape
-        return {BACKBONE_TOKENS_KEY: torch.randn(B, S, 32), BACKBONE_EMBEDDINGS_KEY: None}
+        B, S = batch["code"].shape
+        return {BACKBONE_TOKENS_KEY: torch.ones(B, S, 32), BACKBONE_EMBEDDINGS_KEY: None}
 
-    def generate(
-        self,
-        prompts: torch.Tensor,
-        mask: torch.Tensor | None = None,
-        get_next_token_time: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
-        eos_tokens=None,
-        time_offset_years: torch.Tensor | None = None,
-        temperature: float = 1.0,
-        filter_logits_fn: str | Callable = torch.nn.Identity(),
-    ) -> torch.Tensor:
-        B, S = prompts.shape
-        out = torch.randint(0, 4, (B, S))
-        out_lengths = S * torch.ones(B)
-        return out, out_lengths
+    def generate(self, prompts, **kwargs):
+        # Always generate two fixed sequences
+        generated = torch.tensor(
+            [
+                [1, 2, 5, 2, 7],  # Sequence 1: Discharge -> High -> Short -> High -> Long
+                [1, 3, 6, 4, 5],  # Sequence 2: Discharge -> Low -> Medium -> Normal -> Short
+            ]
+        )
+        out_lengths = torch.tensor([5, 5])
+        labels = dict()
+        if kwargs.get("trajectory_labeler") is not None:
+            labels = dict(
+                labels=torch.tensor([1.0, 0.0]),  # Sequence 1 positive, Sequence 2 negative
+                status=torch.ones(2) * WindowStatus.SATISFIED.value,
+            )
+        return generated, out_lengths, labels
 
 
 class DummyCodeHead:
+    def __init__(self, vocab_size):
+        self.vocab_size = vocab_size  # Match metadata size
+
     def __call__(self, x):
-        # Convert embeddings to logits
         B, S, _ = x.shape
-        return torch.randn(B, S, 4)  # 4 possible codes
+        logits = torch.zeros(B, S, self.vocab_size)
+        logits[..., 1:] = 1.0  # All tokens except PAD equally likely
+        return logits
 
 
 class DummyEncoder:
     def __call__(self, batch):
-        # Add encoder fields to batch
         batch[INPUT_ENCODER_TOKENS_KEY] = batch["code"]
         batch[INPUT_ENCODER_MASK_KEY] = torch.ones_like(batch["mask"]).bool()
         return batch
@@ -189,13 +340,12 @@ class NextTokenPredictionMetric(Metric):
         self.vocab_size = vocab_size
 
         self.top_k_acc = top_k_acc
-        self.next_token_metrics = MetricCollection(
-            {f"top_{k}_accuracy": MulticlassAccuracy(num_classes=vocab_size, top_k=k) for k in top_k_acc}
-        )
+        metrics = {
+            f"top_{k}_accuracy": MulticlassAccuracy(num_classes=vocab_size, top_k=k) for k in top_k_acc
+        }
         if next_token_auc:
-            self.next_token_metrics["auroc"] = MulticlassAUROC(
-                num_classes=vocab_size, average="macro", thresholds=100
-            )
+            metrics["auroc"] = MulticlassAUROC(num_classes=vocab_size, average="macro", thresholds=100)
+        self.next_token_metrics = MetricCollection(metrics)
 
     def update(self, logits: torch.Tensor, targets: torch.Tensor, mask: torch.Tensor):
         """
@@ -250,127 +400,50 @@ class EicForecastingModule(BaseModule, TimeableMixin):
             - code_metadata_fp: Path to code metadata file
 
     Examples:
-    >>> import tempfile
-    >>> import datetime
-    >>> from hydra.utils import instantiate
-    >>> # Create temporary metadata file
-    >>> temp_file = tempfile.NamedTemporaryFile(suffix='.parquet')
-    >>> metadata_df = pl.DataFrame({
-    ...     "code": ["A", "B", "TIME//DELTA//TOKEN//_Q_17", "C"],
-    ...     "code/vocab_index": [0, 1, 2, 3],
-    ...     "values/min": [0.0, 1.0, None, 2.0],
-    ...     "values/max": [1.0, 2.0, None, 3.0],
-    ...     "values/quantiles": [
-    ...         {"values/quantile/0.5": 0.5},
-    ...         {"values/quantile/0.5": 1.5},
-    ...         {"values/quantile/0.5": None},
-    ...         {"values/quantile/0.5": 2.5},
-    ...     ]
-    ... })
-    >>> metadata_df.write_parquet(temp_file.name)
-    >>> # Create config
-    >>> cfg = {
-    ...     "code_metadata_fp": temp_file.name,
-    ...     "backbone": {"_target_": "meds_torch.models.eic_forecasting.DummyModel"},
-    ...     "vocab_size": 4,
-    ...     "generate_id": None,
-    ...     "store_generated_trajectory": True,
-    ...     "max_seq_len": 10,
-    ...     "zero_shot_labeler": None,
-    ...     'temperature': 1.0,
-    ...     'eos_tokens': [4,],
-    ...     "optimizer": {
-    ...         "_target_": "meds_torch.models.eic_forecasting.DummyOptimizer",
-    ...         "_partial_": True
-    ...     },
-    ...     "scheduler": {
-    ...         "_target_": "meds_torch.models.eic_forecasting.DummyScheduler",
-    ...         "_partial_": True
-    ...     },
-    ...     "input_encoder": {"_target_": "meds_torch.models.eic_forecasting.DummyEncoder"},
-    ...     "code_head": {"_target_": "meds_torch.models.eic_forecasting.DummyCodeHead"},
-    ...     "compile": False,
-    ...     "top_k_acc": [1],
-    ...     "next_token_auc": False,
-    ... }
-    >>> cfg = instantiate(cfg)
-    >>> # Create input batch
-    >>> batch = {
-    ...     'code': torch.tensor([[0, 1, 2], [1, 2, 3]]),
-    ...     'mask': torch.ones(2, 3).bool()
-    ... }
-    >>>
-    >>> # Test workflow 1: Autoregressive training
-    >>> model = EicForecastingModule(cfg)
-    >>> loss = model.training_step(batch)
-    >>> assert loss.isfinite().all()
-    >>>
-    >>> # Test workflow 2: Data generation
-    >>> cfg.generate_id = 0  # Enable generation
-    >>> model = EicForecastingModule(cfg)
-    >>>
-    >>> # Test generation
-    >>> batch['subject_id'] = torch.tensor([1, 2])
-    >>> batch['prediction_time'] = [datetime.datetime(1997,1,1), datetime.datetime(1997,1,1)]
-    >>> batch['end_time'] = [datetime.datetime(1997,1,1), datetime.datetime(1997,1,1)]
-    >>> output = model.forward(batch)
-    >>> output['GENERATE//0'].columns
-    ['time', 'code', 'numeric_value', 'subject_id', 'prediction_time']
-    >>> assert output['GENERATE//0'].shape[0] == 6
-    >>> # Test workflow 3: Zero-shot prediction
-    >>> cfg.zero_shot_labeler = lambda x: (torch.tensor([0.7, 0.3]), torch.tensor([False, True]))
-    >>> model = EicForecastingModule(cfg)
-    >>> output = model.forward(batch)
-    >>> print(f"Zero-shot predictions shape: {output[MODEL_PRED_PROBA_KEY].shape}")
-    Zero-shot predictions shape: torch.Size([2])
-    >>> output[MODEL_PRED_PROBA_KEY]
-    tensor([0.7000, 0.5000])
-    >>> # Test generation with real model
-    >>> cfg.generate_id = 1  # Enable generation
-    >>> B, S, L = 2, 5, 8 # [batch_size, input_sequence_length, token_dim]
-    >>> vocab_size = 4
-    >>> max_seq_len = 10
-    >>> cfg.temperature = 1000.0 # Raise the temperature to randomize the predictions
-    >>> model = EicForecastingModule(cfg)
-    >>> _ = torch.manual_seed(42)
-    >>> model.model = instantiate({
-    ...     '_target_': "meds_torch.models.components.transformer_decoder.TransformerDecoderModel.initialize",
-    ...     'token_dim': L,
-    ...     'vocab_size': vocab_size,
-    ...     'max_seq_len': max_seq_len,
-    ...     'get_last_token': True,
-    ...     'token_emb': None,
-    ...     'generation_budget': {
-    ...         '_target_': ("meds_torch.models.components.transformer_decoder."
-    ...                      "GenerationBudget.from_time_len"),
-    ...         "value": .5,
-    ...     },
-    ...     'model': {
-    ...         '_target_': 'x_transformers.TransformerWrapper',
-    ...         'num_tokens': vocab_size,
-    ...         'max_seq_len': max_seq_len,
-    ...         'attn_layers': {
-    ...             '_target_': 'x_transformers.Decoder',
-    ...             'dim': L,
-    ...             'depth': 2,
-    ...             'heads': 2,
-    ...         }
-    ...     }
-    ... })
-    >>>
-    >>> # Create input batch
-    >>> output = model.forward(batch)
-    >>> output['GENERATE//1'].columns
-    ['time', 'code', 'numeric_value', 'subject_id', 'prediction_time']
-    >>> output['GENERATE//1'].shape[0] > 0
-    True
-    >>>  # Note that the time token is code/vocab_index 2 in the metadata
-    >>>  # check that 1 time token was generated for the shortest time trajectory
-    >>> output['GENERATE//1'].filter(pl.col('subject_id').eq(1))['code'][-1] == 2
-    True
-    >>> output['GENERATE//1'].filter(pl.col('subject_id').eq(2))['code'][-1] == 2
-    True
-    >>> temp_file.close()
+        >>> import tempfile
+        >>> from clinical_zeroshot_labeler.labeler import WindowStatus
+        >>> # Create test setup using helper function
+        >>> trajectory_labeler, metadata_df, batch, _ = create_dummy_sequence_labeler()
+
+        >>> # Write metadata to temporary file and create config
+        >>> temp_file = tempfile.NamedTemporaryFile(suffix='.parquet')
+        >>> metadata_df.write_parquet(temp_file.name)
+        >>> cfg = create_model_config(temp_file.name)
+
+        >>> # Test workflow 1: Autoregressive training
+        >>> model = EicForecastingModule(cfg)
+        >>> loss = model.training_step(batch)
+        >>> assert loss.isfinite().all()
+
+        >>> # Test workflow 2: Data generation without labeling
+        >>> cfg.generate_id = 1
+        >>> model = EicForecastingModule(cfg)
+        >>> output = model.forward(batch)
+        >>> assert GENERATE_PREFIX + '1' in output
+        >>> generated_df = output[GENERATE_PREFIX + '1']
+        >>> # Check generated data structure
+        >>> assert 'time' in generated_df.columns
+        >>> assert 'code' in generated_df.columns
+        >>> assert 'numeric_value' in generated_df.columns
+        >>> assert 'subject_id' in generated_df.columns
+        >>> assert 'prediction_time' in generated_df.columns
+        >>> # Verify time token generation (code/vocab_index 4 in metadata)
+        >>> generated_df.filter(pl.col('subject_id').eq(1))['code'][-1]
+        7
+        >>> generated_df.filter(pl.col('subject_id').eq(2))['code'][-1]
+        5
+        >>> # Test workflow 3: Generation with zero-shot labeling
+        >>> cfg.trajectory_labeler = trajectory_labeler
+        >>> model = EicForecastingModule(cfg)
+        >>> output = model.forward(batch)
+        >>> # Check labeling output
+        >>> assert MODEL_PRED_PROBA_KEY in output
+        >>> assert MODEL_PRED_STATUS_KEY in output
+        >>> assert output[MODEL_PRED_PROBA_KEY].shape == (2,)  # Binary prediction per sequence
+        >>> assert output[MODEL_PRED_STATUS_KEY].shape == (2,)  # Status per sequence
+        >>> # Verify status progression works
+        >>> status_vals = output[MODEL_PRED_STATUS_KEY]
+        >>> assert (status_vals == WindowStatus.SATISFIED.value).any()  # Some sequences complete
     """
 
     TIME_QUANTILE_VALUES = TIME_QUANTILE_VALUES
@@ -378,12 +451,6 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
-        if not isinstance(self.model, AUTOREGRESSIVE_MODELS + (DummyModel,)):
-            raise ValueError(
-                f"Unsupported model type: {type(self.model)}, choose one from {AUTOREGRESSIVE_MODELS}"
-            )
-        if not isinstance(self.input_encoder, (EicEncoder, DummyEncoder)):
-            raise NotImplementedError(f"Unsupported input encoder type: {type(self.input_encoder)}")
         self.code_head = self.cfg.code_head
 
         num_future_codes = self.cfg.get("num_future_codes", None)
@@ -537,7 +604,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         return code_to_time_map
 
     @classmethod
-    def get_code_to_numeric_value_map(cls, metadata_df, get_raw_values=False) -> dict:
+    def get_code_to_numeric_value_map(cls, metadata_df, get_raw_values=True) -> dict:
         """Convert the metadata DataFrame to a dictionary mapping code to numeric value.
 
         Args:
@@ -553,6 +620,8 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         ...     "code/vocab_index": [0, 1, 2, 3, 4, 5],
         ...     'values/min': [0, 0, 0, 0, 0, None],
         ...     'values/max': [4, 4, 4, 4, 4, None],
+        ...     'values/sum': [None, .5, 1.5, 2.5, 3.5, None],
+        ...     'values/n_occurrences': [None, 1, 1, 1, 1, None],
         ...     "values/quantiles": [
         ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
         ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
@@ -577,41 +646,39 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         # Create a tensor filled with NaN values
         result = torch.full((max_vocab_idx + 1,), float("nan"))
         # TODO(Oufattole) remove this and enforce that metadata_df must include the values/min
-        try:
-            ordered_quantiles = [field.name for field in metadata_df.schema["values/quantiles"].fields]
-            percentiles = [0, *[float(q.split("/")[-1]) for q in ordered_quantiles], 1]
-            if "values/min" not in metadata_df.columns or "values/max" not in metadata_df.columns:
-                logger.warning("Missing values/min and/or values/max values in metadata_df")
+        ordered_quantiles = [field.name for field in metadata_df.schema["values/quantiles"].fields]
+        percentiles = [0, *[float(q.split("/")[-1]) for q in ordered_quantiles], 1]
+        if "values/min" not in metadata_df.columns or "values/max" not in metadata_df.columns:
+            raise ValueError("Missing values/min and/or values/max values in metadata_df")
+        if "values/sum" not in metadata_df or "values/n_occurrences" not in metadata_df:
+            raise ValueError("Missing 'values/sum' and/or 'values/n_occurrences' columns in metadata_df")
+        metadata_df = metadata_df.with_columns(
+            (pl.col("values/sum") / pl.col("values/n_occurrences")).alias("values/mean")
+        )
 
-            # Process each row in the DataFrame
-            for row in metadata_df.iter_rows(named=True):
-                vocab_idx = row["code/vocab_index"]
-                code = row["code"]
-                raw_quantiles = [row["values/quantiles"][each] for each in ordered_quantiles]
-                if "values/min" in row:
-                    min_value = row["values/min"]
+        # Process each row in the DataFrame
+        for row in metadata_df.iter_rows(named=True):
+            vocab_idx = row["code/vocab_index"]
+            code = row["code"]
+            raw_quantiles = [row["values/quantiles"][each] for each in ordered_quantiles]
+            min_value = row["values/min"]
+            max_value = row["values/max"]
+            raw_quantiles = [min_value, *raw_quantiles, max_value]
+            mean_value = row["values/mean"]
+
+            # Check if this is a quarterly code (contains "//_Q_")
+            if code and "//_Q_" in code and not code.startswith("TIME//DELTA//TOKEN"):
+                # Extract the number of quantiles the value is greater than, 0 for Q_1, 1 for Q_2, etc.
+                rank = int(code.split("//_Q_")[1]) - 1
+                # We estimate the numeric value is the average of the bordering quantiles it is between
+                if get_raw_values:
+                    result[vocab_idx] = mean_value
+                    # result[vocab_idx] = sum([raw_quantiles[rank], raw_quantiles[rank + 1]]) / 2
                 else:
-                    min_value = raw_quantiles[0]
-                if "values/max" in row:
-                    max_value = row["values/max"]
-                else:
-                    max_value = raw_quantiles[-1]
-                raw_quantiles = [min_value, *raw_quantiles, max_value]
+                    result[vocab_idx] = sum([percentiles[rank], percentiles[rank + 1]]) / 2
 
-                # Check if this is a quarterly code (contains "//_Q_")
-                if code and "//_Q_" in code and not code.startswith("TIME//DELTA//TOKEN"):
-                    # Extract the number of quantiles the value is greater than, 0 for Q_1, 1 for Q_2, etc.
-                    rank = int(code.split("//_Q_")[1]) - 1
-                    # We estimate the numeric value is the average of the bordering quantiles it is between
-                    if get_raw_values:
-                        result[vocab_idx] = sum([raw_quantiles[rank], raw_quantiles[rank + 1]]) / 2
-                    else:
-                        result[vocab_idx] = sum([percentiles[rank], percentiles[rank + 1]]) / 2
-
-                # For non-quarterly codes, leave as NaN
-                # This handles both the base code (e.g., "A") and any other non-quarterly codes
-        except:  # noqa: E722
-            pass
+            # For non-quarterly codes, leave as NaN
+            # This handles both the base code (e.g., "A") and any other non-quarterly codes
         return torch.cat([result, torch.Tensor([np.nan])])  # postpend a zero in case EOS token is postpended
 
     @classmethod
@@ -651,6 +718,8 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         ...     "code/vocab_index": [0, 1, 2, 3, 4, 5],
         ...     'values/min': [0, 0, 0, 0, 0, None],
         ...     'values/max': [4, 4, 4, 4, 4, None],
+        ...     'values/sum': [None, .5, 1.5, 2.5, 3.5, None],
+        ...     'values/n_occurrences': [None, 1, 1, 1, 1, None],
         ...     "values/quantiles": [
         ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
         ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
@@ -672,9 +741,9 @@ class EicForecastingModule(BaseModule, TimeableMixin):
                 [2, 3, 4, 5],
                 [5, 5, 0, 1]]), mask=tensor([[1, 1, 1, 1],
                 [1, 1, 1, 0],
-                [1, 1, 1, 0]]), numeric_value=tensor([[   nan, 0.3750,    nan,    nan],
-                [0.3750, 0.6250, 0.8750,    nan],
-                [   nan,    nan,    nan, 0.1250]]), numeric_value_mask=tensor([[ True, False,  True,  True],
+                [1, 1, 1, 0]]), numeric_value=tensor([[   nan, 1.5000,    nan,    nan],
+                [1.5000, 2.5000, 3.5000,    nan],
+                [   nan,    nan,    nan, 0.5000]]), numeric_value_mask=tensor([[ True, False,  True,  True],
                 [False, False, False,  True],
                 [ True,  True,  True, False]]), time_scale='Y')
         """
@@ -698,6 +767,11 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         **kwargs,
     ):
         """Generate evaluation metrics for the model."""
+        if self.cfg.backbone.max_tokens_budget is None and self.cfg.get("trajectory_labeler") is None:
+            raise ValueError(
+                "At least one of model.backbone.max_tokens_budget or model.trajectory_labeler must be "
+                "set in the configuration."
+            )
         if self.cfg.backbone.cfg.token_emb:
             raise NotImplementedError(
                 "Token embeddings not supported, use x-transformers library for token embeddings"
@@ -705,19 +779,16 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         else:
             prompts, mask = input_batch[INPUT_ENCODER_TOKENS_KEY], input_batch[INPUT_ENCODER_MASK_KEY]
 
-        self.time_quantile_map = torch.tensor(
-            [
-                TIME_QUANTILE_VALUES[TIME_QUANTILE_NAMES.index(code)]
-                if code in set(TIME_QUANTILE_NAMES)
-                else 0
-                for code in self.metadata_df["code"]
-            ],
-            device=self.device,
-        )
-        self.time_quantile_map = torch.cat([self.time_quantile_map, torch.zeros(1, device=self.device)])
+        if not hasattr(self, "time_quantile_map"):
+            self.time_quantile_map = self.get_code_to_time_map(self.metadata_df)
+        if not hasattr(self, "value_quantile_map"):
+            self.value_quantile_map = self.get_code_to_numeric_value_map(self.metadata_df)
 
         def get_next_token_time(x):
             return self.time_quantile_map[x.squeeze()]
+
+        def get_next_token_value(x):
+            return self.value_quantile_map[x.squeeze()]
 
         if "prediction_time" not in input_batch or "end_time" not in input_batch:
             raise ValueError(
@@ -732,10 +803,12 @@ class EicForecastingModule(BaseModule, TimeableMixin):
             raise ValueError("time_offset_years must be less than or equal to 0")
 
         if self.cfg.generate_id is not None:
-            out, out_lengths = self.model.generate(
+            out, out_lengths, metadata = self.model.generate(
                 prompts=prompts,
                 mask=mask,
                 get_next_token_time=get_next_token_time,
+                get_next_token_value=get_next_token_value,
+                trajectory_labeler=self.cfg.get("trajectory_labeler"),
                 time_offset_years=prediction_time_offset_years,
                 temperature=self.cfg.temperature,
                 eos_tokens=self.cfg.eos_tokens,
@@ -770,16 +843,14 @@ class EicForecastingModule(BaseModule, TimeableMixin):
                 )
             logger.info(f"Completed generation for sample {self.cfg.generate_id}")
 
-            if self.cfg.get("zero_shot_labeler") is not None:
-                if isinstance(self.cfg.zero_shot_labeler, DictConfig):
-                    task_labeler = TaskLabeler(**self.cfg.zero_shot_labeler)
-                else:
-                    task_labeler = self.cfg.zero_shot_labeler
-                pred_labels, unknown_pred = task_labeler(trajectory_batch)
+            if metadata:
+                labels, status = metadata["labels"], metadata["status"]
+                unknown = status != WindowStatus.SATISFIED.value
                 # Handle unknown values by setting their probability to 0.5
-                if unknown_pred.sum().item() > 0:
-                    logger.warning(f"Found {unknown_pred.sum().item()} unknown zero-shot predictions")
-                pred_labels[unknown_pred] = 0.5
-                input_batch[MODEL_PRED_PROBA_KEY] = pred_labels
+                if unknown.any().item() > 0:
+                    logger.warning(f"Found {unknown.sum().item()} unknown zero-shot predictions")
+                    labels[unknown] = 0.5
+                input_batch[MODEL_PRED_PROBA_KEY] = labels
+                input_batch[MODEL_PRED_STATUS_KEY] = status
                 logger.info(f"Completed zero-shot labeling for sample {self.cfg.generate_id}")
         return input_batch

@@ -22,6 +22,7 @@ from meds_torch.models import (
     MODEL_LOGITS_SEQUENCE_KEY,
     MODEL_LOSS_KEY,
     MODEL_PRED_PROBA_KEY,
+    MODEL_PRED_STATUS_KEY,
     MODEL_TOKENS_KEY,
 )
 from meds_torch.schemas.predict_schema import validate_prediction_data
@@ -44,6 +45,7 @@ MODEL_KEY_TO_PREDICT_SCHEMA_NAME = {
     MODEL_LOGITS_SEQUENCE_KEY: "logits_sequence",
     MODEL_TOKENS_KEY: "tokens",
     MODEL_LOSS_KEY: "loss",
+    MODEL_PRED_STATUS_KEY: "predictions",
 }
 
 

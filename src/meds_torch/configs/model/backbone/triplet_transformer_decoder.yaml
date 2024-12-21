@@ -20,6 +20,7 @@ model:
     attn_dropout: ${model.backbone.dropout}  # dropout post-attention
     ff_dropout: ${model.backbone.dropout}  # feedforward dropout
     rotary_pos_emb: true
+    attn_flash: True
 
 token_emb:
   _target_: torch.nn.Identity # assume data is pre-embedded by the input_encoder

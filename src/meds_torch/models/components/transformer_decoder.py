@@ -1,9 +1,8 @@
 from collections.abc import Callable
-from dataclasses import dataclass
-from enum import StrEnum
 from functools import wraps
 
 import torch
+from clinical_zeroshot_labeler.labeler import SequenceLabeler, WindowStatus
 from loguru import logger
 from omegaconf import DictConfig
 from torch.functional import F
@@ -36,194 +35,120 @@ def eval_decorator(fn):
     return inner
 
 
-class BudgetType(StrEnum):
-    """Type of generation budget."""
+class DummyTrajectoryLabeler:
+    def __init__(self, B):
+        self.counter = 0
+        self.status = [
+            torch.tensor([WindowStatus.UNDETERMINED.value] * B),
+            torch.tensor([WindowStatus.ACTIVE.value] * B),
+            torch.tensor([WindowStatus.SATISFIED.value] * B),
+        ]
+        self.labels = torch.zeros((B,), dtype=torch.bool)
 
-    SEQUENCE_LENGTH = "sequence_length"
-    TIME = "time"
-    EOS_ONLY = "eos_only"
+    def process_step(self, tokens, times, values):
+        status = self.status[min(self.counter, len(self.status) - 1)]
+        self.counter += 1
+        return status
 
+    def is_finished(self):
+        return self.counter >= len(self.status)
 
-@dataclass
-class GenerationBudget:
-    """A class to handle generation budgets with mutually exclusive constraints.
-
-    Can be one of:
-    - Sequence length budget (max tokens to generate)
-    - Time length budget (minimum time to generate)
-    - EOS-only budget (generate until EOS token, tracking time optionally)
-
-    Examples:
-        >>> # Create from sequence length
-        >>> budget_seq = GenerationBudget.from_seq_len(100)
-        >>> budget_seq.budget_type
-        <BudgetType.SEQUENCE_LENGTH: 'sequence_length'>
-        >>> budget_seq.value
-        100
-
-        >>> # Create from time length
-        >>> budget_time = GenerationBudget.from_time_len(60)
-        >>> budget_time.budget_type
-        <BudgetType.TIME: 'time'>
-        >>> budget_time.value
-        60
-
-        >>> # Create budget that only stops on EOS
-        >>> budget_eos = GenerationBudget.from_eos_only()
-        >>> budget_eos.budget_type
-        <BudgetType.EOS_ONLY: 'eos_only'>
-        >>> budget_eos.value is None
-        True
-    """
-
-    budget_type: BudgetType
-    value: int | float | None = None
-
-    @classmethod
-    def from_seq_len(cls, value: int) -> "GenerationBudget":
-        """Create a GenerationBudget from a maximum sequence length."""
-        return cls(budget_type=BudgetType.SEQUENCE_LENGTH, value=value)
-
-    @classmethod
-    def from_time_len(cls, value: int) -> "GenerationBudget":
-        """Create a GenerationBudget from a minimum time length."""
-        return cls(budget_type=BudgetType.TIME, value=value)
-
-    @classmethod
-    def from_eos_only(cls) -> "GenerationBudget":
-        """Create a GenerationBudget that only stops on EOS tokens."""
-        return cls(budget_type=BudgetType.EOS_ONLY)
+    def get_labels(self):
+        return self.labels
 
 
-def update_generation_budget(
+def update_state(
     cumulative_time: torch.Tensor,
     current_sample: torch.Tensor,
-    num_generated_tokens: int,
-    ended_sequences: torch.Tensor,
-    eos_tokens: torch.Tensor | None,
     get_next_token_time: Callable | None,
-    budget: GenerationBudget,
+    get_next_token_value: Callable | None,
+    trajectory_labeler: SequenceLabeler | None,
 ) -> tuple[torch.Tensor, torch.Tensor, bool]:
-    """Update generation budget tracking and check stopping conditions.
-
-    Args:
-        cumulative_time: Current cumulative time for each sequence
-        current_sample: Current sampled tokens
-        num_generated_tokens: Number of generated tokens
-        ended_sequences: [batch_size] length boolean tensor indicating which sequences have terminated
-        eos_tokens: Optional tensor of token IDs that indicate sequence end
-        get_next_token_time: Function to predict time for next token
-        budget: generation budget
-
-    Returns:
-        Tuple containing:
-        - Updated cumulative time tensor
-        - Updated ended_sequences tensor
-        - Boolean indicating whether to continue generation
+    """Updates trajectory_labeler state, and returns state information.
 
     Examples:
         >>> import torch
+        >>> from clinical_zeroshot_labeler.labeler import WindowStatus
         >>> B = 2  # batch_size
         >>> device = 'cpu'
-        >>> # Test time budget
-        >>> cumulative = torch.tensor([0.0,-1.0], device=device)
-        >>> ended_sequences = torch.zeros(B, dtype=torch.bool, device=device)
+
+        >>> # Setup basic test case
+        >>> cumulative = torch.tensor([0.0, 0.0], device=device)
         >>> current_sample = torch.randint(0, 5, (B,), device=device)
         >>> get_time = lambda x: torch.ones(B, device=device)
-        >>> time_budget = GenerationBudget.from_time_len(1.5)  # Generate until cumulative time > 1.5
-        >>> new_time, ended, continue_gen = update_generation_budget(
+        >>> get_value = lambda x: torch.ones(B, device=device)
+
+        >>> # Test trajectory labeler progression
+        >>> labeler = DummyTrajectoryLabeler(B)
+        >>> time, status, is_finished, ended = update_state(
         ...     cumulative_time=cumulative,
         ...     current_sample=current_sample,
-        ...     num_generated_tokens=2,
-        ...     ended_sequences=ended_sequences,
-        ...     eos_tokens=None,
         ...     get_next_token_time=get_time,
-        ...     budget=time_budget,
+        ...     get_next_token_value=get_value,
+        ...     trajectory_labeler=labeler,
         ... )
-        >>> new_time  # Should be 1
-        tensor([1., 0.])
-        >>> ended  # No sequences ended
-        tensor([False, False])
-        >>> continue_gen  # Should continue since < min_time_len
-        True
+        >>> assert time.shape == (B,)
+        >>> assert status.shape == (B,)
+        >>> assert not is_finished
+        >>> assert not ended.any()
 
-        >>> # Test with EOS tokens
-        >>> eos_tokens = torch.tensor([4], device=device)
-        >>> current_sample = torch.tensor([4, 2], device=device)  # First sequence hits EOS
-        >>> new_time, ended, continue_gen = update_generation_budget(
-        ...     cumulative_time=new_time,
+        >>> # Test second step shows active status
+        >>> time, status, is_finished, ended = update_state(
+        ...     cumulative_time=time,
         ...     current_sample=current_sample,
-        ...     num_generated_tokens=3,
-        ...     ended_sequences=ended,
-        ...     eos_tokens=eos_tokens,
         ...     get_next_token_time=get_time,
-        ...     budget=time_budget,
+        ...     get_next_token_value=get_value,
+        ...     trajectory_labeler=labeler,
         ... )
-        >>> new_time
-        tensor([2., 1.])
-        >>> ended  # First sequence ended
-        tensor([ True, False])
-        >>> continue_gen  # Should continue since second sequence hasn't reached time
-        True
+        >>> assert (status == WindowStatus.ACTIVE.value).all()
+        >>> assert not is_finished
+        >>> assert not ended.any()
 
-        >>> # Test sequence length budget
-        >>> ended_sequences = torch.zeros(B, dtype=torch.bool, device=device)
-        >>> seq_len_budget = GenerationBudget.from_seq_len(10)
-        >>> _, ended, continue_gen = update_generation_budget(
+        >>> # Test third step shows satisfied status and finished
+        >>> time, status, is_finished, ended = update_state(
+        ...     cumulative_time=time,
+        ...     current_sample=current_sample,
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     trajectory_labeler=labeler,
+        ... )
+        >>> assert (status == WindowStatus.SATISFIED.value).all()
+        >>> assert is_finished
+        >>> assert ended.all()
+
+        >>> # Test without trajectory labeler
+        >>> time, status, is_finished, ended = update_state(
         ...     cumulative_time=cumulative,
         ...     current_sample=current_sample,
-        ...     num_generated_tokens=5,
-        ...     ended_sequences=ended_sequences,
-        ...     eos_tokens=None,
-        ...     get_next_token_time=None,
-        ...     budget=seq_len_budget,
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     trajectory_labeler=None,
         ... )
-        >>> continue_gen  # Should continue since < max_seq_len
-        True
-        >>> ended  # No sequences ended
-        tensor([False, False])
-
-        >>> # Test EOS-only budget with EOS token
-        >>> ended_sequences = torch.zeros(B, dtype=torch.bool, device=device)
-        >>> eos_budget = GenerationBudget.from_eos_only()
-        >>> current_sample = torch.tensor([4, 4], device=device)  # Both hit EOS
-        >>> _, ended, continue_gen = update_generation_budget(
-        ...     cumulative_time=cumulative,
-        ...     current_sample=current_sample,
-        ...     num_generated_tokens=5,
-        ...     ended_sequences=ended_sequences,
-        ...     eos_tokens=eos_tokens,
-        ...     get_next_token_time=None,
-        ...     budget=eos_budget,
-        ... )
-        >>> ended  # Both sequences ended
-        tensor([True, True])
-        >>> continue_gen  # Should stop since all sequences ended
-        False
+        >>> assert time.shape == (B,)
+        >>> assert status is None
+        >>> assert not is_finished
+        >>> assert not ended.any()
     """
-    # Update ended_sequences based on EOS tokens if present
-    if exists(eos_tokens) and exists(current_sample):
-        ended_sequences = ended_sequences | torch.isin(current_sample, eos_tokens)
-
-    match budget.budget_type:
-        case BudgetType.EOS_ONLY:
-            continue_generation = not ended_sequences.all()
-
-        case BudgetType.TIME:
-            if get_next_token_time is None:
-                raise ValueError("`get_next_token_time` is required when generating using the time budget")
-            pred_time = get_next_token_time(current_sample)
-            cumulative_time = cumulative_time + pred_time.squeeze(-1)
-            # Mark sequences as ended if they exceed time budget
-            ended_sequences = ended_sequences | (cumulative_time >= budget.value)
-            continue_generation = not ended_sequences.all()
-
-        case BudgetType.SEQUENCE_LENGTH:
-            if num_generated_tokens >= budget.value:
-                ended_sequences.fill_(True)
-            continue_generation = not ended_sequences.all()
-
-    return cumulative_time, ended_sequences, continue_generation
+    if get_next_token_time is None:
+        raise ValueError("`get_next_token_time` is required when generating using the time budget")
+    pred_time = get_next_token_time(current_sample)
+    cumulative_time = cumulative_time + pred_time.squeeze(-1)
+    if get_next_token_time is None:
+        raise ValueError(
+            "`get_next_token_value` is required when generating using the sequence length budget"
+        )
+    current_value = get_next_token_value(current_sample)
+    if trajectory_labeler is not None:
+        status = trajectory_labeler.process_step(current_sample, cumulative_time, current_value)
+        is_finished = trajectory_labeler.is_finished()
+        ended_sequences = torch.logical_or(
+            status == WindowStatus.SATISFIED.value, status == WindowStatus.IMPOSSIBLE.value
+        )
+    else:
+        status = None
+        is_finished = False
+        ended_sequences = torch.zeros((current_sample.shape[0]), dtype=torch.bool)
+    return cumulative_time, status, is_finished, ended_sequences
 
 
 class TransformerDecoderModel(torch.nn.Module, Module):
@@ -232,12 +157,16 @@ class TransformerDecoderModel(torch.nn.Module, Module):
     This model handles both forward passes and generation with different budget types.
 
     Examples:
-        >>> # Setup mock configuration
+        >>> # Setup mock configuration and model components
         >>> import torch
-        >>> from omegaconf import OmegaConf, open_dict
+        >>> from omegaconf import OmegaConf
         >>> from x_transformers import TransformerWrapper, Decoder
         >>> from hydra.utils import instantiate
-        >>> B, S, L = 2, 5, 8 # [batch_size, input_sequence_length, token_dim]
+        >>> from enum import Enum
+        >>> from clinical_zeroshot_labeler.labeler import WindowStatus
+
+        >>> # Mock configuration
+        >>> B, S, L = 2, 5, 8  # batch_size, seq_len, dim
         >>> max_seq_len = 7
         >>> vocab_size = 4
         >>> cfg = instantiate({
@@ -247,11 +176,7 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         ...     'get_last_token': True,
         ...     'temperature': 1.0,
         ...     'token_emb': None,
-        ...     'generation_budget': {
-        ...         '_target_': ("meds_torch.models.components.transformer_decoder."
-        ...                      "GenerationBudget.from_seq_len"),
-        ...         "value": max_seq_len,
-        ...     },
+        ...     'max_tokens_budget': 10,
         ...     'model': {
         ...         '_target_': 'x_transformers.TransformerWrapper',
         ...         'num_tokens': vocab_size,
@@ -266,48 +191,58 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         ...         }
         ...     }
         ... })
+
         >>> # Initialize model
         >>> model = TransformerDecoderModel(cfg)
-
-        >>> # Test forward pass
+        >>> # Test basic generation with trajectory labeler
+        >>> prompts = torch.randint(0, vocab_size, (B, S))
         >>> mask = torch.ones(B, S, dtype=torch.bool)
-        >>> mask[0,-1] = 0
-        >>> batch = {  # Both have shapes: [batch_size, input_sequence_length]
-        ...     INPUT_ENCODER_TOKENS_KEY: torch.randint(B, vocab_size, (B, S)),
-        ...     INPUT_ENCODER_MASK_KEY: torch.ones(B, S, dtype=torch.bool)
-        ... }
-        >>> output = model(batch)
-        >>> assert BACKBONE_TOKENS_KEY in output
-        >>> assert BACKBONE_EMBEDDINGS_KEY in output
-        >>> output[BACKBONE_TOKENS_KEY].shape
-        torch.Size([2, 5, 4])
-        >>> # Test generation with sequence length budget
-        >>> prompts = torch.randint(0, vocab_size, (B, S))  # [batch_size, prompt_len]
-        >>> gen_output, _ = model.generate(
+        >>> labeler = DummyTrajectoryLabeler(B)
+        >>> get_time = lambda x: torch.ones(B, dtype=torch.float)
+        >>> get_value = lambda x: torch.ones(B, dtype=torch.float)
+        >>> gen_output, lengths, metadata = model.generate(
         ...     prompts=prompts,
         ...     mask=mask,
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     trajectory_labeler=labeler,
+        ...     temperature=1.0
         ... )
-        >>> # Since we started with 5 prompt tokens we can generate 2 more to get to a max_seq_length of 7:
-        >>> gen_output.shape
-        torch.Size([2, 7])
-        >>> # Test generation with time budget and sliding window
-        >>> # The timing function (get_next_token_time) maps token embeddings to predicted duration
-        >>> # Here we use a simple function that returns 1.0 for each token
-        >>> time_budget = GenerationBudget.from_time_len(10)  # Generate until cumulative time >= 10
-        >>> cfg = instantiate({
-        ...    **OmegaConf.to_container(cfg),
-        ...    'generation_budget': time_budget,
-        ... })
-        >>> model = TransformerDecoderModel(cfg)
-        >>> gen_output, _ = model.generate(
+        >>> assert 'labels' in metadata
+        >>> assert 'status' in metadata
+        >>> assert metadata['labels'].shape == (B,)
+        >>> assert metadata['status'].shape == (B,)
+
+        >>> # Test generation with max tokens budget
+        >>> gen_output, lengths, metadata = model.generate(
         ...     prompts=prompts,
         ...     mask=mask,
-        ...     temperature=0.7,
-        ...     get_next_token_time=lambda code: torch.ones(B).float(),
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     temperature=1.0
         ... )
-        >>> # Should have generated 10 tokens (since each token takes 1.0 time)
-        >>> gen_output.shape
-        torch.Size([2, 10])
+        >>> assert gen_output.shape[1] <= cfg.max_tokens_budget
+
+        >>> # Test generation with variable length prompts
+        >>> prompt_lens = torch.tensor([2, 3])
+        >>> gen_output, lengths, metadata = model.generate(
+        ...     prompts=prompts,
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     temperature=1.0
+        ... )
+        >>> assert gen_output.shape[1] <= cfg.max_tokens_budget
+
+        >>> # Test with KV caching
+        >>> prompt_lens = torch.tensor([S-2] + [S]*(B-1))
+        >>> gen_output, lengths, metadata = model.generate(
+        ...     prompts=prompts,
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     temperature=1.0,
+        ...     cache_kv=True
+        ... )
+        >>> assert gen_output.shape[1] <= cfg.max_tokens_budget
     """
 
     def __init__(self, cfg: DictConfig):
@@ -332,6 +267,8 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         prompts: torch.Tensor,
         mask: torch.Tensor | None = None,
         get_next_token_time: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
+        get_next_token_value: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
+        trajectory_labeler: Callable | None = None,
         time_offset_years: torch.Tensor | None = None,
         eos_tokens: list[int] | None = None,
         temperature=1.0,
@@ -368,9 +305,11 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         return generate(
             self.model,
             prompts=prompts,
-            budget=self.cfg.generation_budget,
+            max_tokens_budget=self.cfg.max_tokens_budget,
             time_offset_years=time_offset_years,
             get_next_token_time=get_next_token_time,
+            get_next_token_value=get_next_token_value,
+            trajectory_labeler=trajectory_labeler,
             eos_tokens=eos_tokens,
             temperature=temperature,
             prompt_lens=prompt_lengths,
@@ -388,9 +327,11 @@ class TransformerDecoderModel(torch.nn.Module, Module):
 def generate(
     model: TransformerWrapper,
     prompts: torch.Tensor,
-    budget: GenerationBudget,
+    max_tokens_budget: int | None = None,
     time_offset_years: torch.Tensor | None = None,
     get_next_token_time: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
+    get_next_token_value: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
+    trajectory_labeler: Callable | None = None,
     eos_tokens: list[int] | None = None,
     temperature=1.0,
     prompt_lens: torch.Tensor | None = None,
@@ -419,91 +360,131 @@ def generate(
         Generated token sequence [batch_size, seq_len]
 
     Examples:
-    >>> import torch
-    >>> from x_transformers import TransformerWrapper, Decoder
-    >>> # Create mock transformer
-    >>> B, S, L = 2, 4, 8  # batch_size, seq_len, dim
-    >>> vocab_size = 5
-    >>> model = TransformerWrapper(
-    ...     use_abs_pos_emb=False,
-    ...     num_tokens=vocab_size,
-    ...     max_seq_len=10,
-    ...     attn_layers=Decoder(dim=L, depth=1, heads=2, rotary_pos_emb=True)
-    ... )
+        >>> import torch
+        >>> from x_transformers import TransformerWrapper, Decoder
+        >>> from clinical_zeroshot_labeler.labeler import WindowStatus
 
-    >>> # Test basic generation
-    >>> budget = GenerationBudget.from_seq_len(2)
-    >>> prompts = torch.randint(0, vocab_size, (B, S))
-    >>> gen_tokens, _ = generate(model=model,
-    ...     prompts=prompts,
-    ...     budget=budget,
-    ...     temperature=1.0,
-    ...     filter_logits_fn='top_k',
-    ...     filter_kwargs={'k': 10},
-    ... )
-    >>> gen_tokens.shape  # Should be [batch_size, seq_len]
-    torch.Size([2, 2])
+        >>> # Create mock transformer
+        >>> B, S, L = 2, 4, 8  # batch_size, seq_len, dim
+        >>> vocab_size = 5
+        >>> model = TransformerWrapper(
+        ...     use_abs_pos_emb=False,
+        ...     num_tokens=vocab_size,
+        ...     max_seq_len=10,
+        ...     attn_layers=Decoder(dim=L, depth=1, heads=2, rotary_pos_emb=True)
+        ... )
 
-    >>> # Test with EOS token
-    >>> eos_tokens = [vocab_size - 1]
-    >>> budget = GenerationBudget.from_seq_len(2)
-    >>> gen_tokens, _ = generate(model=model,
-    ...     prompts=prompts,
-    ...     budget=budget,
-    ...     eos_tokens=eos_tokens,
-    ...     temperature=0.0  # greedy
-    ... )
-    >>> gen_tokens.shape[0]  # Batch size preserved
-    2
+        >>> # Basic test setup
+        >>> prompts = torch.randint(0, vocab_size, (B, S))
+        >>> get_time = lambda x: torch.ones(B, dtype=torch.float)
+        >>> get_value = lambda x: torch.ones(B, dtype=torch.float)
+        >>> labeler = DummyTrajectoryLabeler(B)
 
-    >>> # Test with variable length prompts
-    >>> prompt_lens = torch.tensor([2, 3])
-    >>> gen_tokens, _ = generate(model=model,
-    ...     prompts=prompts,
-    ...     budget=budget,
-    ...     prompt_lens=prompt_lens,
-    ...     temperature=1.0
-    ... )
-    >>> gen_tokens.shape  # Should be [batch_size, seq_len]
-    torch.Size([2, 2])
+        >>> # Test basic generation with trajectory labeler
+        >>> max_tokens = 5
+        >>> gen_tokens, lengths, metadata = generate(
+        ...     model=model,
+        ...     prompts=prompts,
+        ...     max_tokens_budget=max_tokens,
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     trajectory_labeler=labeler,
+        ...     temperature=1.0
+        ... )
+        >>> assert gen_tokens.shape[1] <= max_tokens  # Check max tokens budget
+        >>> assert isinstance(metadata, dict)
+        >>> assert 'labels' in metadata
+        >>> assert 'status' in metadata
+        >>> assert metadata['labels'].shape == (B,)
+        >>> assert metadata['status'].shape == (B,)
 
-    >>> # Test with KV caching
-    >>> prompt_lens = torch.tensor([S-2] + [S]*(B-1))  # Mask out last two tokens of first sequence
-    >>> budget = GenerationBudget.from_seq_len(3)
-    >>> gen_tokens, _ = generate(model=model,
-    ...     prompts=prompts,
-    ...     prompt_lens=prompt_lens,
-    ...     budget=budget,
-    ...     temperature=1.0,
-    ...     cache_kv=True
-    ... )
-    >>> gen_tokens.shape  # Should be [batch_size, seq_len]
-    torch.Size([2, 3])
+        >>> # Test without trajectory labeler (max tokens only)
+        >>> gen_tokens, lengths, metadata = generate(
+        ...     model=model,
+        ...     prompts=prompts,
+        ...     max_tokens_budget=max_tokens,
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     temperature=1.0
+        ... )
+        >>> assert gen_tokens.shape[1] <= max_tokens
+        >>> assert metadata is None  # No metadata without labeler
 
-    >>> # Test with all-True mask
-    >>> prompt_lens = torch.tensor([S]*B, dtype=torch.int)  # Variable sequence lengths
-    >>> gen_tokens, _ = generate(model=model,
-    ...     prompts=prompts,
-    ...     prompt_lens=prompt_lens,
-    ...     budget=budget,
-    ...     temperature=1.0,
-    ...     cache_kv=True
-    ... )
-    >>> gen_tokens.shape  # Should be [batch_size, seq_len]
-    torch.Size([2, 3])
+        >>> # Test with EOS tokens
+        >>> eos_tokens = [vocab_size - 1]
+        >>> gen_tokens, lengths, metadata = generate(
+        ...     model=model,
+        ...     prompts=prompts,
+        ...     max_tokens_budget=max_tokens,
+        ...     eos_tokens=eos_tokens,
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     temperature=0.0  # greedy
+        ... )
+        >>> assert gen_tokens.shape[0] == B  # Batch size preserved
+        >>> assert gen_tokens.shape[1] <= max_tokens
 
-    >>> # Test with max sequence length restriction
-    >>> long_prompts = torch.randint(0, vocab_size, (B, 8))  # Longer sequence
-    >>> prompt_lens = torch.tensor([5] + [8]*(B-1))  # Variable sequence lengths
-    >>> gen_tokens, _ = generate(model=model,
-    ...     prompts=long_prompts,
-    ...     prompt_lens=prompt_lens,
-    ...     budget=budget,
-    ...     temperature=1.0,
-    ...     cache_kv=True,
-    ... )
-    >>> gen_tokens.shape  # Should be [batch_size, seq_len]
-    torch.Size([2, 3])
+        >>> # Test with variable length prompts
+        >>> prompt_lens = torch.tensor([2, 3])
+        >>> gen_tokens, lengths, metadata = generate(
+        ...     model=model,
+        ...     prompts=prompts,
+        ...     prompt_lens=prompt_lens,
+        ...     max_tokens_budget=max_tokens,
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     temperature=1.0
+        ... )
+        >>> assert gen_tokens.shape[1] <= max_tokens
+
+        >>> # Test with KV caching
+        >>> prompt_lens = torch.tensor([S-2] + [S]*(B-1))  # Mask out last two tokens of first sequence
+        >>> gen_tokens, lengths, metadata = generate(
+        ...     model=model,
+        ...     prompts=prompts,
+        ...     prompt_lens=prompt_lens,
+        ...     max_tokens_budget=max_tokens,
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     temperature=1.0,
+        ...     cache_kv=True
+        ... )
+        >>> assert gen_tokens.shape[1] <= max_tokens
+
+        >>> # Test with trajectory labeler and time offset
+        >>> time_offset = torch.tensor([1.0, 2.0])
+        >>> labeler = DummyTrajectoryLabeler(B)
+        >>> gen_tokens, lengths, metadata = generate(
+        ...     model=model,
+        ...     prompts=prompts,
+        ...     max_tokens_budget=max_tokens,
+        ...     time_offset_years=time_offset,
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     trajectory_labeler=labeler,
+        ...     temperature=1.0
+        ... )
+        >>> assert gen_tokens.shape[1] <= max_tokens
+        >>> assert 'labels' in metadata
+        >>> assert 'status' in metadata
+        >>> assert metadata['labels'].shape == (B,)
+        >>> assert metadata['status'].shape == (B,)
+
+        >>> # Test with max sequence length restriction
+        >>> long_prompts = torch.randint(0, vocab_size, (B, 8))  # Longer sequence
+        >>> prompt_lens = torch.tensor([5] + [8]*(B-1))  # Variable sequence lengths
+        >>> gen_tokens, lengths, metadata = generate(
+        ...     model=model,
+        ...     prompts=long_prompts,
+        ...     prompt_lens=prompt_lens,
+        ...     max_tokens_budget=max_tokens,
+        ...     get_next_token_time=get_time,
+        ...     get_next_token_value=get_value,
+        ...     temperature=1.0,
+        ...     cache_kv=True,
+        ...     restrict_to_max_seq_len=True
+        ... )
+        >>> assert gen_tokens.shape[1] <= max_tokens
     """
     max_seq_len, greedy = model.max_seq_len, temperature == 0.0
 
@@ -539,11 +520,14 @@ def generate(
     cache = None
     ended_sequences = torch.zeros(b, device=prompts.device, dtype=torch.bool)
 
-    continue_generation = True
+    is_finished = False
 
     num_generated_tokens = 0
     out_lengths = torch.zeros(b, device=prompts.device, dtype=torch.int32)
-    while continue_generation:
+    metadata = None
+    status = None
+
+    while not is_finished:
         if restrict_to_max_seq_len:
             max_len_exceeded = out.shape[-1] > max_seq_len
 
@@ -582,38 +566,38 @@ def generate(
 
         # Update generation state
         num_generated_tokens += 1
-        if num_generated_tokens % max_seq_len == 0 and budget.budget_type == BudgetType.TIME:
-            mean_percent_time = round(cumulative_time.mean().item() / budget.value * 100, 2)
-            min_percent_time = round(cumulative_time.min().item() / budget.value * 100, 2)
+        if num_generated_tokens % max_seq_len == 0:
             logger.warning(
                 "GENERATION TIME BUDGET WARNING: Generated trajectory is long\n"
                 f"Generated {num_generated_tokens} tokens\n"
-                f"mean time cutoff percent: {mean_percent_time}\n"
-                f"min time cutoff percent: {min_percent_time}\n"
             )
 
         # Update budget tracking and check stopping conditions
-        cumulative_time, new_ended_sequences, continue_generation = update_generation_budget(
+        cumulative_time, status, is_finished, new_ended_sequences = update_state(
             cumulative_time=cumulative_time,
             current_sample=sample.squeeze(-1),
-            num_generated_tokens=num_generated_tokens,
-            ended_sequences=ended_sequences,
-            eos_tokens=eos_tokens,
             get_next_token_time=get_next_token_time,
-            budget=budget,
+            get_next_token_value=get_next_token_value,
+            trajectory_labeler=trajectory_labeler,
         )
-
         # Update the output lengths for trajectories that have ended generation
         out_lengths[new_ended_sequences != ended_sequences] = num_generated_tokens
         ended_sequences = new_ended_sequences
 
         # Append new token and check for stopping
         out = torch.cat((out, sample), dim=-1)
-        if not continue_generation:
+
+        if max_tokens_budget and num_generated_tokens >= max_tokens_budget:
+            is_finished = True
+
+        if is_finished:
             break
+
+    if status is not None:
+        metadata = dict(labels=trajectory_labeler.get_labels(), status=status)
 
     out = out[:, t:]
 
     (out,) = unpack(out, ps, "* n")
 
-    return out, out_lengths
+    return out, out_lengths, metadata

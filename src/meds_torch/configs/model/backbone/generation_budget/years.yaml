@@ -1,3 +1,0 @@
-# Generate trajectories via a sliding window until reaching the time length (in years)
-_target_: meds_torch.models.components.transformer_decoder.GenerationBudget.from_time_len
-value: ???

@@ -82,6 +82,7 @@ def test_train_generate(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: 
             "model.generate_id=0",
             "data.max_seq_len=10",
             "model.max_seq_len=20",
+            "model.backbone.max_tokens_budget=10",
         ]
         cfg_gen = create_cfg(
             overrides=overrides,
