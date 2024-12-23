@@ -167,7 +167,7 @@ class OCPModule(BaseModule):
             batch_size=self.cfg.batch_size,
         )
 
-    def on_val_epoch_end(self):
+    def on_validation_epoch_end(self):
         self.log(
             "val/acc",
             self.val_acc,
