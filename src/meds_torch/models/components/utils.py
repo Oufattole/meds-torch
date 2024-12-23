@@ -1,12 +1,23 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from contextlib import nullcontext
 from functools import wraps
 from types import SimpleNamespace
 
 import torch
 from clinical_zeroshot_labeler.labeler import SequenceLabeler, WindowStatus
-from loguru import logger
 from omegaconf import DictConfig
+from rich.progress import (
+    BarColumn,
+    Progress,
+    ProgressColumn,
+    Task,
+    TaskProgressColumn,
+    TextColumn,
+    TimeRemainingColumn,
+    filesize,
+)
+from rich.text import Text
 from torch.functional import F
 from x_transformers import Decoder, TransformerWrapper
 from x_transformers.autoregressive_wrapper import (
@@ -18,6 +29,23 @@ from x_transformers.autoregressive_wrapper import (
     pack,
     unpack,
 )
+
+
+class RateColumn(ProgressColumn):  # pragma: no cover
+    """Renders human readable processing rate."""
+
+    def render(self, task: "Task") -> Text:
+        """Render the speed in iterations per second."""
+        speed = task.finished_speed or task.speed
+        if speed is None:
+            return Text("", style="progress.percentage")
+        unit, suffix = filesize.pick_unit_and_suffix(
+            int(speed),
+            ["", "×10³", "×10⁶", "×10⁹", "×10¹²"],
+            1000,
+        )
+        data_speed = speed / unit
+        return Text(f"{data_speed:.1f}{suffix} it/s", style="progress.percentage")
 
 
 def eval_decorator(fn):
@@ -141,6 +169,7 @@ class BaseGenerativeModel(ABC):
         filter_kwargs: dict = dict(),
         cache_kv: bool = True,
         pad_value: int = 0,
+        log_progress: bool = False,
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor, dict | None]:
         """Generate token sequences with model-specific processing.
@@ -198,15 +227,15 @@ class BaseGenerativeModel(ABC):
             ... )
             >>> assert tokens.shape[1] <= model.cfg.max_tokens_budget
 
-            # >>> # Test with time offset
-            # >>> time_offset = torch.tensor([1.0, 2.0])
-            # >>> tokens, lengths, meta = model.generate(
-            # ...     prompts,
-            # ...     mask,
-            # ...     time_offset_years=time_offset,
-            # ...     temperature=1.0
-            # ... )
-            # >>> assert tokens.shape[1] <= model.cfg.max_tokens_budget
+            >>> # Test with time offset
+            >>> time_offset = torch.tensor([1.0, 2.0])
+            >>> tokens, lengths, meta = model.generate(
+            ...     prompts,
+            ...     mask,
+            ...     time_offset_years=time_offset,
+            ...     temperature=1.0
+            ... )
+            >>> assert tokens.shape[1] <= model.cfg.max_tokens_budget
         """
         transformer_decoder = self.model.model
         max_seq_len = transformer_decoder.max_seq_len
@@ -242,57 +271,93 @@ class BaseGenerativeModel(ABC):
         metadata = None
         status = None
 
-        while not is_finished:
-            x, cache, current_start_pos = self._track_sliding_window_generation(
-                out, max_seq_len, cache_kv, cache, transformer_decoder, seq_start_pos
+        progress = (
+            Progress(
+                TextColumn("[progress.description]{task.description} {task.completed}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                RateColumn(),  # Shows speed of updates
+                TimeRemainingColumn(),
+                transient=True,
             )
+            if log_progress
+            else nullcontext()
+        )
 
-            # Get next token predictions
-            logits, new_cache = transformer_decoder(
-                x, return_intermediates=True, cache=cache, seq_start_pos=current_start_pos, **kwargs
-            )
+        with progress:
+            if log_progress:
+                tokens_task = progress.add_task(
+                    "[cyan]Tokens Generated...",  # Static description
+                    total=self.cfg.max_tokens_budget if self.cfg.max_tokens_budget is not None else None,
+                )
+                sequences_task = progress.add_task(
+                    f"[green]Trajectories ({b} total)...",  # Static description with total
+                    total=b,
+                )
 
-            if cache_kv and transformer_decoder.can_cache_kv:
-                cache = new_cache
+            while not is_finished:
+                x, cache, current_start_pos = self._track_sliding_window_generation(
+                    out, max_seq_len, cache_kv, cache, transformer_decoder, seq_start_pos
+                )
 
-            logits = logits[:, -1]
+                # Get next token predictions
+                logits, new_cache = transformer_decoder(
+                    x, return_intermediates=True, cache=cache, seq_start_pos=current_start_pos, **kwargs
+                )
 
-            # Sample next tokens
-            if temperature == 0.0:  # greedy sampling
-                sample = logits.argmax(dim=-1, keepdim=True)
-            else:
-                filtered_logits = filter_logits_fn(logits, **filter_kwargs)
-                probs = F.softmax(filtered_logits / temperature, dim=-1)
-                sample = torch.multinomial(probs, 1)
+                if cache_kv and transformer_decoder.can_cache_kv:
+                    cache = new_cache
 
-            # Update generation state
-            num_generated_tokens += 1
-            if num_generated_tokens % max_seq_len == 0:
-                logger.warning(f"Generated {num_generated_tokens} tokens")
+                logits = logits[:, -1]
 
-            # Append new tokens
-            out = torch.cat((out, sample), dim=-1)
+                # Sample next tokens
+                if temperature == 0.0:  # greedy sampling
+                    sample = logits.argmax(dim=-1, keepdim=True)
+                else:
+                    filtered_logits = filter_logits_fn(logits, **filter_kwargs)
+                    probs = F.softmax(filtered_logits / temperature, dim=-1)
+                    sample = torch.multinomial(probs, 1)
 
-            # Update cumulative time and check status
-            cumulative_time, status, is_finished, new_ended_sequences = self.update_generation_state(
-                out,
-                cumulative_time,
-                trajectory_labeler,
-            )
+                # Update generation state
+                num_generated_tokens += 1
+                if log_progress:
+                    progress.update(
+                        tokens_task,
+                        advance=1,
+                    )
 
-            # Update sequence end flags
-            new_ended_sequences |= ended_sequences
-            if exists(eos_tokens):
-                new_ended_sequences |= sample.flatten().cpu() == eos_tokens
-            out_lengths[new_ended_sequences != ended_sequences] = num_generated_tokens
-            ended_sequences = new_ended_sequences
-            # Check max token budget condition
-            if self.cfg.max_tokens_budget is not None and num_generated_tokens >= self.cfg.max_tokens_budget:
-                is_finished = True
-                out_lengths[~ended_sequences] = num_generated_tokens
+                    completed_sequences = ended_sequences.int().sum().item()
+                    progress.update(
+                        sequences_task,
+                        completed=completed_sequences,
+                    )
 
-            if ended_sequences.all():
-                is_finished = True
+                # Append new tokens
+                out = torch.cat((out, sample), dim=-1)
+
+                # Update cumulative time and check status
+                cumulative_time, status, is_finished, new_ended_sequences = self.update_generation_state(
+                    out,
+                    cumulative_time,
+                    trajectory_labeler,
+                )
+
+                # Update sequence end flags
+                new_ended_sequences |= ended_sequences
+                if exists(eos_tokens):
+                    new_ended_sequences |= sample.flatten().cpu() == eos_tokens
+                out_lengths[new_ended_sequences != ended_sequences] = num_generated_tokens
+                ended_sequences = new_ended_sequences
+                # Check max token budget condition
+                if (
+                    self.cfg.max_tokens_budget is not None
+                    and num_generated_tokens >= self.cfg.max_tokens_budget
+                ):
+                    is_finished = True
+                    out_lengths[~ended_sequences] = num_generated_tokens
+
+                if ended_sequences.all():
+                    is_finished = True
 
         # Get final metadata if using labeler
         if status is not None:

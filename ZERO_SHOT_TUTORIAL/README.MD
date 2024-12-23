@@ -370,7 +370,7 @@ TASK_CONFIG_PATH=${TASKS_DIR}/${TASK_NAME}.yaml
 
 meds-torch-generate model=eic_forecasting experiment=eic_top10_forecast_mtr \
     model/trajectory_labeler=aces_schema_labeler model.trajectory_labeler.yaml_path=$TASK_CONFIG_PATH \
-    data.dataloader.batch_size=64 model.generate_id=0 \
+    data.dataloader.batch_size=512 model.generate_id=0 \
 	data.do_include_subject_id=true data.do_include_prediction_time=true data.do_include_end_time=true \
     data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
     paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \

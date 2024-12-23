@@ -160,7 +160,9 @@ def create_dummy_sequence_labeler(batch_size: int = 2):
     }
 
     # Initialize sequence labeler
-    labeler = SequenceLabeler.from_yaml_str(task_config, metadata_df, batch_size=batch_size)
+    from functools import partial
+
+    labeler = partial(SequenceLabeler.from_yaml_str, yaml_str=task_config)
 
     return labeler, metadata_df, batch, task_config
 
@@ -878,10 +880,13 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
                 mask=mask,
                 trajectory_labeler=self.trajectory_labeler(
                     batch_size=prompts.shape[0], metadata_df=self.metadata_df
-                ),
+                )
+                if self.trajectory_labeler is not None
+                else None,
                 time_offset_years=prediction_time_offset_years,
                 temperature=self.cfg.temperature,
                 eos_tokens=self.cfg.eos_tokens,
+                log_progress=self.cfg.get("log_progress", False),
                 **kwargs,
             )
             out_mask = torch.arange(out.size(1))[None, :].cpu() < out_lengths[:, None].cpu()
