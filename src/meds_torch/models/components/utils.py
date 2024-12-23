@@ -101,7 +101,9 @@ class BaseGenerativeModel(ABC):
         if not torch.equal(right_pad_mask, mask):
             raise ValueError("Mask must correspond to right padding")
 
-    def _track_sliding_winddow_generation(self, out, max_seq_len, cache_kv, cache, transformer_decoder):
+    def _track_sliding_window_generation(
+        self, out, max_seq_len, cache_kv, cache, transformer_decoder, seq_start_pos
+    ):
         max_len_exceeded = out.shape[-1] > max_seq_len
 
         if cache_kv and max_len_exceeded and not transformer_decoder.can_cache_kv_outside_max_seq_len:
@@ -114,11 +116,16 @@ class BaseGenerativeModel(ABC):
 
         x = out[:, -max_seq_len:]
 
+        num_clipped_tokens = out.shape[1] - max_seq_len
+        current_start_pos = seq_start_pos
+        if num_clipped_tokens > 0:
+            current_start_pos = (current_start_pos - num_clipped_tokens).clip(min=0)
+
         if exists(cache):
             for inter in cache.attn_intermediates:
                 if inter.layer_type == "a":
                     inter.cached_kv = [t[..., -(max_seq_len - 1) :, :] for t in inter.cached_kv]
-        return x, cache
+        return x, cache, current_start_pos
 
     @torch.no_grad()
     @eval_decorator
@@ -217,7 +224,6 @@ class BaseGenerativeModel(ABC):
         self._check_valid_mask(mask, prompt_lens)
         prompts = align_right(prompts, prompt_lens, pad_id=pad_value)
 
-        # TODO: I think this should be decreasing on each forward pass in the while look below
         seq_start_pos = t - prompt_lens
 
         if exists(eos_tokens):
@@ -237,13 +243,13 @@ class BaseGenerativeModel(ABC):
         status = None
 
         while not is_finished:
-            x, cache = self._track_sliding_winddow_generation(
-                out, max_seq_len, cache_kv, cache, transformer_decoder
+            x, cache, current_start_pos = self._track_sliding_window_generation(
+                out, max_seq_len, cache_kv, cache, transformer_decoder, seq_start_pos
             )
 
             # Get next token predictions
             logits, new_cache = transformer_decoder(
-                x, return_intermediates=True, cache=cache, seq_start_pos=seq_start_pos, **kwargs
+                x, return_intermediates=True, cache=cache, seq_start_pos=current_start_pos, **kwargs
             )
 
             if cache_kv and transformer_decoder.can_cache_kv:
@@ -268,6 +274,8 @@ class BaseGenerativeModel(ABC):
             out = torch.cat((out, sample), dim=-1)
 
             # Update cumulative time and check status
+            logger.info(f"num_gen: {num_generated_tokens}")
+            logger.info(f"num_gen: {num_generated_tokens}")
             cumulative_time, status, is_finished, new_ended_sequences = self.update_generation_state(
                 out,
                 cumulative_time,
