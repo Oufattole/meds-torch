@@ -2,6 +2,7 @@ import torch
 import torchmetrics
 from omegaconf import DictConfig
 from torch import nn
+import torch.distributed as dist
 
 from meds_torch.models import (
     BACKBONE_EMBEDDINGS_KEY,
@@ -10,6 +11,7 @@ from meds_torch.models import (
     MODEL_LOGITS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
+from meds_torch.models.utils import GatherLayer
 
 
 class EBCLModule(BaseModule):
@@ -63,6 +65,11 @@ class EBCLModule(BaseModule):
 
         pre_norm_embeds = pre_embeds / pre_embeds.norm(dim=-1, keepdim=True)
         post_norm_embeds = post_embeds / post_embeds.norm(dim=-1, keepdim=True)
+
+        # Gather embeddings across all devices
+        if dist.is_initialized():
+            meas_norm_embeds = GatherLayer.apply(meas_norm_embeds)
+            text_norm_embeds = GatherLayer.apply(text_norm_embeds)
 
         logits = torch.mm(post_norm_embeds, pre_norm_embeds.T) * torch.exp(self.t.weight)
         labels = torch.arange(pre_norm_embeds.shape[0], device=pre_norm_embeds.device)
