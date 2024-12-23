@@ -3,12 +3,13 @@ import polars as pl
 import torch
 import torch.nn.functional as F
 import torch.utils
-from clinical_zeroshot_labeler.labeler import WindowStatus
+from clinical_zeroshot_labeler.labeler import SequenceLabeler, WindowStatus
 from loguru import logger
 from mixins import TimeableMixin
 from omegaconf import DictConfig
 from torchmetrics import Metric, MetricCollection
 from torchmetrics.classification import MulticlassAccuracy, MulticlassAUROC
+from x_transformers import Decoder, TransformerWrapper
 from x_transformers.autoregressive_wrapper import eval_decorator
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
@@ -25,11 +26,34 @@ from meds_torch.models import (
     MODEL_TOKENS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
+from meds_torch.models.components.utils import BaseGenerativeModel
 from meds_torch.models.zero_shot_labeler.utils import (
     TrajectoryBatch,
     get_time_days_delta,
 )
 from meds_torch.utils.custom_time_token import TIME_DELTA_TOKEN
+
+
+class DummyTrajectoryLabeler:
+    def __init__(self, B):
+        self.counter = 0
+        self.status = [
+            torch.tensor([WindowStatus.UNDETERMINED.value] * B),
+            torch.tensor([WindowStatus.ACTIVE.value] * B),
+            torch.tensor([WindowStatus.SATISFIED.value] * B),
+        ]
+        self.labels = torch.zeros((B,), dtype=torch.bool)
+
+    def process_step(self, tokens, times, values):
+        status = self.status[min(self.counter, len(self.status) - 1)]
+        self.counter += 1
+        return status
+
+    def is_finished(self):
+        return self.counter >= len(self.status)
+
+    def get_labels(self):
+        return self.labels
 
 
 def create_dummy_sequence_labeler(batch_size: int = 2):
@@ -68,8 +92,10 @@ def create_dummy_sequence_labeler(batch_size: int = 2):
             code: {regex: "HOSPITAL_DISCHARGE//.*"}
         lab:
             code: {regex: "LAB//.*"}
-        abnormal_lab:
-            code: {regex: "LAB//HIGH"}
+        high_lab:
+            code: {regex: "LAB//.*"}
+            value_min: 2.0
+            value_min_inclusive: True
 
     trigger: hospital_discharge
 
@@ -82,12 +108,12 @@ def create_dummy_sequence_labeler(batch_size: int = 2):
             index_timestamp: end
         target:
             start: input.end
-            end: start + 4d
+            end: start + 365d
             start_inclusive: False
             end_inclusive: True
             has:
                 lab: (1, None)
-            label: abnormal_lab
+            label: high_lab
     """
 
     # Create metadata DataFrame with test codes
@@ -178,6 +204,7 @@ def create_model_config(metadata_df_path: str):
         "compile": False,
         "top_k_acc": [1],
         "next_token_auc": False,
+        "max_tokens_budget": 10,
     }
     return instantiate(cfg)
 
@@ -185,7 +212,15 @@ def create_model_config(metadata_df_path: str):
 class DummyModel:
     """Dummy model that generates two fixed sequences."""
 
-    cfg = DictConfig(dict(token_emb=None, max_tokens_budget=5))
+    cfg = DictConfig(dict(token_emb=None))
+
+    def __init__(self):
+        self.model = TransformerWrapper(
+            num_tokens=5,
+            max_seq_len=10,
+            attn_layers=Decoder(dim=8, depth=1, heads=2, rotary_pos_emb=True),
+            use_abs_pos_emb=False,
+        )
 
     def __call__(self, batch):
         B, S = batch["code"].shape
@@ -195,8 +230,8 @@ class DummyModel:
         # Always generate two fixed sequences
         generated = torch.tensor(
             [
-                [1, 2, 5, 2, 7],  # Sequence 1: Discharge -> High -> Short -> High -> Long
-                [1, 3, 6, 4, 5],  # Sequence 2: Discharge -> Low -> Medium -> Normal -> Short
+                [5, 2, 2, 7, 7],  # Sequence 1: low labs only
+                [5, 4, 4, 5, 5],  # Sequence 2: high labs only
             ]
         )
         out_lengths = torch.tensor([5, 5])
@@ -330,7 +365,7 @@ class NextTokenPredictionMetric(Metric):
         return results
 
 
-class EicForecastingModule(BaseModule, TimeableMixin):
+class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
     """EIC token based GPT Forecasting Model.
 
     This model has three main capabilities:
@@ -374,13 +409,13 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         >>> assert 'subject_id' in generated_df.columns
         >>> assert 'prediction_time' in generated_df.columns
         >>> # Verify time token generation (code/vocab_index 4 in metadata)
-        >>> generated_df.filter(pl.col('subject_id').eq(1))['code'][-1]
-        7
-        >>> generated_df.filter(pl.col('subject_id').eq(2))['code'][-1]
-        5
+        >>> generated_df.shape[0]
+        20
+
         >>> # Test workflow 3: Generation with zero-shot labeling
-        >>> cfg.trajectory_labeler = trajectory_labeler
+        >>> cfg.generate_id = 1
         >>> model = EicForecastingModule(cfg)
+        >>> model.trajectory_labeler = trajectory_labeler
         >>> output = model.forward(batch)
         >>> # Check labeling output
         >>> assert MODEL_PRED_PROBA_KEY in output
@@ -389,7 +424,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         >>> assert output[MODEL_PRED_STATUS_KEY].shape == (2,)  # Status per sequence
         >>> # Verify status progression works
         >>> status_vals = output[MODEL_PRED_STATUS_KEY]
-        >>> assert (status_vals == WindowStatus.SATISFIED.value).any()  # Some sequences complete
+        >>> assert (status_vals == WindowStatus.SATISFIED.value).any(), status_vals  # Some sequences complete
     """
 
     def __init__(self, cfg: DictConfig):
@@ -410,6 +445,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         )
 
         self.metadata_df = pl.read_parquet(self.cfg.code_metadata_fp)
+        self.trajectory_labeler = self.cfg.get("trajectory_labeler", None)
 
     def get_loss(self, batch):
         code_logits = batch[CODE_LOGITS]
@@ -469,7 +505,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
     def _generate(self, batch):
         if self.cfg.generate_id is not None:
-            return self.generate_evaluation(batch)
+            return self.generate_batch(batch)
         else:
             return batch
 
@@ -708,16 +744,109 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         time += prediction_time_offset_years.unsqueeze(1)
         return TrajectoryBatch(time, code, mask, numeric_value, numeric_value_mask)
 
+    def update_generation_state(
+        self,
+        tokens: torch.Tensor,
+        cumulative_time: torch.Tensor,
+        trajectory_labeler: SequenceLabeler | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, bool]:
+        """Updates trajectory_labeler state, and returns state information.
+
+        Examples:
+            >>> import tempfile
+            >>> from clinical_zeroshot_labeler.labeler import WindowStatus
+            >>> # Create test setup using helper function
+            >>> _, metadata_df, _, _ = create_dummy_sequence_labeler()
+
+            >>> # Write metadata to temporary file and create config
+            >>> temp_file = tempfile.NamedTemporaryFile(suffix='.parquet')
+            >>> metadata_df.write_parquet(temp_file.name)
+            >>> cfg = create_model_config(temp_file.name)
+
+            >>> model = EicForecastingModule(cfg)
+            >>> model._init_time_and_value_quantiles()
+            >>> B = 2  # batch_size
+            >>> device = 'cpu'
+
+            >>> # Setup basic test case
+            >>> cumulative = torch.tensor([0.0, 0.0], device=device)
+            >>> tokens = torch.randint(0, 5, (B,3), device=device)
+
+            >>> # Test trajectory labeler progression
+            >>> labeler = DummyTrajectoryLabeler(B)
+            >>> time, status, is_finished, ended = model.update_generation_state(
+            ...     tokens=tokens,
+            ...     cumulative_time=cumulative,
+            ...     trajectory_labeler=labeler,
+            ... )
+            >>> assert time.shape == (B,)
+            >>> assert status.shape == (B,)
+            >>> assert not is_finished
+            >>> assert not ended.any()
+
+            >>> # Test second step shows active status
+            >>> time, status, is_finished, ended = model.update_generation_state(
+            ...     tokens=tokens,
+            ...     cumulative_time=time,
+            ...     trajectory_labeler=labeler,
+            ... )
+            >>> assert (status == WindowStatus.ACTIVE.value).all()
+            >>> assert not is_finished
+            >>> assert not ended.any()
+
+            >>> # Test third step shows satisfied status and finished
+            >>> time, status, is_finished, ended = model.update_generation_state(
+            ...     tokens=tokens,
+            ...     cumulative_time=time,
+            ...     trajectory_labeler=labeler,
+            ... )
+            >>> assert (status == WindowStatus.SATISFIED.value).all()
+            >>> assert is_finished
+            >>> assert ended.all()
+
+            >>> # Test without trajectory labeler
+            >>> time, status, is_finished, ended = model.update_generation_state(
+            ...     tokens=tokens,
+            ...     cumulative_time=time,
+            ...     trajectory_labeler=None,
+            ... )
+            >>> assert time.shape == (B,)
+            >>> assert status is None
+            >>> assert not is_finished
+            >>> assert not ended.any()
+        """
+        current_sample = tokens[:, -1]
+        pred_time = self.time_quantile_map[current_sample.flatten()]
+        cumulative_time = cumulative_time + pred_time.squeeze(-1)
+        current_value = self.value_quantile_map[current_sample.flatten()]
+        if trajectory_labeler is not None:
+            status = trajectory_labeler.process_step(current_sample, cumulative_time, current_value)
+            is_finished = trajectory_labeler.is_finished()
+            ended_sequences = torch.logical_or(
+                status == WindowStatus.SATISFIED.value, status == WindowStatus.IMPOSSIBLE.value
+            )
+        else:
+            status = None
+            is_finished = False
+            ended_sequences = torch.zeros((current_sample.shape[0]), dtype=torch.bool)
+        return cumulative_time, status, is_finished, ended_sequences
+
+    def _init_time_and_value_quantiles(self):
+        if not hasattr(self, "time_quantile_map"):
+            self.time_quantile_map = self.get_code_to_time_map(self.metadata_df)
+        if not hasattr(self, "value_quantile_map"):
+            self.value_quantile_map = self.get_code_to_numeric_value_map(self.metadata_df)
+
     @torch.no_grad()
     @eval_decorator
     @TimeableMixin.TimeAs
-    def generate_evaluation(
+    def generate_batch(
         self,
         input_batch,
         **kwargs,
     ):
         """Generate evaluation metrics for the model."""
-        if self.model.cfg.max_tokens_budget is None and self.cfg.get("trajectory_labeler") is None:
+        if self.cfg.max_tokens_budget is None and self.trajectory_labeler is None:
             raise ValueError(
                 "At least one of model.backbone.max_tokens_budget or model.trajectory_labeler must be "
                 "set in the configuration."
@@ -729,16 +858,7 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         else:
             prompts, mask = input_batch[INPUT_ENCODER_TOKENS_KEY], input_batch[INPUT_ENCODER_MASK_KEY]
 
-        if not hasattr(self, "time_quantile_map"):
-            self.time_quantile_map = self.get_code_to_time_map(self.metadata_df)
-        if not hasattr(self, "value_quantile_map"):
-            self.value_quantile_map = self.get_code_to_numeric_value_map(self.metadata_df)
-
-        def get_next_token_time(x):
-            return self.time_quantile_map[x.squeeze()]
-
-        def get_next_token_value(x):
-            return self.value_quantile_map[x.squeeze()]
+        self._init_time_and_value_quantiles()
 
         if "prediction_time" not in input_batch or "end_time" not in input_batch:
             raise ValueError(
@@ -753,12 +873,10 @@ class EicForecastingModule(BaseModule, TimeableMixin):
             raise ValueError("time_offset_years must be less than or equal to 0")
 
         if self.cfg.generate_id is not None:
-            out, out_lengths, metadata = self.model.generate(
+            out, out_lengths, metadata = self.generate(
                 prompts=prompts,
                 mask=mask,
-                get_next_token_time=get_next_token_time,
-                get_next_token_value=get_next_token_value,
-                trajectory_labeler=self.cfg.get("trajectory_labeler"),
+                trajectory_labeler=self.trajectory_labeler,
                 time_offset_years=prediction_time_offset_years,
                 temperature=self.cfg.temperature,
                 eos_tokens=self.cfg.eos_tokens,
