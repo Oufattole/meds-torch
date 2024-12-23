@@ -227,7 +227,7 @@ class BaseGenerativeModel(ABC):
         seq_start_pos = t - prompt_lens
 
         if exists(eos_tokens):
-            eos_tokens = torch.tensor(eos_tokens, device=prompts.device)
+            eos_tokens = torch.tensor(eos_tokens)
 
         # Initialize state
         out = prompts
@@ -235,10 +235,10 @@ class BaseGenerativeModel(ABC):
         cumulative_time = (
             time_offset_years if time_offset_years is not None else torch.zeros(b, device=prompts.device)
         )
-        ended_sequences = torch.zeros(b, device=prompts.device, dtype=torch.bool)
+        ended_sequences = torch.zeros(b, dtype=torch.bool)
         is_finished = False
         num_generated_tokens = 0
-        out_lengths = torch.zeros(b, device=prompts.device, dtype=torch.int32)
+        out_lengths = torch.zeros(b, dtype=torch.int32)
         metadata = None
         status = None
 
@@ -267,15 +267,13 @@ class BaseGenerativeModel(ABC):
 
             # Update generation state
             num_generated_tokens += 1
-            if num_generated_tokens % 100 == 0:
+            if num_generated_tokens % max_seq_len == 0:
                 logger.warning(f"Generated {num_generated_tokens} tokens")
 
             # Append new tokens
             out = torch.cat((out, sample), dim=-1)
 
             # Update cumulative time and check status
-            logger.info(f"num_gen: {num_generated_tokens}")
-            logger.info(f"num_gen: {num_generated_tokens}")
             cumulative_time, status, is_finished, new_ended_sequences = self.update_generation_state(
                 out,
                 cumulative_time,
@@ -285,7 +283,7 @@ class BaseGenerativeModel(ABC):
             # Update sequence end flags
             new_ended_sequences |= ended_sequences
             if exists(eos_tokens):
-                new_ended_sequences |= sample.flatten() == eos_tokens
+                new_ended_sequences |= sample.flatten().cpu() == eos_tokens
             out_lengths[new_ended_sequences != ended_sequences] = num_generated_tokens
             ended_sequences = new_ended_sequences
             # Check max token budget condition

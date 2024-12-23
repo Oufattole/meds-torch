@@ -815,9 +815,9 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
             >>> assert not is_finished
             >>> assert not ended.any()
         """
-        current_sample = tokens[:, -1]
+        current_sample = tokens[:, -1].cpu()
         pred_time = self.time_quantile_map[current_sample.flatten()]
-        cumulative_time = cumulative_time + pred_time.squeeze(-1)
+        cumulative_time = cumulative_time.cpu() + pred_time.squeeze(-1)
         current_value = self.value_quantile_map[current_sample.flatten()]
         if trajectory_labeler is not None:
             status = trajectory_labeler.process_step(current_sample, cumulative_time, current_value)
@@ -876,7 +876,9 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
             out, out_lengths, metadata = self.generate(
                 prompts=prompts,
                 mask=mask,
-                trajectory_labeler=self.trajectory_labeler,
+                trajectory_labeler=self.trajectory_labeler(
+                    batch_size=prompts.shape[0], metadata_df=self.metadata_df
+                ),
                 time_offset_years=prediction_time_offset_years,
                 temperature=self.cfg.temperature,
                 eos_tokens=self.cfg.eos_tokens,

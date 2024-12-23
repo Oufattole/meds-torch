@@ -1,7 +1,7 @@
 defaults:
   - input_encoder: eic_encoder
   - backbone: eic_transformer_decoder
-  - zero_shot_labeler: null
+  - trajectory_labeler: null
   - optimizer: adam
   - scheduler: null
   - _self_

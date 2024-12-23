@@ -1,13 +1,5 @@
 # Evaluating an Autoregressive EHR Model
 
-Train via meds-torch
-ROOT_DIR on MGH servers:
-/storage/shared/mimiciv/meds_v0.3.2/
-training_stultz:
-/storage/shared/mimic-iv/meds_v0.3.2/
-quadro:
-/home/shared/mimiciv2.2/meds_v0.3.2/
-
 ```console
 ROOT_DIR="/storage/shared/mimic-iv/meds_v0.3.2/"  # Replace with your actual root directory
 ```
@@ -42,9 +34,13 @@ Use the following code to pull a suite of abnormal lab value tasks:
 import polars as pl
 from pathlib import Path
 
+ROOT_DIR = (
+    "/storage/shared/mimic-iv/meds_v0.3.2/"  # Replace with your actual root directory
+)
+
 lab_to_codes = {}
 pl.Config.set_fmt_str_lengths(100)
-df = pl.read_parquet("/storage/shared/mimic-iv/meds_v0.3.2/meds/metadata/codes.parquet")
+df = pl.read_parquet(f"{ROOT_DIR}/meds/metadata/codes.parquet")
 creatinine_codes = df.filter(
     pl.col("description").str.contains(
         "Creatinine [Mass/volume] in Blood", literal=True
@@ -196,6 +192,7 @@ for TASK_NAME in "${TASKS[@]}"; do
     mkdir -p $SINGLE_TASK_DIR # create a directory for the task
     CONFIG_PATH=ZERO_SHOT_TUTORIAL/configs/tasks/${TASK_NAME}.yaml
     aces-cli --multirun hydra/launcher=joblib data=sharded data.standard=meds data.root="$MEDS_DIR/data" "data.shard=$(expand_shards $MEDS_DIR/data)" cohort_dir="${MEDS_DIR}/tasks/" cohort_name="$TASK_NAME" config_path=$CONFIG_PATH
+    cp $CONFIG_PATH ${MEDS_DIR}/tasks/${TASK_NAME}.yaml
 done
 
 ROOT_DIR="/storage/shared/mimic-iv/meds_v0.3.2/"  # Replace with your actual root directory
@@ -267,6 +264,7 @@ for TASK_NAME in "${TASKS[@]}"; do
     mkdir -p $SINGLE_TASK_DIR # create a directory for the task
     CONFIG_PATH=ZERO_SHOT_TUTORIAL/configs/tasks/${TASK_NAME}.yaml
     aces-cli --multirun hydra/launcher=joblib data=sharded data.standard=meds data.root="$MEDS_DIR/data" "data.shard=$(expand_shards $MEDS_DIR/data)" cohort_dir="${MEDS_DIR}/tasks/" cohort_name="$TASK_NAME" config_path=$CONFIG_PATH
+    cp $CONFIG_PATH ${MEDS_DIR}/tasks/${TASK_NAME}.yaml
 done
 ```
 
@@ -353,24 +351,42 @@ meds-torch-tune model=eic_forecasting trainer=gpu \
     data.subsequence_sampling_strategy=random \
     paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
     hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]
+```
 
-
-# Let's also train a supervised model
-
+```
+PRETRAIN_OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/eic_top_10_hparam_sweep
+MODEL_SWEEP_DIR=$(meds-torch-latest-dir path=${PRETRAIN_OUTPUT_DIR})
+BEST_CHECKPOINT=${MODEL_SWEEP_DIR}/checkpoints/best_model.ckpt
+BEST_CONFIG=${MODEL_SWEEP_DIR}/best_config.json
 MEDS_DIR=${ROOT_DIR}/meds/
-EIC_DIR=${ROOT_DIR}/eic_top10_tensors # set to the directory in which you want to output the tensorized MIMIC-IV data
-OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep_supervised/
+TENSOR_DIR=${ROOT_DIR}/eic_top10_tensors/
 TASKS_DIR=${MEDS_DIR}/tasks/
-TASK_NAME="mortality/in_icu/first_24h"
+TASK_NAME="abnormal_lab/hospital_discharge/creatinine/30d"
+OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/inference/eic_top_10/${TASK_NAME}
+# Let's generate 20 trajectories
+NUM_SAMPLES=20
+TASK_CONFIG_PATH=${TASKS_DIR}/${TASK_NAME}.yaml
 
-meds-torch-tune model=supervised trainer=gpu \
-    callbacks=tune_default trainer=ray hparams_search=ray_tune \
-    hparams_search.ray.resources_per_trial.GPU=1  hparams_search.ray.num_samples=8 \
-    experiment=eic_top10_forecast_mtr paths.data_dir=${EIC_DIR} \
-    data.do_include_subject_id=true data.do_include_prediction_time=true \
+
+meds-torch-generate model=eic_forecasting experiment=eic_top10_forecast_mtr \
+    model/trajectory_labeler=aces_schema_labeler model.trajectory_labeler.yaml_path=$TASK_CONFIG_PATH \
+    data.dataloader.batch_size=64 model.generate_id=0 \
+	data.do_include_subject_id=true data.do_include_prediction_time=true data.do_include_end_time=true \
     data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
-    paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
-    hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/TUTORIAL/configs/]
+    paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
+    paths.data_dir=${TENSOR_DIR} paths.output_dir=${OUTPUT_DIR} \
+    "hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]"
+
+
+meds-torch-generate --multirun model=eic_forecasting experiment=eic_top10_forecast_mtr \
+    model/trajectory_labeler=aces_schema_labeler model.trajectory_labeler.yaml_path=$TASK_CONFIG_PATH \
+    data.dataloader.batch_size=64 model.generate_id="range(0,$NUM_SAMPLES)" \
+	data.do_include_subject_id=true data.do_include_prediction_time=true \
+    data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
+    paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
+    paths.data_dir=${TENSOR_DIR} paths.output_dir=${OUTPUT_DIR} \
+    "hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]"
+
 ```
 
 We can now see the logits over the input data:

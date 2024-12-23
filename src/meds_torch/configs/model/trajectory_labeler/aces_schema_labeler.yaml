@@ -1,6 +1,5 @@
 
 _target_: clinical_zeroshot_labeler.labeler.SequenceLabeler.from_yaml_file
-_partial_:
-  yaml_path: ???
-  metadata_df: ${data.code_metadata_fp}
-  TimeScale: 'D'
+_partial_: true
+yaml_path: ???
+time_scale: 'D'
