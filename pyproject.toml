@@ -28,7 +28,7 @@ classifiers = [
 dependencies = [
     "polars", "pyarrow", "nested_ragged_tensors>=0.1.0", "loguru", "numpy", "ml-mixins", "torch", "omegaconf", "hydra-core",
     "lightning", "x-transformers==1.34.0", "rich", "hydra-colorlog", "hydra-optuna-sweeper", "wandb", "torchmetrics",
-    "torchvision", "transformers", "ray[tune]",
+    "torchvision", "transformers", "ray[tune]", "clinical-zeroshot-labeler", "lightning-flash",
 ]
 
 [tool.setuptools_scm]

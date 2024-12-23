@@ -12,6 +12,32 @@ quadro:
 ROOT_DIR="/storage/shared/mimic-iv/meds_v0.3.2/"  # Replace with your actual root directory
 ```
 
+We first need to tensorize your meds data (cache it in a format such that meds-torch can efficiently train models on the dataset). We can tensorize a low vocabulary dataset centered around 5 common lab codes in MIMIC IV by running the tokenize script with the `eic_top_10.yaml`, which performs EIC tokenization on these common codes:
+
+```console
+export MIMICIV_MEDS_DIR=${ROOT_DIR}/meds/ # set to the directory in which you want to store the raw MIMIC-IV data
+export MIMICIV_EIC_DIR=${ROOT_DIR}/eic_tensors/ # set to the directory in which you want to output the tensorized MIMIC-IV data
+export N_PARALLEL_WORKERS=8 # set to the number of parallel workers you want to use
+export PIPELINE_CONFIG_PATH="$(pwd)/ZERO_SHOT_TUTORIAL/configs/eic_config.yaml" # set to the directory in which the config file is stored, must be an absolute path.
+export JOBLIB_RUNNER_CONFIG_PATH="$(pwd)/ZERO_SHOT_TUTORIAL/configs/joblib_runner.yaml" # set to the directory in which the config file is stored, must be an absolute path.
+
+bash ZERO_SHOT_TUTORIAL/tokenize.sh $MIMICIV_MEDS_DIR $MIMICIV_EIC_DIR $N_PARALLEL_WORKERS $PIPELINE_CONFIG_PATH stage_runner_fp=$JOBLIB_RUNNER_CONFIG_PATH
+```
+
+Alternatively we can tensorize the full dataset:
+
+```console
+export MIMICIV_MEDS_DIR=${ROOT_DIR}/meds/ # set to the directory in which you want to store the raw MIMIC-IV data
+export MIMICIV_EIC_DIR=${ROOT_DIR}/eic_top10_tensors/ # set to the directory in which you want to output the tensorized MIMIC-IV data
+export N_PARALLEL_WORKERS=8 # set to the number of parallel workers you want to use
+export PIPELINE_CONFIG_PATH="$(pwd)/ZERO_SHOT_TUTORIAL/configs/eic_top_10.yaml" # set to the directory in which the config file is stored, must be an absolute path.
+export JOBLIB_RUNNER_CONFIG_PATH="$(pwd)/ZERO_SHOT_TUTORIAL/configs/joblib_runner.yaml" # set to the directory in which the config file is stored, must be an absolute path.
+
+bash ZERO_SHOT_TUTORIAL/tokenize.sh $MIMICIV_MEDS_DIR $MIMICIV_EIC_DIR $N_PARALLEL_WORKERS $PIPELINE_CONFIG_PATH stage_runner_fp=$JOBLIB_RUNNER_CONFIG_PATH
+```
+
+Use the following code to pull a suite of abnormal lab value tasks:
+
 ```python
 import polars as pl
 from pathlib import Path
@@ -244,21 +270,11 @@ for TASK_NAME in "${TASKS[@]}"; do
 done
 ```
 
-We first need to tensorize your meds data (cache it in a format such that meds-torch can efficiently train models on the dataset). We can tensorize 10 commone lab codes in MIMIC IV by running the tokenize script with the `eic_top_10.yaml`, which performs EIC tokenization on these common codes:
+### Training Models
 
-```console
-export MEDS_DIR=${ROOT_DIR}/meds/
-export EIC_DIR=${ROOT_DIR}/eic_top10_tensors # set to the directory in which you want to output the tensorized MIMIC-IV data
-export N_WORKERS=8 # set to the number of parallel workers you want to use
-export PIPELINE_CONFIG_PATH="$(pwd)/TUTORIAL/configs/eic_top_10.yaml" # set to the directory in which the config file is stored, must be an absolute path.
-export JOBLIB_RUNNER_CONFIG_PATH="$(pwd)/TUTORIAL/configs/local_parallelism_runner.yaml" # set to the directory in which the config file is stored, must be an absolute path.
+**Let's first train a supervised model which we will use as a baseline.**
 
-bash TUTORIAL/tokenize.sh $MEDS_DIR $EIC_DIR $N_WORKERS $PIPELINE_CONFIG_PATH stage_runner_fp=$JOBLIB_RUNNER_CONFIG_PATH
-```
-
-Let's first train a supervised model which we will use as a baseline.
-
-Checkout (and modify if you wish) the experiment file `$(pwd)/TUTORIAL/configs/eic_top10_forecast_mtr.yaml` which defines most of the input args for training this model:
+Checkout (and modify if you wish) the experiment file `$(pwd)/ZERO_SHOT_TUTORIAL/configs/eic_top10_forecast_mtr.yaml` which defines most of the input args for training this model:
 
 ```console
 CUDA_VISIBLE_DEVICES=1
@@ -273,9 +289,11 @@ meds-torch-train \
     experiment="eic_top10_forecast_mtr" paths.data_dir=${EIC_DIR} \
     paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
     data.task_name=$TASK_NAME data.task_root_dir=$TASKS_DIR \
-    hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/TUTORIAL/configs/]
+    hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]
 
 ```
+
+**Let's train an autoregressive generative model**
 
 The experiment file uses a supervised model by default, let's override it by setting `model=eic_forecasting` to train on the autoregressive next token prediction task. Notice that this doesn't require labels, so we drop the task input args.
 
@@ -284,19 +302,18 @@ CUDA_VISIBLE_DEVICES=1
 
 MEDS_DIR=${ROOT_DIR}/meds/
 EIC_DIR=${ROOT_DIR}/eic_top10_tensors # set to the directory in which you want to output the tensorized MIMIC-IV data
-TASKS_DIR=${MEDS_DIR}/tasks/
-TASK_NAME="mortality/in_icu/first_24h"
 OUTPUT_DIR=/storage/nassim/tmp/autoregressive/
 
 meds-torch-train model=eic_forecasting trainer=gpu \
     experiment=eic_top10_forecast_mtr paths.data_dir=${EIC_DIR} \
     data.subsequence_sampling_strategy=random \
     paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
-    hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/TUTORIAL/configs/]
-
+    hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]
 ```
 
-Next let's do a distributed hyperparameter tuning of this autoregressive model. We have to add the defaults
+**Next let's do a distributed hyperparameter tuning of this autoregressive model.**
+
+We have to add the defaults:
 
 - use the cli endpoint `meds-torch-tune` instead of `meds-torch-train` as this will launch the tune script which provides code to leverage
 - `trainer=ray` which adds ray logging support to the pytorch lightning trainer
@@ -308,11 +325,11 @@ Next let's do a distributed hyperparameter tuning of this autoregressive model. 
 ```console
 # unset CUDA_VISIBLE_DEVICES # remove setting of CUDA_VISIBLE_DEVICES, so all gpus can be used
 # or set some specific devices
-export CUDA_VISIBLE_DEVICES=0,1,5
+export CUDA_VISIBLE_DEVICES=0,1
 
 MEDS_DIR=${ROOT_DIR}/meds/
 EIC_DIR=${ROOT_DIR}/eic_top10_tensors # set to the directory in which you want to output the tensorized MIMIC-IV data
-OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep/
+OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/eic_top_10_hparam_sweep/
 
 meds-torch-tune model=eic_forecasting trainer=gpu \
     callbacks=tune_default trainer=ray hparams_search=ray_tune \
@@ -320,14 +337,14 @@ meds-torch-tune model=eic_forecasting trainer=gpu \
     experiment=eic_top10_forecast_mtr paths.data_dir=${EIC_DIR} \
     data.subsequence_sampling_strategy=random \
     paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
-    hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/TUTORIAL/configs/]
+    hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]
 
 # Train a full vocab model:
 export CUDA_VISIBLE_DEVICES=0,2,4,5
 
 MEDS_DIR=${ROOT_DIR}/meds/
 EIC_DIR=${ROOT_DIR}/eic_tensors # set to the directory in which you want to output the tensorized MIMIC-IV data
-OUTPUT_DIR=/storage/nassim/tmp/eic_hparam_sweep/
+OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/eic_hparam_sweep/
 
 meds-torch-tune model=eic_forecasting trainer=gpu \
     callbacks=tune_default trainer=ray hparams_search=ray_tune \
@@ -335,7 +352,7 @@ meds-torch-tune model=eic_forecasting trainer=gpu \
     experiment=eic_forecast_mtr paths.data_dir=${EIC_DIR} \
     data.subsequence_sampling_strategy=random \
     paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
-    hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/TUTORIAL/configs/]
+    hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]
 
 
 # Let's also train a supervised model

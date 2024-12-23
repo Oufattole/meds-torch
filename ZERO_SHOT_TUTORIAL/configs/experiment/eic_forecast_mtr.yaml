@@ -24,29 +24,30 @@ trainer:
   min_epochs: 1
   max_epochs: 10
   gradient_clip_val: 1.0
+  precision: 16
 
 data:
   dataloader:
-    batch_size: 64
+    batch_size: 128
     num_workers: 6
   max_seq_len: 512
   collate_type: "eic"
   subsequence_sampling_strategy: "to_end"
 
 model:
-  token_dim: 128
+  token_dim: 768
   optimizer:
     lr: 0.001
   backbone:
-    n_layers: 2
-    nheads: 4
+    n_layers: 12
+    nheads: 12
     dropout: 0
 
 
 logger:
   wandb:
     tags: ${tags}
-    group: "mimiciv_tokenization"
+    group: "eic_forecast_mtr"
 
 # hydra:
 #   searchpath:
