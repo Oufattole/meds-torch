@@ -109,32 +109,30 @@ def slice_cache(cache, active_indices):
         >>> mock_cache.attn_intermediates = []
         >>> inter = SimpleNamespace()
         >>> inter.layer_type = "a"
-        >>> # Create mock KV tensors [heads=2, dim=2, batch=4, seq_len=3]
-        >>> k = torch.arange(48).float().reshape(2, 2, 4, 3)
-        >>> v = torch.arange(48).float().reshape(2, 2, 4, 3) + 100
+        >>> # Create mock KV tensors [batch=4, heads=2, seq_len=3, head_dim=8]
+        >>> k = torch.arange(192).float().reshape(4, 2, 3, 8)
+        >>> v = torch.arange(192).float().reshape(4, 2, 3, 8) + 100
         >>> inter.cached_kv = [k, v]
         >>> mock_cache.attn_intermediates.append(inter)
 
-        >>> # Test initial slicing - keep sequences 0 and 2 active
+        >>> # Test initial slicing - keep sequences 0 and 2
         >>> active = torch.tensor([0, 2])
         >>> sliced = slice_cache(mock_cache, active)
         >>> sliced.attn_intermediates[0].cached_kv[0].shape
-        torch.Size([2, 2, 2, 3])
-        >>> # Verify correct sequences were kept (checking first head, first dim)
-        >>> first_slice = sliced.attn_intermediates[0].cached_kv[0][0, 0]
-        >>> expected = torch.tensor([[0., 1., 2.], [6., 7., 8.]])
-        >>> torch.allclose(first_slice, expected)
+        torch.Size([2, 2, 3, 8])
+        >>> # Verify we kept the right sequences
+        >>> torch.allclose(sliced.attn_intermediates[0].cached_kv[0][0], k[0])
+        True
+        >>> torch.allclose(sliced.attn_intermediates[0].cached_kv[0][1], k[2])
         True
 
-        >>> # Test iterative slicing - now only sequence 2 active
-        >>> active2 = torch.tensor([1])  # Index 1 in already sliced cache (orig seq 2)
+        >>> # Test iterative slicing - now only second sequence
+        >>> active2 = torch.tensor([1])  # Index 1 in already sliced cache
         >>> sliced2 = slice_cache(sliced, active2)
         >>> sliced2.attn_intermediates[0].cached_kv[0].shape
-        torch.Size([2, 2, 1, 3])
-        >>> # Verify only sequence 2 remains (checking first head, first dim)
-        >>> final_slice = sliced2.attn_intermediates[0].cached_kv[0][0, 0]
-        >>> expected2 = torch.tensor([[6., 7., 8.]])
-        >>> torch.allclose(final_slice, expected2)
+        torch.Size([1, 2, 3, 8])
+        >>> # Verify we kept original sequence 2
+        >>> torch.allclose(sliced2.attn_intermediates[0].cached_kv[0][0], k[2])
         True
 
         >>> # Test empty cache passes through
@@ -145,7 +143,9 @@ def slice_cache(cache, active_indices):
 
     for inter in cache.attn_intermediates:
         if inter.layer_type == "a":
-            inter.cached_kv = [t[..., active_indices, :] for t in inter.cached_kv]
+            device = inter.cached_kv[0].device
+            active_indices = active_indices.to(device)
+            inter.cached_kv = [t[active_indices] for t in inter.cached_kv]
 
     return cache
 
@@ -355,21 +355,25 @@ class BaseGenerativeModel(ABC):
                 )
 
             while not is_finished:
-                # Get active sequence indices
-                active_indices = (~ended_sequences).nonzero().squeeze(-1)
-                if len(active_indices.shape) == 0:  # Handle single active sequence
-                    active_indices = active_indices.unsqueeze(0)
+                # Get indices relative to original batch
+                orig_indices = (~ended_sequences).nonzero().squeeze(-1)
+                if len(orig_indices.shape) == 0:  # Handle single active sequence
+                    orig_indices = orig_indices.unsqueeze(0)
 
-                # Track sliding window for active sequences
+                # Track which indices are active in our currently sliced tensors
+                active_indices = torch.arange(len(orig_indices), device=orig_indices.device)
+
+                # Track sliding window for full batch
                 x_full, cache_full, current_start_pos_full = self._track_sliding_window_generation(
                     out, max_seq_len, cache_kv, cache, transformer_decoder, seq_start_pos
                 )
 
                 # Select active sequences and their cache
-                x = x_full[active_indices]
+                x = x_full[orig_indices]  # Use orig_indices for first slice from full batch
                 current_start_pos = (
-                    current_start_pos_full[active_indices] if current_start_pos_full is not None else None
+                    current_start_pos_full[orig_indices] if current_start_pos_full is not None else None
                 )
+                # Use active_indices for cache since it's already sliced
                 cache = slice_cache(cache_full, active_indices) if cache_full is not None else None
 
                 # Get next token predictions for active sequences only
@@ -475,7 +479,7 @@ class TestModel(BaseGenerativeModel):
         self.model.model = TransformerWrapper(
             num_tokens=5,
             max_seq_len=10,
-            attn_layers=Decoder(dim=8, depth=1, heads=2, rotary_pos_emb=True),
+            attn_layers=Decoder(dim=9, depth=1, heads=5, rotary_pos_emb=True),
             use_abs_pos_emb=False,
         )
         self.cfg = DictConfig(dict(max_tokens_budget=5))
