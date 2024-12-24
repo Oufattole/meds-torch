@@ -91,6 +91,65 @@ def get_last_token(output: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return last_token
 
 
+def slice_cache(cache, active_indices):
+    """Slice a transformer KV cache to only active indices.
+
+    Args:
+        cache: Cache object with attn_intermediates containing cached_kv tensors
+        active_indices: Indices of active (non-completed) sequences
+
+    Returns:
+        Modified cache with updated cached_kv tensors
+
+    Examples:
+        >>> import torch
+        >>> from types import SimpleNamespace
+        >>> # Create mock cache with 4 sequences
+        >>> mock_cache = SimpleNamespace()
+        >>> mock_cache.attn_intermediates = []
+        >>> inter = SimpleNamespace()
+        >>> inter.layer_type = "a"
+        >>> # Create mock KV tensors [heads=2, dim=2, batch=4, seq_len=3]
+        >>> k = torch.arange(48).float().reshape(2, 2, 4, 3)
+        >>> v = torch.arange(48).float().reshape(2, 2, 4, 3) + 100
+        >>> inter.cached_kv = [k, v]
+        >>> mock_cache.attn_intermediates.append(inter)
+
+        >>> # Test initial slicing - keep sequences 0 and 2 active
+        >>> active = torch.tensor([0, 2])
+        >>> sliced = slice_cache(mock_cache, active)
+        >>> sliced.attn_intermediates[0].cached_kv[0].shape
+        torch.Size([2, 2, 2, 3])
+        >>> # Verify correct sequences were kept (checking first head, first dim)
+        >>> first_slice = sliced.attn_intermediates[0].cached_kv[0][0, 0]
+        >>> expected = torch.tensor([[0., 1., 2.], [6., 7., 8.]])
+        >>> torch.allclose(first_slice, expected)
+        True
+
+        >>> # Test iterative slicing - now only sequence 2 active
+        >>> active2 = torch.tensor([1])  # Index 1 in already sliced cache (orig seq 2)
+        >>> sliced2 = slice_cache(sliced, active2)
+        >>> sliced2.attn_intermediates[0].cached_kv[0].shape
+        torch.Size([2, 2, 1, 3])
+        >>> # Verify only sequence 2 remains (checking first head, first dim)
+        >>> final_slice = sliced2.attn_intermediates[0].cached_kv[0][0, 0]
+        >>> expected2 = torch.tensor([[6., 7., 8.]])
+        >>> torch.allclose(final_slice, expected2)
+        True
+
+        >>> # Test empty cache passes through
+        >>> assert slice_cache(None, active) is None
+    """
+    if cache is None:
+        return None
+
+    for inter in cache.attn_intermediates:
+        if inter.layer_type == "a":
+            inter.cached_kv = [t[..., active_indices, :] for t in inter.cached_kv]
+
+    return cache
+
+
 class BaseGenerativeModel(ABC):
     """Base class for generative models with custom token processing.
 
@@ -296,15 +355,36 @@ class BaseGenerativeModel(ABC):
                 )
 
             while not is_finished:
-                x, cache, current_start_pos = self._track_sliding_window_generation(
+                # Get active sequence indices
+                active_indices = (~ended_sequences).nonzero().squeeze(-1)
+                if len(active_indices.shape) == 0:  # Handle single active sequence
+                    active_indices = active_indices.unsqueeze(0)
+
+                # Track sliding window for active sequences
+                x_full, cache_full, current_start_pos_full = self._track_sliding_window_generation(
                     out, max_seq_len, cache_kv, cache, transformer_decoder, seq_start_pos
                 )
 
-                # Get next token predictions
+                # Select active sequences and their cache
+                x = x_full[active_indices]
+                current_start_pos = (
+                    current_start_pos_full[active_indices] if current_start_pos_full is not None else None
+                )
+                cache = slice_cache(cache_full, active_indices) if cache_full is not None else None
+
+                # Get next token predictions for active sequences only
                 logits, new_cache = transformer_decoder(
                     x, return_intermediates=True, cache=cache, seq_start_pos=current_start_pos, **kwargs
                 )
 
+                # Map logits back to full batch size
+                full_logits = torch.zeros(
+                    (b, logits.shape[1], logits.shape[2]), device=logits.device, dtype=logits.dtype
+                )
+                full_logits[active_indices] = logits
+                logits = full_logits
+
+                # Update cache with pruned version
                 if cache_kv and transformer_decoder.can_cache_kv:
                     cache = new_cache
 
