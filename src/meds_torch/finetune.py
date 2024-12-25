@@ -40,8 +40,8 @@ def initialize_finetune_objects(cfg: DictConfig, **kwargs) -> Trainer:
         pretrain_cfg.model.vocab_size = cfg.data.vocab_size
 
     pretrain_model: LightningModule = hydra.utils.instantiate(pretrain_cfg.model)
-    ckpt = torch.load(cfg.pretrain_ckpt_path)
-    pretrain_model.load_state_dict(ckpt["state_dict"])
+    checkpoint = torch.load(cfg.pretrain_ckpt_path, map_location="cpu")
+    pretrain_model.load_state_dict(checkpoint["state_dict"])
 
     # set seed for random number generators in pytorch, numpy and python.random
     if cfg.get("seed"):

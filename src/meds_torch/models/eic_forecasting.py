@@ -26,8 +26,8 @@ from meds_torch.models import (
     MODEL_TOKENS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
-from meds_torch.models.components.utils import BaseGenerativeModel
-from meds_torch.models.zero_shot_labeler.utils import (
+from meds_torch.models.components.utils import (
+    BaseGenerativeModel,
     TrajectoryBatch,
     get_time_days_delta,
 )

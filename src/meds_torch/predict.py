@@ -255,7 +255,7 @@ def store_predictions(predict_fp, task_name, predictions):
         validated_table = validate_prediction_data(predict_df)
         pq.write_table(validated_table, predict_fp)
     except:  # noqa: E722
-        loguru.warning("Could not validate, writing prediction table via polars instead of arrow")
+        loguru.logger.warning("Could not validate, writing prediction table via polars instead of arrow")
         predict_df.write_parquet(predict_fp)
 
 
@@ -331,7 +331,8 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
 
     log.info(f"Instantiating model <{cfg.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.model)
-    model.load_state_dict(torch.load(cfg.ckpt_path)["state_dict"])
+    checkpoint = torch.load(cfg.ckpt_path, map_location="cpu")
+    model.load_state_dict(checkpoint["state_dict"])
 
     log.info("Instantiating loggers...")
     logger: list[Logger] = instantiate_loggers(cfg.get("logger"))

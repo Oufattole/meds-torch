@@ -41,7 +41,8 @@ def evaluate(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str
 
     log.info(f"Instantiating model <{cfg.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.model)
-    model.load_state_dict(torch.load(cfg.ckpt_path)["state_dict"])
+    checkpoint = torch.load(cfg.ckpt_path, map_location="cpu")
+    model.load_state_dict(checkpoint["state_dict"])
 
     log.info("Instantiating loggers...")
     logger: list[Logger] = instantiate_loggers(cfg.get("logger"))
