@@ -34,13 +34,13 @@ TASKS=(
     # "abnormal_lab/hospital_discharge/hematocrit/60d"
     # "abnormal_lab/hospital_discharge/hematocrit/90d"
 
-    # "abnormal_lab/icu_admission/hematocrit/30d"
-    # "abnormal_lab/icu_admission/hematocrit/60d"
-    # "abnormal_lab/icu_admission/hematocrit/90d"
-    # "abnormal_lab/icu_discharge/hematocrit/30d"
-    # "abnormal_lab/icu_discharge/hematocrit/60d"
-    # "abnormal_lab/icu_discharge/hematocrit/90d"
-    # "abnormal_lab/hospital_admission/leukocytes/30d"
+    "abnormal_lab/icu_admission/hematocrit/30d"
+    "abnormal_lab/icu_admission/hematocrit/60d"
+    "abnormal_lab/icu_admission/hematocrit/90d"
+    "abnormal_lab/icu_discharge/hematocrit/30d"
+    "abnormal_lab/icu_discharge/hematocrit/60d"
+    "abnormal_lab/icu_discharge/hematocrit/90d"
+    "abnormal_lab/hospital_admission/leukocytes/30d"
     "abnormal_lab/hospital_admission/leukocytes/60d"
     "abnormal_lab/hospital_admission/leukocytes/90d"
     "abnormal_lab/hospital_discharge/leukocytes/30d"
@@ -86,7 +86,7 @@ for TASK_NAME in "${TASKS[@]}"; do
 
     meds-torch-generate --multirun model=eic_forecasting experiment=eic_forecast_mtr \
         model/trajectory_labeler=aces_schema_labeler model.trajectory_labeler.yaml_path=$TASK_CONFIG_PATH \
-        data.dataloader.batch_size=512 model.generate_id="range(0,$NUM_SAMPLES)" trainer.devices=[1] \
+        data.dataloader.batch_size=512 model.generate_id="range(0,$NUM_SAMPLES)" trainer.devices=[1] data.predict_dataset=test \
         data.do_include_subject_id=true data.do_include_prediction_time=true data.do_include_end_time=true \
         data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
         paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \

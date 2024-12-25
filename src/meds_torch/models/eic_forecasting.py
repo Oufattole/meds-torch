@@ -23,6 +23,7 @@ from meds_torch.models import (
     MODEL_LOSS_KEY,
     MODEL_PRED_PROBA_KEY,
     MODEL_PRED_STATUS_KEY,
+    MODEL_PREFIX,
     MODEL_TOKENS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
@@ -207,6 +208,8 @@ def create_model_config(metadata_df_path: str):
         "top_k_acc": [1],
         "next_token_auc": False,
         "max_tokens_budget": 10,
+        "return_tokens": False,
+        "return_logits": False,
     }
     return instantiate(cfg)
 
@@ -283,7 +286,7 @@ class DummyScheduler:
         return [0.001]
 
 
-CODE_LOGITS = "MODEL//CODE_LOGITS"
+CODE_LOGITS = "EIC_MODEL//CODE_LOGITS"
 
 
 # Function to pad a single array
@@ -486,24 +489,35 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
             CODE_LOGITS: code_logits,
         }
 
-    def forward(self, batch):
+    def forward(self, batch, keep_code_logits=False):
         batch = self.input_encoder(batch)
         model_output = self.model(batch)
 
-        batch[MODEL_TOKENS_KEY] = model_output[BACKBONE_TOKENS_KEY]
+        if self.cfg.return_tokens:
+            batch[MODEL_TOKENS_KEY] = model_output[BACKBONE_TOKENS_KEY]
         batch[MODEL_EMBEDDINGS_KEY] = model_output[BACKBONE_EMBEDDINGS_KEY]
         forecast = self.get_forecast_logits(model_output)
+        if self.cfg.return_logits:
+            batch[MODEL_LOGITS_SEQUENCE_KEY] = forecast[CODE_LOGITS]
         batch[CODE_LOGITS] = forecast[CODE_LOGITS]
-        batch[MODEL_LOGITS_SEQUENCE_KEY] = forecast[CODE_LOGITS]
 
         code_loss = self.get_loss(batch)
         batch[MODEL_LOSS_KEY] = code_loss
         batch[MODEL_BATCH_LOSS_KEY] = code_loss.mean()
         batch = self._generate(batch)
+
+        if not keep_code_logits:
+            del batch[CODE_LOGITS]
         return batch
 
     def _log(self, batch, split):
         self.log(split + "/loss", batch[MODEL_BATCH_LOSS_KEY])
+        if split == "train":
+            self.train_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
+        elif split == "val":
+            self.val_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
+        elif split == "test":
+            self.test_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
 
     def _generate(self, batch):
         if self.cfg.generate_id is not None:
@@ -512,10 +526,10 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
             return batch
 
     def training_step(self, batch):
-        batch = self(batch)
+        batch = self(batch, True)
         assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "train")
-        self.train_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
+        del batch[CODE_LOGITS]
         return batch[MODEL_BATCH_LOSS_KEY]
 
     def on_train_epoch_end(self):
@@ -525,10 +539,10 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         self.train_next_token_metric.reset()
 
     def validation_step(self, batch):
-        batch = self(batch)
+        batch = self(batch, True)
         assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "val")
-        self.val_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
+        del batch[CODE_LOGITS]
         return batch[MODEL_BATCH_LOSS_KEY]
 
     def on_validation_epoch_end(self):
@@ -538,11 +552,11 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         self.val_next_token_metric.reset()
 
     def test_step(self, batch):
-        batch = self(batch)
+        batch = self(batch, True)
         assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "test")
+        del batch[CODE_LOGITS]
         loss = batch[MODEL_BATCH_LOSS_KEY]
-        self.test_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
         return loss
 
     def on_test_epoch_end(self):
@@ -678,7 +692,7 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         prediction_time_offset_years: torch.Tensor,
         code_to_time_map: torch.Tensor = None,
         code_to_numeric_value_map: torch.Tensor = None,
-    ):
+    ) -> TrajectoryBatch:
         """Convert the model output to MEDS format.
 
         Args:
@@ -722,18 +736,11 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         >>> mask = torch.tensor([[1, 1, 1, 1], [1, 1, 1, 0], [1, 1, 1, 0]])
         >>> prediction_time_offset_years = torch.tensor([0.0, 1.0, 2.0])
         >>> from pprint import pprint, pformat
-        >>> EicForecastingModule.to_trajectory_batch(code, mask, metadata_df, prediction_time_offset_years)
-        TrajectoryBatch(time=tensor([[0., 0., 1., 2.],
-                [1., 1., 1., 2.],
-                [3., 4., 4., 4.]]), code=tensor([[0, 2, 5, 5],
-                [2, 3, 4, 5],
-                [5, 5, 0, 1]]), mask=tensor([[1, 1, 1, 1],
-                [1, 1, 1, 0],
-                [1, 1, 1, 0]]), numeric_value=tensor([[   nan, 1.5000,    nan,    nan],
-                [1.5000, 2.5000, 3.5000,    nan],
-                [   nan,    nan,    nan, 0.5000]]), numeric_value_mask=tensor([[ True, False,  True,  True],
-                [False, False, False,  True],
-                [ True,  True,  True, False]]), time_scale='Y')
+        >>> subject_ids = [1,2,3]
+        >>> prediction_times = [1,2,3]
+        >>> EicForecastingModule.to_trajectory_batch(code, mask, metadata_df, prediction_time_offset_years
+        ...     ).to_meds(subject_ids, prediction_times).columns
+        ['subject_id', 'prediction_time', 'time', 'code', 'code/vocab_index', 'numeric_value']
         """
         if not code_to_time_map:
             code_to_time_map = cls.get_code_to_time_map(metadata_df)
@@ -742,9 +749,9 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         # Initialize lists to store the DataFrame rows
         time = torch.cumsum(code_to_time_map[code], dim=1)
         numeric_value = code_to_numeric_value_map[code]
-        numeric_value_mask = numeric_value.isnan()
+        numeric_value_mask = ~numeric_value.isnan()
         time += prediction_time_offset_years.unsqueeze(1)
-        return TrajectoryBatch(time, code, mask, numeric_value, numeric_value_mask)
+        return TrajectoryBatch(time, code, mask, numeric_value, numeric_value_mask, metadata_df)
 
     def update_generation_state(
         self,
@@ -920,6 +927,7 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
 
             if metadata:
                 labels, status = metadata["labels"], metadata["status"]
+                input_batch[MODEL_PREFIX + "STATUS"] = status
                 unknown = status != WindowStatus.SATISFIED.value
                 # Handle unknown values by setting their probability to 0.5
                 if unknown.any().item() > 0:

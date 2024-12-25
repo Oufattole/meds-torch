@@ -516,11 +516,14 @@ class TrajectoryBatch:
     Args:
         time (torch.Tensor): Tensor of shape (batch_size, sequence_length) containing days after prediction
             time. Values must be monotonically increasing within each sequence.
-        code (torch.Tensor): Tensor of shape (batch_size, sequence_length) containing event codes
+        code (torch.Tensor): Tensor of shape (batch_size, sequence_length) containing event code vocabulary
+            indices
         mask (torch.Tensor): Tensor of shape (batch_size, sequence_length) indicates valid measurements/codes
         numeric_value (torch.Tensor): Tensor of shape (batch_size, sequence_length) containing numeric values
         numeric_value_mask (torch.Tensor): Tensor of shape (batch_size, sequence_length) indicating valid
             numeric values
+        metadata_df (pl.DataFrame): DataFrame containing code vocabulary mapping with 'code' and
+            'code/vocab_index' columns
         time_scale: scale of the time, by default it is 'Y' (years). Any numpy datetime units can be used,
             see https://numpy.org/doc/2.1/reference/arrays.datetime.html#datetime-units
     """
@@ -530,6 +533,7 @@ class TrajectoryBatch:
     mask: torch.Tensor
     numeric_value: torch.Tensor
     numeric_value_mask: torch.Tensor
+    metadata_df: pl.DataFrame
     time_scale: str = "Y"
 
     def to_meds(self, prediction_time: list[datetime], subject_id: list[str | int]) -> pl.DataFrame:
@@ -542,41 +546,46 @@ class TrajectoryBatch:
         Returns:
             pl.DataFrame: MEDS format DataFrame with columns:
                 - time: Absolute timestamp of the event
-                - code: The medical code
+                - code: The medical code string
                 - numeric_value: The numeric value associated with the code (if any)
                 - subject_id: ID of the subject
                 - prediction_time: The prediction time for this trajectory
 
         Example:
+        >>> metadata_df = pl.DataFrame({
+        ...     'code': ['A1', 'A2', 'A3', 'A4', 'A5', 'A6'],
+        ...     'code/vocab_index': [1, 2, 3, 4, 5, 6]
+        ... })
         >>> batch = TrajectoryBatch(
         ...     time=torch.tensor([[0, .5, 2], [0, 3, 5]]),
         ...     code=torch.tensor([[1, 2, 3], [4, 5, 6]]),
         ...     mask=torch.tensor([[1, 1, 1], [1, 1, 0]]),
         ...     numeric_value=torch.tensor([[0.5, 1.0, 1.5], [2.0, 2.5, 3.0]]),
-        ...     numeric_value_mask=torch.tensor([[1, 1, 0], [1, 0, 0]])
+        ...     numeric_value_mask=torch.tensor([[1, 1, 0], [1, 0, 0]]),
+        ...     metadata_df=metadata_df
         ... )
         >>> prediction_times = [datetime(2024, 1, 1), datetime(2024, 1, 1)]
         >>> subject_ids = [1, 2]
         >>> df = batch.to_meds(prediction_times, subject_ids)
-        >>> df.sort("subject_id")
-        shape: (5, 5)
-        ┌─────────────────────┬──────┬───────────────┬────────────┬─────────────────────┐
-        │ time                ┆ code ┆ numeric_value ┆ subject_id ┆ prediction_time     │
-        │ ---                 ┆ ---  ┆ ---           ┆ ---        ┆ ---                 │
-        │ datetime[ns]        ┆ i32  ┆ f32           ┆ i32        ┆ datetime[ns]        │
-        ╞═════════════════════╪══════╪═══════════════╪════════════╪═════════════════════╡
-        │ 2024-01-01 00:00:00 ┆ 1    ┆ 0.5           ┆ 1          ┆ 2024-01-01 00:00:00 │
-        │ 2024-07-01 14:54:36 ┆ 2    ┆ 1.0           ┆ 1          ┆ 2024-01-01 00:00:00 │
-        │ 2025-12-31 11:38:24 ┆ 3    ┆ NaN           ┆ 1          ┆ 2024-01-01 00:00:00 │
-        │ 2024-01-01 00:00:00 ┆ 4    ┆ 2.0           ┆ 2          ┆ 2024-01-01 00:00:00 │
-        │ 2026-12-31 17:27:36 ┆ 5    ┆ NaN           ┆ 2          ┆ 2024-01-01 00:00:00 │
-        └─────────────────────┴──────┴───────────────┴────────────┴─────────────────────┘
+        >>> df.sort("subject_id", "code")
+        shape: (5, 6)
+        ┌────────────┬─────────────────────┬─────────────────────┬──────┬──────────────────┬───────────────┐
+        │ subject_id ┆ prediction_time     ┆ time                ┆ code ┆ code/vocab_index ┆ numeric_value │
+        │ ---        ┆ ---                 ┆ ---                 ┆ ---  ┆ ---              ┆ ---           │
+        │ i32        ┆ datetime[ns]        ┆ datetime[ns]        ┆ str  ┆ i64              ┆ f32           │
+        ╞════════════╪═════════════════════╪═════════════════════╪══════╪══════════════════╪═══════════════╡
+        │ 1          ┆ 2024-01-01 00:00:00 ┆ 2024-01-01 00:00:00 ┆ A1   ┆ 1                ┆ 0.5           │
+        │ 1          ┆ 2024-01-01 00:00:00 ┆ 2024-07-01 14:54:36 ┆ A2   ┆ 2                ┆ 1.0           │
+        │ 1          ┆ 2024-01-01 00:00:00 ┆ 2025-12-31 11:38:24 ┆ A3   ┆ 3                ┆ NaN           │
+        │ 2          ┆ 2024-01-01 00:00:00 ┆ 2024-01-01 00:00:00 ┆ A4   ┆ 4                ┆ 2.0           │
+        │ 2          ┆ 2024-01-01 00:00:00 ┆ 2026-12-31 17:27:36 ┆ A5   ┆ 5                ┆ NaN           │
+        └────────────┴─────────────────────┴─────────────────────┴──────┴──────────────────┴───────────────┘
         """
         if len(prediction_time) != len(subject_id) or len(prediction_time) != self.time.shape[0]:
             raise ValueError("Number of prediction times and subject IDs must match batch size")
         schema = {
             "time": pl.Datetime,
-            "code": pl.Int32,
+            "code": self.metadata_df.schema["code/vocab_index"],
             "numeric_value": pl.Float32,
             "subject_id": pl.Int32,
             "prediction_time": pl.Datetime,
@@ -620,7 +629,14 @@ class TrajectoryBatch:
         }
 
         # Create DataFrame directly from the efficient dictionary
-        return pl.from_dict(data_dict, schema=schema)
+        df = pl.from_dict(data_dict, schema=schema)
+
+        # Convert code vocab indexes to strings using the metadata mapping
+        df = df.join(
+            self.metadata_df.select("code", "code/vocab_index"), left_on="code", right_on="code/vocab_index"
+        ).rename({"code_right": "code", "code": "code/vocab_index"})
+
+        return df["subject_id", "prediction_time", "time", "code", "code/vocab_index", "numeric_value"]
 
 
 def get_time_days_delta(

@@ -23,6 +23,7 @@ from meds_torch.models import (
     MODEL_LOSS_KEY,
     MODEL_PRED_PROBA_KEY,
     MODEL_PRED_STATUS_KEY,
+    MODEL_PREFIX,
     MODEL_TOKENS_KEY,
 )
 from meds_torch.schemas.predict_schema import validate_prediction_data
@@ -154,34 +155,46 @@ def process_predictions(predictions: list[dict[str, Any]], model_keys: dict[str,
         Polars DataFrame with processed data
 
     Examples:
-    >>> # Mixed dimension example
+    >>> # Mixed dimension example with MODEL// prefixed keys
     >>> batch1 = {
     ...     '1d': torch.tensor([1., 2.]),
     ...     '2d': torch.tensor([[3., 4.], [5., 6.]]),
-    ...     '3d': torch.tensor([[[7., 8.], [9., 10.]], [[11., 12.], [13., 14.]]])
+    ...     '3d': torch.tensor([[[7., 8.], [9., 10.]], [[11., 12.], [13., 14.]]]),
+    ...     'MODEL//extra': torch.tensor([[100., 200.], [300., 400.]]),
+    ...     'MODEL//another': torch.tensor([1000., 2000.]),
+    ...     'not_model': torch.tensor([9999., 8888.])  # Should be ignored
     ... }
     >>> batch2 = {
     ...     '1d': torch.tensor([15., 16.]),
     ...     '2d': torch.tensor([[17., 18.], [19., 20.]]),
-    ...     '3d': torch.tensor([[[21., 22.], [23., 24.]], [[25., 26.], [27., 28.]]])
+    ...     '3d': torch.tensor([[[21., 22.], [23., 24.]], [[25., 26.], [27., 28.]]]),
+    ...     'MODEL//extra': torch.tensor([[500., 600.], [700., 800.]]),
+    ...     'MODEL//another': torch.tensor([3000., 4000.]),
+    ...     'not_model': torch.tensor([7777., 6666.])  # Should be ignored
     ... }
     >>> predictions = [batch1, batch2]
     >>> keys = {'1d': 'scalar', '2d': 'vector', '3d': 'matrix'}
     >>> df = process_predictions(predictions, keys)
     >>> df.shape[0]  # Number of rows
     4
-    >>> df.sort("scalar")
-    shape: (4, 3)
-    ┌────────┬──────────────┬──────────────────────────────┐
-    │ scalar ┆ vector       ┆ matrix                       │
-    │ ---    ┆ ---          ┆ ---                          │
-    │ f64    ┆ list[f64]    ┆ list[list[f64]]              │
-    ╞════════╪══════════════╪══════════════════════════════╡
-    │ 1.0    ┆ [3.0, 4.0]   ┆ [[7.0, 8.0], [9.0, 10.0]]    │
-    │ 2.0    ┆ [5.0, 6.0]   ┆ [[11.0, 12.0], [13.0, 14.0]] │
-    │ 15.0   ┆ [17.0, 18.0] ┆ [[21.0, 22.0], [23.0, 24.0]] │
-    │ 16.0   ┆ [19.0, 20.0] ┆ [[25.0, 26.0], [27.0, 28.0]] │
-    └────────┴──────────────┴──────────────────────────────┘
+    >>> sorted_df = df.sort("scalar")
+    >>> sorted_df.columns
+    ['scalar', 'vector', 'matrix', 'MODEL//extra', 'MODEL//another']
+    >>> len(sorted_df.columns)  # Should include original columns plus MODEL_ columns
+    5
+    >>> sorted_df
+    shape: (4, 5)
+    ┌────────┬──────────────┬──────────────────────────────┬────────────────┬────────────────┐
+    │ scalar ┆ vector       ┆ matrix                       ┆ MODEL//extra   ┆ MODEL//another │
+    │ ---    ┆ ---          ┆ ---                          ┆ ---            ┆ ---            │
+    │ f64    ┆ list[f64]    ┆ list[list[f64]]              ┆ list[f64]      ┆ f64            │
+    ╞════════╪══════════════╪══════════════════════════════╪════════════════╪════════════════╡
+    │ 1.0    ┆ [3.0, 4.0]   ┆ [[7.0, 8.0], [9.0, 10.0]]    ┆ [100.0, 200.0] ┆ 1000.0         │
+    │ 2.0    ┆ [5.0, 6.0]   ┆ [[11.0, 12.0], [13.0, 14.0]] ┆ [300.0, 400.0] ┆ 2000.0         │
+    │ 15.0   ┆ [17.0, 18.0] ┆ [[21.0, 22.0], [23.0, 24.0]] ┆ [500.0, 600.0] ┆ 3000.0         │
+    │ 16.0   ┆ [19.0, 20.0] ┆ [[25.0, 26.0], [27.0, 28.0]] ┆ [700.0, 800.0] ┆ 4000.0         │
+    └────────┴──────────────┴──────────────────────────────┴────────────────┴────────────────┘
+    >>> # Test error handling
     >>> del predictions[1]['1d']
     >>> import pytest
     >>> with pytest.raises(RuntimeError):
@@ -189,6 +202,7 @@ def process_predictions(predictions: list[dict[str, Any]], model_keys: dict[str,
     """
     predict_df = pl.DataFrame()
 
+    # Process explicitly defined model keys
     for key in model_keys:
         if key not in predictions[0]:
             continue
@@ -201,13 +215,26 @@ def process_predictions(predictions: list[dict[str, Any]], model_keys: dict[str,
 
         key_name = model_keys[key]
         try:
-            # Process the tensor into appropriate format
             processed_data = process_tensor_batches(predictions, key)
-
-            # Create a Polars series from the processed data
             predict_df = predict_df.with_columns(pl.Series(processed_data).alias(key_name))
         except Exception as e:
             raise RuntimeError(f"Error processing key {key}: {str(e)}")
+
+    # Process any additional MODEL_ prefixed keys not in model_keys
+    for key in predictions[0].keys():
+        if key.startswith(MODEL_PREFIX) and key not in model_keys:
+            if not isinstance(predictions[0][key], torch.Tensor):
+                continue
+
+            if len(predictions[0][key].shape) == 0:  # skip scalars
+                continue
+
+            try:
+                processed_data = process_tensor_batches(predictions, key)
+                # Use the key itself as the column name for additional MODEL_ keys
+                predict_df = predict_df.with_columns(pl.Series(processed_data).alias(key))
+            except Exception as e:
+                raise RuntimeError(f"Error processing {MODEL_PREFIX} prefixed key {key}: {str(e)}")
 
     return predict_df
 

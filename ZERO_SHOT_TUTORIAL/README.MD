@@ -370,7 +370,7 @@ TASK_CONFIG_PATH=${TASKS_DIR}/${TASK_NAME}.yaml
 
 meds-torch-generate model=eic_forecasting experiment=eic_top10_forecast_mtr \
     model/trajectory_labeler=aces_schema_labeler model.trajectory_labeler.yaml_path=$TASK_CONFIG_PATH \
-    data.dataloader.batch_size=512 model.generate_id=0 \
+    data.dataloader.batch_size=512 model.generate_id=0 trainer.devices=[0] data.predict_dataset=test \
 	data.do_include_subject_id=true data.do_include_prediction_time=true data.do_include_end_time=true \
     data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
     paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
@@ -380,7 +380,7 @@ meds-torch-generate model=eic_forecasting experiment=eic_top10_forecast_mtr \
 
 meds-torch-generate --multirun model=eic_forecasting experiment=eic_top10_forecast_mtr \
     model/trajectory_labeler=aces_schema_labeler model.trajectory_labeler.yaml_path=$TASK_CONFIG_PATH \
-    data.dataloader.batch_size=64 model.generate_id="range(0,$NUM_SAMPLES)" \
+    data.dataloader.batch_size=64 model.generate_id="range(0,$NUM_SAMPLES)" trainer.devices=[0] data.predict_dataset=test\
 	data.do_include_subject_id=true data.do_include_prediction_time=true \
     data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
     paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
@@ -407,7 +407,7 @@ TASK_CONFIG_PATH=${TASKS_DIR}/${TASK_NAME}.yaml
 
 meds-torch-generate model=eic_forecasting experiment=eic_forecast_mtr \
     model/trajectory_labeler=aces_schema_labeler model.trajectory_labeler.yaml_path=$TASK_CONFIG_PATH \
-    data.dataloader.batch_size=512 model.generate_id=0 \
+    data.dataloader.batch_size=512 model.generate_id=0 trainer.devices=[0] data.predict_dataset=test \
 	data.do_include_subject_id=true data.do_include_prediction_time=true data.do_include_end_time=true \
     data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
     paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
@@ -416,233 +416,4 @@ meds-torch-generate model=eic_forecasting experiment=eic_forecast_mtr \
 
 ```
 
-We can now see the logits over the input data:
-
-```console
-PRETRAIN_OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep/
-MODEL_SWEEP_DIR=$(meds-torch-latest-dir path=${PRETRAIN_OUTPUT_DIR})
-BEST_CHECKPOINT=${MODEL_SWEEP_DIR}/checkpoints/best_model.ckpt
-BEST_CONFIG=${MODEL_SWEEP_DIR}/best_config.json
-MEDS_DIR=${ROOT_DIR}/meds/
-TENSOR_DIR=${ROOT_DIR}/eic_top10_tensors/
-OUTPUT_DIR=/storage/nassim/tmp/predict/
-TASKS_DIR=${MEDS_DIR}/tasks/
-TASK_NAME="mortality/in_icu/first_24h"
-# Let's generate 20 trajectories
-NUM_SAMPLES=20
-
-
-meds-torch-predict --multirun model=eic_forecasting \
-    model.generate_id="range(0,$NUM_SAMPLES)" experiment=eic_top10_forecast_mtr \
-    data.do_include_subject_id=true data.do_include_prediction_time=true \
-    data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
-    paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
-    paths.data_dir=${TENSOR_DIR} paths.output_dir=${OUTPUT_DIR} \
-    "hydra.searchpath=[$(pwd)/TUTORIAL/configs/]"
-```
-
-## Run zero-shot by:
-
-- increasing the `NUM_SAMPLES`
-- setting a zero-shot labeler for a task
-  - for the task of predicting mortality within 48 hours given the first 24 hours of an icu admission, we add the zero-shot labeler args  `model/zero_shot_labeler=time_to_event_labeler model.zero_shot_labeler.target_codes=[203] model.zero_shot_labeler.time_length=0.0054757`. the Death code is code 203, check the \$\{TENSOR_DIR}/metadata/codes.parquet file to see the MEDS_DEATH code/vocab_index when you run this. The times are in years so 2/365.25 gives us 48 hours (2 days).
-- Optionally, select a time based budget, rather than a max_seq_len budget by setting `model/backbone/generation_budget=years model.backbone.generation_budget.value=0.0054757 and increase the batch size for more speed with data.dataloader.batch_size=1024`
-
-```console
-CUDA_VISIBLE_DEVICES=0
-PRETRAIN_OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep/
-MODEL_SWEEP_DIR=$(meds-torch-latest-dir path=${PRETRAIN_OUTPUT_DIR})
-BEST_CHECKPOINT=${MODEL_SWEEP_DIR}/checkpoints/best_model.ckpt
-BEST_CONFIG=${MODEL_SWEEP_DIR}/best_config.json
-MEDS_DIR=${ROOT_DIR}/meds/
-TENSOR_DIR=${ROOT_DIR}/eic_top10_tensors/
-OUTPUT_DIR=/storage/nassim/tmp/zero-shot/
-TASKS_DIR=${MEDS_DIR}/tasks/
-TASK_NAME="mortality/in_icu/first_24h"
-
-# for max_seq_len budget
-meds-torch-predict --multirun model/zero_shot_labeler=time_to_event_labeler model=eic_forecasting \
-    model.generate_id="range(0,100)" experiment=eic_top10_forecast_mtr \
-    model.zero_shot_labeler.target_codes=[203] model.zero_shot_labeler.time_length=0.0054757 \
-    data.do_include_subject_id=true data.do_include_prediction_time=true \
-    data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
-    paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
-    paths.data_dir=${TENSOR_DIR} paths.output_dir=${OUTPUT_DIR} \
-    "hydra.searchpath=[$(pwd)/TUTORIAL/configs/]"
-
-# for time budget
-meds-torch-predict --multirun model/zero_shot_labeler=time_to_event_labeler model/backbone/generation_budget=years model=eic_forecasting \
-    model.backbone.generation_budget.value=0.0054757 data.dataloader.batch_size=512 \
-    model.generate_id="range(0,10)" experiment=eic_top10_forecast_mtr \
-    model.zero_shot_labeler.target_codes=[203] model.zero_shot_labeler.time_length=0.0054757 \
-    data.do_include_subject_id=true data.do_include_prediction_time=true \
-    data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
-    paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
-    paths.data_dir=${TENSOR_DIR} paths.output_dir=${OUTPUT_DIR} \
-    "hydra.searchpath=[$(pwd)/TUTORIAL/configs/]"
-
-CUDA_VISIBLE_DEVICES=0
-PRETRAIN_OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep_6layer_8nhead/
-MODEL_SWEEP_DIR=$(meds-torch-latest-dir path=${PRETRAIN_OUTPUT_DIR})
-BEST_CHECKPOINT=${MODEL_SWEEP_DIR}/checkpoints/best_model.ckpt
-BEST_CONFIG=${MODEL_SWEEP_DIR}/best_config.json
-MEDS_DIR=${ROOT_DIR}/meds/
-TENSOR_DIR=${ROOT_DIR}/eic_top10_tensors/
-OUTPUT_DIR=/storage/nassim/tmp/zero-shot/
-TASKS_DIR=${MEDS_DIR}/tasks/
-TASK_NAME="mortality/in_icu/first_24h"
-
-# for time budget -- /storage/nassim/tmp/zero-shot/2024-11-13_01-42-22_821171/
-meds-torch-predict --multirun model/zero_shot_labeler=time_to_event_labeler \
-    model/backbone/generation_budget=years model=eic_forecasting \
-    model.backbone.generation_budget.value=0.0054757 data.dataloader.batch_size=64 \
-    model.generate_id="range(0,10)" experiment=eic_top10_forecast_large_mtr \
-    model.zero_shot_labeler.target_codes=[203] model.zero_shot_labeler.time_length=0.0054757 \
-    data.do_include_subject_id=true data.do_include_prediction_time=true \
-    data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
-    paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
-    paths.data_dir=${TENSOR_DIR} paths.output_dir=${OUTPUT_DIR} \
-    "hydra.searchpath=[$(pwd)/TUTORIAL/configs/]"
-
-CUDA_VISIBLE_DEVICES=6
-PRETRAIN_OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep_16tokendim/
-MODEL_SWEEP_DIR=$(meds-torch-latest-dir path=${PRETRAIN_OUTPUT_DIR})
-BEST_CHECKPOINT=${MODEL_SWEEP_DIR}/checkpoints/best_model.ckpt
-BEST_CONFIG=${MODEL_SWEEP_DIR}/best_config.json
-MEDS_DIR=${ROOT_DIR}/meds/
-TENSOR_DIR=${ROOT_DIR}/eic_top10_tensors/
-OUTPUT_DIR=/storage/nassim/tmp/zero-shot/
-TASKS_DIR=${MEDS_DIR}/tasks/
-TASK_NAME="mortality/in_icu/first_24h"
-
-# for time budget --
-meds-torch-predict --multirun model/zero_shot_labeler=time_to_event_labeler \
-    model/backbone/generation_budget=years model=eic_forecasting model.token_dim=16 \
-    model.backbone.generation_budget.value=0.0054757 data.dataloader.batch_size=64 \
-    model.generate_id="range(0,10)" experiment=eic_top10_forecast_mtr \
-    model.zero_shot_labeler.target_codes=[203] model.zero_shot_labeler.time_length=0.0054757 \
-    data.do_include_subject_id=true data.do_include_prediction_time=true \
-    data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
-    paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
-    paths.data_dir=${TENSOR_DIR} paths.output_dir=${OUTPUT_DIR} \
-    "hydra.searchpath=[$(pwd)/TUTORIAL/configs/]"
-
-```
-
-Results for 1 sample:
-
-- 1 sample (max_seq_len budget): /storage/nassim/tmp/zero-shot/2024-11-12_12-04-53_670984/predict.parquet
-- 1 sample (time budget): /storage/nassim/tmp/zero-shot/2024-11-12_13-16-06_535430
-- 100 sample (max_seq_len budget): /storage/nassim/tmp/predict/2024-11-12_12-37-34_557897/predict.parquet
-- 10 sample time budget: /storage/nassim/tmp/zero-shot/2024-11-13_01-15-39_138118/
-- 10 sample time budget (large): /storage/nassim/tmp/zero-shot/2024-11-13_01-48-26_351350
--
-
-## Generate trajectories for analysis
-
-```console
-
-CUDA_VISIBLE_DEVICES=2
-PRETRAIN_OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep/
-MODEL_SWEEP_DIR=$(meds-torch-latest-dir path=${PRETRAIN_OUTPUT_DIR})
-BEST_CHECKPOINT=${MODEL_SWEEP_DIR}/checkpoints/best_model.ckpt
-BEST_CONFIG=${MODEL_SWEEP_DIR}/best_config.json
-MEDS_DIR=${ROOT_DIR}/meds/
-TENSOR_DIR=${ROOT_DIR}/eic_top10_tensors/
-OUTPUT_DIR=/storage/nassim/tmp/generate/
-TASKS_DIR=${MEDS_DIR}/tasks/
-TASK_NAME="mortality/in_icu/first_24h"
-
-
-meds-torch-generate --multirun model/backbone/generation_budget=years model=eic_forecasting \
-    model.backbone.generation_budget.value=0.0054757 data.dataloader.batch_size=64 \
-    model.generate_id="range(0,100)" experiment=eic_top10_forecast_mtr \
-	data.do_include_subject_id=true data.do_include_prediction_time=true \
-    data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
-    paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
-    paths.data_dir=${TENSOR_DIR} paths.output_dir=${OUTPUT_DIR} \
-    "hydra.searchpath=[$(pwd)/TUTORIAL/configs/]"
-
-
-CUDA_VISIBLE_DEVICES=3
-PRETRAIN_OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep_6layer_8nhead/
-MODEL_SWEEP_DIR=$(meds-torch-latest-dir path=${PRETRAIN_OUTPUT_DIR})
-BEST_CHECKPOINT=${MODEL_SWEEP_DIR}/checkpoints/best_model.ckpt
-BEST_CONFIG=${MODEL_SWEEP_DIR}/best_config.json
-MEDS_DIR=${ROOT_DIR}/meds/
-TENSOR_DIR=${ROOT_DIR}/eic_top10_tensors/
-OUTPUT_DIR=/storage/nassim/tmp/generate/
-TASKS_DIR=${MEDS_DIR}/tasks/
-TASK_NAME="mortality/in_icu/first_24h"
-
-
-meds-torch-generate --multirun model/backbone/generation_budget=years model=eic_forecasting \
-    model.backbone.generation_budget.value=0.0054757 data.dataloader.batch_size=64 \
-    model.generate_id="range(0,100)" experiment=eic_top10_forecast_large_mtr \
-    data.do_include_subject_id=true data.do_include_prediction_time=true \
-    data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
-    paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
-    paths.data_dir=${TENSOR_DIR} paths.output_dir=${OUTPUT_DIR} \
-    "hydra.searchpath=[$(pwd)/TUTORIAL/configs/]"
-
-CUDA_VISIBLE_DEVICES=1
-PRETRAIN_OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep_16tokendim/
-MODEL_SWEEP_DIR=$(meds-torch-latest-dir path=${PRETRAIN_OUTPUT_DIR})
-BEST_CHECKPOINT=${MODEL_SWEEP_DIR}/checkpoints/best_model.ckpt
-BEST_CONFIG=${MODEL_SWEEP_DIR}/best_config.json
-MEDS_DIR=${ROOT_DIR}/meds/
-TENSOR_DIR=${ROOT_DIR}/eic_top10_tensors/
-OUTPUT_DIR=/storage/nassim/tmp/generate/
-TASKS_DIR=${MEDS_DIR}/tasks/
-TASK_NAME="mortality/in_icu/first_24h"
-
-
-meds-torch-generate --multirun model/backbone/generation_budget=years model=eic_forecasting model.token_dim=16 \
-    model.backbone.generation_budget.value=0.0054757 data.dataloader.batch_size=64 \
-     model.generate_id="range(0,100)" experiment=eic_top10_forecast_mtr \
-	data.do_include_subject_id=true data.do_include_prediction_time=true \
-    data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
-    paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
-    paths.data_dir=${TENSOR_DIR} paths.output_dir=${OUTPUT_DIR} \
-    "hydra.searchpath=[$(pwd)/TUTORIAL/configs/]"
-
-```
-
-Let's train a much larger model now, we add the args:
-
-- `model.backbone.n_layers=6 model.backbone.nheads=8`
-- TODO: consider modifying `model.token_dim=128`
-- - 100 samples small: /storage/nassim/tmp/generate/2024-11-13_02-17-06_228003/generated_trajectory.parquet
-  - 100 samples big: ???
-
-```console
-# unset CUDA_VISIBLE_DEVICES # remove setting of CUDA_VISIBLE_DEVICES, so all gpus can be used
-# or set some specific devices
-export CUDA_VISIBLE_DEVICES=2,3,4,5
-
-
-
-MEDS_DIR=${ROOT_DIR}/meds/
-EIC_DIR=${ROOT_DIR}/eic2_top10_tensors # set to the directory in which you want to output the tensorized MIMIC-IV data
-OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep_12layer_12nhead/
-
-meds-torch-tune model=eic_forecasting trainer=gpu model.backbone.n_layers=12 model.backbone.nheads=12 \
-    callbacks=tune_default trainer=ray hparams_search=ray_tune \
-    hparams_search.ray.resources_per_trial.GPU=1  hparams_search.ray.num_samples=4 \
-    experiment=eic_top10_forecast_mtr paths.data_dir=${EIC_DIR} \
-    data.subsequence_sampling_strategy=random \
-    paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
-    hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/TUTORIAL/configs/]
-
-MEDS_DIR=${ROOT_DIR}/meds/
-EIC_DIR=${ROOT_DIR}/eic_top10_tensors # set to the directory in which you want to output the tensorized MIMIC-IV data
-OUTPUT_DIR=/storage/nassim/tmp/eic_top_10_hparam_sweep_16tokendim/
-
-meds-torch-tune model=eic_forecasting trainer=gpu model.token_dim=16 \
-    callbacks=tune_default trainer=ray hparams_search=ray_tune \
-    hparams_search.ray.resources_per_trial.GPU=1  hparams_search.ray.num_samples=8 \
-    experiment=eic_top10_forecast_mtr paths.data_dir=${EIC_DIR} \
-    data.subsequence_sampling_strategy=random \
-    paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
-    hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/TUTORIAL/configs/]
-```
+**Checkout the `abnormal_lab_inference.sh` script for how to loop through a suite of tasks.**

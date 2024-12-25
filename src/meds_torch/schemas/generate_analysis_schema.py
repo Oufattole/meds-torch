@@ -15,7 +15,8 @@ MEDS_TRAJECTORY_SCHEMA = OrderedDict(
         ("subject_id", pa.int64()),
         ("prediction_time", pa.timestamp("ns")),
         ("time", pa.timestamp("ns")),
-        ("code", pa.int64()),
+        ("code", pa.string()),
+        ("code/vocab_index", pa.int64()),
         ("numeric_value", pa.float64()),
         ("TRAJECTORY_TYPE", pa.string()),
     ]
@@ -46,26 +47,29 @@ def validate_generated_data(df):
     >>> import polars as pl
     >>> from datetime import datetime
     >>> df = pl.DataFrame({
-    ...                    'time': [datetime(2024, 7, 18, 16, 21, 41)] * 3,
-    ...                    'code': [55, 59, 61],
-    ...                    'numeric_value': [0.625, 0.625, float('nan')],
-    ...                    'subject_id': [109767.0, 109767.0, 109767.0],
-    ...                    'prediction_time': [datetime(2024, 7, 18, 16, 21, 41)] * 3,
-    ...                    'TRAJECTORY_TYPE': ['INPUT_DATA'] * 3
-    ...                 })
+    ...     'time': [datetime(2024, 7, 18, 16, 21, 41)] * 3,
+    ...     'code': ['A1', 'A2', 'A3'],
+    ...     'code/vocab_index': [55, 59, 61],
+    ...     'numeric_value': [0.625, 0.625, float('nan')],
+    ...     'subject_id': [109767, 109767, 109767],
+    ...     'prediction_time': [datetime(2024, 7, 18, 16, 21, 41)] * 3,
+    ...     'TRAJECTORY_TYPE': ['INPUT_DATA'] * 3
+    ... })
     >>> validate_generated_data(df)
     pyarrow.Table
     subject_id: int64
     prediction_time: timestamp[ns]
     time: timestamp[ns]
-    code: int64
+    code: string
+    code/vocab_index: int64
     numeric_value: double
     TRAJECTORY_TYPE: string
     ----
     subject_id: [[109767,109767,109767]]
     prediction_time: [[2024-07-18 16:21:41.000000000,2024-07-18 16:21:41.000000000,2024-07-18 16:21:41.00...]]
     time: [[2024-07-18 16:21:41.000000000,2024-07-18 16:21:41.000000000,2024-07-18 16:21:41.000000000]]
-    code: [[55,59,61]]
+    code: [["A1","A2","A3"]]
+    code/vocab_index: [[55,59,61]]
     numeric_value: [[0.625,0.625,nan]]
     TRAJECTORY_TYPE: [["INPUT_DATA","INPUT_DATA","INPUT_DATA"]]
     """

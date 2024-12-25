@@ -35,3 +35,5 @@ top_k_acc:
   - 10
 next_token_auc: false
 max_tokens_budget: null
+return_logits: false
+return_tokens: false

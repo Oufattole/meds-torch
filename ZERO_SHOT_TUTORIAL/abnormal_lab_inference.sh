@@ -65,7 +65,6 @@ TASKS=(
     # "abnormal_lab/icu_discharge/platets/90d"
 )
 
-CUDA_VISIBLE_DEVICES=0
 # Define other required variables
 ROOT_DIR="/storage/shared/mimic-iv/meds_v0.3.2/"  # Replace with your actual root directory
 PRETRAIN_OUTPUT_DIR="${ROOT_DIR}/results/zero_shot/eic_hparam_sweep"
@@ -86,7 +85,7 @@ for TASK_NAME in "${TASKS[@]}"; do
 
     meds-torch-generate --multirun model=eic_forecasting experiment=eic_forecast_mtr \
         model/trajectory_labeler=aces_schema_labeler model.trajectory_labeler.yaml_path=$TASK_CONFIG_PATH \
-        data.dataloader.batch_size=512 model.generate_id="range(0,$NUM_SAMPLES)" trainer.devices=[0] \
+        data.dataloader.batch_size=512 model.generate_id="range(0,$NUM_SAMPLES)" trainer.devices=[0] data.predict_dataset=test \
         data.do_include_subject_id=true data.do_include_prediction_time=true data.do_include_end_time=true \
         data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
         paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
