@@ -417,3 +417,57 @@ meds-torch-generate model=eic_forecasting experiment=eic_forecast_mtr \
 ```
 
 **Checkout the `abnormal_lab_inference.sh` script for how to loop through a suite of tasks.**
+
+## Controlled Analysis of Trajectories
+
+**If you just want to generate N tokens given the first M tokens from a patient trajectory, run the following command:**
+
+- `data.subsequence_sampling_strategy=from_start` makes the model start at the beginning of the patient trajectory
+- `data.predict_dataset=test` makes generation run on the `test` set of patients, but you can also use the `val` or `train` set.
+- `trainer.devices=[0]` uses gpu id 0 for inference
+- `model.generate_id="range(0,$NUM_SAMPLES)"` paired with the `--multirun` flag will make this run i a for loop 20 times with the generate_id ranging from 0 to 19 -- i.e. generating 20 samples for each patient. You can remove the `--multirun` flag and set `model.generate_id=0` to just generate a single sample.
+
+```console
+PRETRAIN_OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/eic_hparam_sweep
+MODEL_SWEEP_DIR=$(meds-torch-latest-dir path=${PRETRAIN_OUTPUT_DIR})
+BEST_CHECKPOINT=${MODEL_SWEEP_DIR}/checkpoints/best_model.ckpt
+BEST_CONFIG=${MODEL_SWEEP_DIR}/best_config.json
+MEDS_DIR=${ROOT_DIR}/meds/
+TENSOR_DIR=${ROOT_DIR}/eic_tensors/
+N=10
+M=10
+OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/inference/eic/FIRST${N}_GENERATE${M}/
+# Let's generate 20 trajectories
+NUM_SAMPLES=20
+
+meds-torch-generate --multirun model=eic_forecasting experiment=eic_forecast_mtr \
+    model.max_tokens_budget=${M} data.subsequence_sampling_strategy=from_start \
+    data.dataloader.batch_size=512 model.generate_id="range(0,$NUM_SAMPLES)" trainer.devices=[0] data.predict_dataset=test \
+	data.do_include_subject_id=true data.do_include_prediction_time=true data.do_include_end_time=true \
+    paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
+    paths.data_dir=${TENSOR_DIR} paths.output_dir=${OUTPUT_DIR} \
+    "hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]"
+```
+
+Note that you can find the generated patient trajectories in
+`${OUTPUT_DIR}/<DATE>/generated_trajectory_*.parquet`
+Note that in the actual directory `${OUTPUT_DIR}/<DATE>/` you will find a `generated_trajectory_.parquet`, `generated_trajectory_.parquet`, ..., `generated_trajectory_19.parquet`
+
+If you used an aces_schema_labeler, there will be zero-shot prediction results in
+
+`${OUTPUT_DIR}/<DATE>/predictions_*.parquet`
+
+You can load all the samples simultaneously in a jupyter notebook with:
+
+```python
+# pip install polars
+import polars as pl
+
+prediction_df = pl.read_parquet(f"{OUTPUT_DIR}/<DATE>/predictions_*.parquet")
+generate_df = pl.read_parquet(f"{OUTPUT_DIR}/<DATE>/generated_trajectory_*.parquet")
+```
+
+See the `inference_analysis.ipynb` notebook to learn
+
+1. how to checkout what the actual input tokens for patient data are and interpret them using the metadata.
+2. how to prompt the generative model with a custom sequence of codes.

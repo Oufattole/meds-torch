@@ -174,5 +174,6 @@ logs/*
 **/.logs/*
 output/*
 outputs/*
+outputs
 
 wandb/

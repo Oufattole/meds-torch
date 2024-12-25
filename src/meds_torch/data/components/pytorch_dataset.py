@@ -887,8 +887,14 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             out["subject_id"] = subject_id
         if self.config.do_include_prediction_time:
             if not self.has_task:
-                raise ValueError("Cannot include prediction_time without a task specified!")
-            out["prediction_time"] = self.prediction_times[idx]
+                if not self.config.do_include_end_time:
+                    raise ValueError(
+                        "Cannot include prediction_time without a task specified " "or do_include_end_time!"
+                    )
+                else:
+                    out["prediction_time"] = out["end_time"]
+            else:
+                out["prediction_time"] = self.prediction_times[idx]
 
         if self.labels is not None:
             out[BINARY_LABEL_COL] = self.labels[idx]
