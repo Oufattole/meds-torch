@@ -24,6 +24,13 @@ trainer:
   min_epochs: 1
   max_epochs: 10
   gradient_clip_val: 1.0
+  accelerator: gpu
+
+  # for distributed training
+  devices: 8
+  precision: 16
+  strategy: ddp_find_unused_parameters_true
+  sync_batchnorm: true
 
 data:
   dataloader:
