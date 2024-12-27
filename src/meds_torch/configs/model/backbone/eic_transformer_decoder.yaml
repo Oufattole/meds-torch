@@ -1,5 +1,4 @@
 defaults:
-  - generation_budget: seq_len
   - default
   - _self_
 
@@ -20,6 +19,7 @@ model:
     attn_dropout: ${model.backbone.dropout}  # dropout post-attention
     ff_dropout: ${model.backbone.dropout}  # feedforward dropout
     rotary_pos_emb: true
+    attn_flash: True
 
 token_emb: null # use x-transformers to embed tokens
 max_seq_len: ${model.max_seq_len} # is the sampling temperature, `0` corresponds to greedy sampling

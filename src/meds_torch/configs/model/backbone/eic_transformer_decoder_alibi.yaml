@@ -1,5 +1,4 @@
 defaults:
-  - generation_budget: seq_len
   - default
   - _self_
 

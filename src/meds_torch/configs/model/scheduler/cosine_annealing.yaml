@@ -1,0 +1,10 @@
+instantiate:
+  _target_: pl_bolts.optimizers.lr_scheduler.LinearWarmupCosineAnnealingLR
+  _partial_: true
+  warmup_epochs: ${trainer.min_epochs}  # number of epochs for linear warmup
+  max_epochs: ${trainer.max_epochs}    # total number of epochs
+  warmup_start_lr: 1e-8  # starting lr for warmup
+  eta_min: 1e-6     # minimum lr for cosine annealing
+
+extra_kwargs:
+  monitor: val/loss

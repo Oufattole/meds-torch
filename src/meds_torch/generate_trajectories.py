@@ -48,7 +48,8 @@ class DummyTrainer:
                     datetime(2024, 1, 1),
                     datetime(2026, 12, 31, 17, 27, 36),
                 ],
-                "code": [1, 2, 3, 4, 5],
+                "code": ["A1", "A2", "A3", "A4", "A5"],
+                "code/vocab_index": [1, 2, 3, 4, 5],
                 "numeric_value": [0.5, 1.0, float("nan"), 2.0, float("nan")],
                 "subject_id": [1, 1, 1, 2, 2],
                 "prediction_time": [
@@ -62,7 +63,8 @@ class DummyTrainer:
         ).with_columns(
             [
                 pl.col("time").cast(pl.Datetime(time_unit="ns")),
-                pl.col("code").cast(pl.Int32),
+                pl.col("code").cast(pl.String),
+                pl.col("code/vocab_index").cast(pl.Int32),
                 pl.col("numeric_value").cast(pl.Float32),
                 pl.col("subject_id").cast(pl.Int32),
                 pl.col("prediction_time").cast(pl.Datetime(time_unit="ns")),
@@ -141,19 +143,19 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     >>> generate_trajectories(cfg)
     >>> assert Path(cfg.paths.generated_trajectory_fp).exists()
     >>> df = pl.read_parquet(cfg.paths.generated_trajectory_fp)
-    >>> print(df.sort(["TRAJECTORY_TYPE", "subject_id"]))  # doctest: +NORMALIZE_WHITESPACE
+    >>> print(df.sort(["TRAJECTORY_TYPE", "subject_id"]).drop("TRAJECTORY_TYPE"))
     shape: (5, 6)
-    ┌────────────┬─────────────────────┬─────────────────────┬──────┬───────────────┬─────────────────┐
-    │ subject_id ┆ prediction_time     ┆ time                ┆ code ┆ numeric_value ┆ TRAJECTORY_TYPE │
-    │ ---        ┆ ---                 ┆ ---                 ┆ ---  ┆ ---           ┆ ---             │
-    │ i64        ┆ datetime[ns]        ┆ datetime[ns]        ┆ i64  ┆ f64           ┆ str             │
-    ╞════════════╪═════════════════════╪═════════════════════╪══════╪═══════════════╪═════════════════╡
-    │ 1          ┆ 2024-01-01 00:00:00 ┆ 2024-01-01 00:00:00 ┆ 1    ┆ 1.0           ┆ GENERATE//1     │
-    │ 1          ┆ 2024-01-01 00:00:00 ┆ 2024-07-01 14:54:36 ┆ 2    ┆ 2.0           ┆ GENERATE//1     │
-    │ 1          ┆ 2024-01-01 00:00:00 ┆ 2025-12-31 11:38:24 ┆ 3    ┆ NaN           ┆ GENERATE//1     │
-    │ 2          ┆ 2024-01-01 00:00:00 ┆ 2024-01-01 00:00:00 ┆ 4    ┆ 4.0           ┆ GENERATE//1     │
-    │ 2          ┆ 2024-01-01 00:00:00 ┆ 2026-12-31 17:27:36 ┆ 5    ┆ NaN           ┆ GENERATE//1     │
-    └────────────┴─────────────────────┴─────────────────────┴──────┴───────────────┴─────────────────┘
+    ┌────────────┬─────────────────────┬─────────────────────┬──────┬──────────────────┬───────────────┐
+    │ subject_id ┆ prediction_time     ┆ time                ┆ code ┆ code/vocab_index ┆ numeric_value │
+    │ ---        ┆ ---                 ┆ ---                 ┆ ---  ┆ ---              ┆ ---           │
+    │ i64        ┆ datetime[ns]        ┆ datetime[ns]        ┆ str  ┆ i64              ┆ f64           │
+    ╞════════════╪═════════════════════╪═════════════════════╪══════╪══════════════════╪═══════════════╡
+    │ 1          ┆ 2024-01-01 00:00:00 ┆ 2024-01-01 00:00:00 ┆ A1   ┆ 1                ┆ 1.0           │
+    │ 1          ┆ 2024-01-01 00:00:00 ┆ 2024-07-01 14:54:36 ┆ A2   ┆ 2                ┆ 2.0           │
+    │ 1          ┆ 2024-01-01 00:00:00 ┆ 2025-12-31 11:38:24 ┆ A3   ┆ 3                ┆ NaN           │
+    │ 2          ┆ 2024-01-01 00:00:00 ┆ 2024-01-01 00:00:00 ┆ A4   ┆ 4                ┆ 4.0           │
+    │ 2          ┆ 2024-01-01 00:00:00 ┆ 2026-12-31 17:27:36 ┆ A5   ┆ 5                ┆ NaN           │
+    └────────────┴─────────────────────┴─────────────────────┴──────┴──────────────────┴───────────────┘
     """
     seed_everything(cfg.seed)
     loguru.logger.info(f"Set all seeds to {cfg.seed}")
@@ -169,7 +171,8 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
 
     log.info(f"Instantiating model <{cfg.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.model)
-    model.load_state_dict(torch.load(cfg.ckpt_path)["state_dict"])
+    checkpoint = torch.load(cfg.ckpt_path, map_location="cpu")
+    model.load_state_dict(checkpoint["state_dict"])
 
     log.info("Instantiating loggers...")
     logger: list[Logger] = instantiate_loggers(cfg.get("logger"))
