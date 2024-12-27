@@ -5,6 +5,8 @@ from collections import OrderedDict
 import polars as pl
 import pyarrow as pa
 
+from meds_torch.models import MODEL_PRED_PROBA_KEY, MODEL_PREFIX
+
 # Constants for field grouping and ordering
 SCHEMA_FIELD_ORDER = OrderedDict(
     [
@@ -63,7 +65,7 @@ def validate_prediction_schema(df_schema: pa.Schema) -> bool:
     """
     Validates that the provided schema matches the required meds-evaluation schema.
     """
-    df_fields: set[str] = set(df_schema.names)
+    df_fields: set[str] = {name for name in df_schema.names if not name.startswith(MODEL_PREFIX)}
 
     # Check required fields
     missing_required = REQUIRED_FIELDS - df_fields
@@ -75,7 +77,7 @@ def validate_prediction_schema(df_schema: pa.Schema) -> bool:
     if has_prediction and not PREDICTION_FIELDS.issubset(df_fields):
         raise ValueError(f"If any prediction field is present, all must be present: {PREDICTION_FIELDS}")
 
-    # Validate field types and order
+    # Validate field types and order for non-MODEL// fields
     for field_name in df_fields:
         expected_type = SCHEMA_FIELD_ORDER.get(field_name)
         if expected_type is None:
@@ -93,21 +95,71 @@ def validate_prediction_schema(df_schema: pa.Schema) -> bool:
 def validate_prediction_data(df: pl.DataFrame) -> pa.Table:
     """
     Validate prediction data against the schema and ensure correct ordering.
+    MODEL// prefixed columns are preserved without validation.
 
     Args:
         df: polars.DataFrame to validate
 
     Returns:
-        polars.DataFrame: Validated data with correct schema and ordering
-    """
-    # Detect which optional components are present
-    has_prediction = all(field in df.columns for field in PREDICTION_FIELDS)
-    has_embeddings = "embeddings" in df.columns
-    has_logits = "logits" in df.columns
-    has_sequence_logits = "logits_sequence" in df.columns
-    has_loss = "loss" in df.columns
+        pyarrow.Table: Validated data with correct schema and ordering
 
-    # Get the validated schema
+    Examples:
+    >>> import polars as pl
+    >>> import pyarrow as pa
+    >>> # Create test data with both core and MODEL// prefixed columns
+    >>> test_df = pl.DataFrame({
+    ...     "subject_id": [1, 2],
+    ...     "prediction_time": ["2024-01-01", "2024-01-02"],
+    ...     "boolean_value": [True, False],
+    ...     "predicted_boolean_value": [True, False],
+    ...     "predicted_boolean_probability": [0.8, 0.3],
+    ...     "MODEL//embeddings": [[1.0, 2.0], [3.0, 4.0]],  # Custom MODEL// column
+    ...     "MODEL//extra_data": [100.0, 200.0],  # Another MODEL// column
+    ...     "embeddings": [[5.0, 6.0], [7.0, 8.0]]  # Core schema column
+    ... })
+    >>>
+    >>> # Validate the data
+    >>> result = validate_prediction_data(test_df)
+    >>>
+    >>> # Check that both core and MODEL// columns are preserved
+    >>> sorted(result.column_names)  # doctest: +NORMALIZE_WHITESPACE
+    ['MODEL//embeddings', 'MODEL//extra_data', 'boolean_value', 'embeddings', 'predicted_boolean_probability',
+     'predicted_boolean_value', 'prediction_time', 'subject_id']
+    >>>
+    >>> # Verify core schema types
+    >>> str(result.schema.field("subject_id").type)
+    'int64'
+    >>> str(result.schema.field("prediction_time").type)
+    'timestamp[ns]'
+    >>> str(result.schema.field("embeddings").type)
+    'list<item: double>'
+    >>>
+    >>> # Verify MODEL// columns are preserved with their types
+    >>> str(result.schema.field("MODEL//embeddings").type)
+    'large_list<item: double>'
+    >>> str(result.schema.field("MODEL//extra_data").type)
+    'double'
+    >>>
+    >>> # Test error case: missing required field
+    >>> bad_df = test_df.drop("subject_id")
+    >>> import pytest
+    >>> with pytest.raises(Exception):
+    ...     validate_prediction_data(bad_df)
+    """
+    # Separate MODEL// columns from core columns
+    model_columns = [
+        col for col in df.columns if col.startswith(MODEL_PREFIX) and col != MODEL_PRED_PROBA_KEY
+    ]
+    core_columns = [col for col in df.columns if not col.startswith(MODEL_PREFIX)]
+
+    # Detect which optional components are present in core columns
+    has_prediction = all(field in core_columns for field in PREDICTION_FIELDS)
+    has_embeddings = "embeddings" in core_columns
+    has_logits = "logits" in core_columns
+    has_sequence_logits = "logits_sequence" in core_columns
+    has_loss = "loss" in core_columns
+
+    # Get the validated schema for core columns
     validated_schema = prediction_analysis_schema(
         include_prediction=has_prediction,
         include_embeddings=has_embeddings,
@@ -116,18 +168,27 @@ def validate_prediction_data(df: pl.DataFrame) -> pa.Table:
         include_loss=has_loss,
     )
 
-    # Ensure columns are in the correct order before converting to arrow
+    # Split dataframe into core and MODEL// parts
+    core_df = df.select(core_columns)
+    model_df = df.select(model_columns)
+
+    # Ensure core columns are in the correct order
     expected_columns = validated_schema.names
-    df = df.select(expected_columns)
+    ordered_core_df = core_df.select(expected_columns)
 
-    # Convert to arrow and validate
-    arrow_table = df.to_arrow().cast(validated_schema)
+    # Convert core columns to arrow with validated schema
+    core_arrow = ordered_core_df.to_arrow().cast(validated_schema)
 
-    # Validate the schema
-    validate_prediction_schema(arrow_table.schema)
+    # Convert MODEL// columns to arrow (without schema validation)
+    model_arrow = model_df.to_arrow()
 
-    # Cast to the validated schema
-    return arrow_table
+    # Combine the tables
+    combined_schema = pa.schema(list(core_arrow.schema) + list(model_arrow.schema))
+    combined_arrays = [core_arrow[name] for name in core_arrow.column_names] + [
+        model_arrow[name] for name in model_arrow.column_names
+    ]
+
+    return pa.Table.from_arrays(combined_arrays, schema=combined_schema)
 
 
 # Example usage:

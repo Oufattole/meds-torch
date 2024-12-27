@@ -1,7 +1,7 @@
 defaults:
   - input_encoder: eic_encoder
   - backbone: eic_transformer_decoder
-  - zero_shot_labeler: null
+  - trajectory_labeler: null
   - optimizer: adam
   - scheduler: null
   - _self_
@@ -26,6 +26,7 @@ store_generated_trajectory: true # whether to store generated trajectory in the 
 # set to false to speed up zero-shot generation
 temperature: 1.0 # sampling temperature
 eos_tokens: null
+log_progress: true
 
 # Autoregressive modeling metric params
 top_k_acc:
@@ -33,3 +34,6 @@ top_k_acc:
   - 5
   - 10
 next_token_auc: false
+max_tokens_budget: null
+return_logits: false
+return_tokens: false

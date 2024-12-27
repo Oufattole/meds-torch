@@ -1,3 +1,0 @@
-# Generate trajectories until reaching the maximum sequence length
-_target_: meds_torch.models.components.transformer_decoder.GenerationBudget.from_seq_len
-value: ${model.max_seq_len}

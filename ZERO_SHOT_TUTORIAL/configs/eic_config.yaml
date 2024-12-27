@@ -32,7 +32,7 @@ stage_configs:
       - code/n_subjects
   custom_filter_measurements:
     _script: "python -m meds_torch.utils.custom_filter_measurements"
-    additional_codes: ["^MEDS_DEATH$", "^MEDS_BIRTH$", "^HOSPITAL_ADMISSION//.*", "^HOSPITAL_DISCHARGE//.*", "^ED_REGISTRATION//.*", "^ED_OUT//.*", "^ICU_ADMISSION//.*", "^ICU_DISCHARGE//.*", "^TIME.*$"]
+    additional_codes: ["^MEDS_DEATH$", "^MEDS_BIRTH$", "^HOSPITAL_ADMISSION//.*", "^HOSPITAL_DISCHARGE//.*", "^ED_REGISTRATION//.*", "^ED_OUT//.*", "^ICU_ADMISSION//.*", "^ICU_DISCHARGE//.*", "^TIME.*$", "^GENDER//.*$", "LAB//52546//mg/dL|LAB//50912//mg/dL|LAB//51081//mg/dL|LAB//52024//mg/dL", "LAB//51645//g/dL|LAB//51222//g/dL|LAB//50811//g/dL|LAB//50855//UNK", "LAB//51221//%|LAB//51638//%|LAB//50810//%", "LAB//51300//K/uL|LAB//51301//K/uL|LAB//51755//K/uL", "LAB//51265//K/uL"]
     min_subjects_per_code: 10000
   reorder_measurments:
     _script: "MEDS_transform-reorder_measurements"

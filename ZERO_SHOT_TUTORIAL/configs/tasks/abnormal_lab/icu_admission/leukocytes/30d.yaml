@@ -1,0 +1,44 @@
+#This config checks for an abnormal leukocytes lab within 30d after ICU_ADMISSION
+predicates:
+  trigger_event:
+    code: {regex: "ICU_ADMISSION//.*"}
+
+  lab:
+    code: {regex: LAB//51300//K/uL|LAB//51301//K/uL|LAB//51755//K/uL}
+
+  lab_0:
+    code: "LAB//51300//K/uL"
+    value_max: 5
+    value_max_inclusive: True
+
+  lab_1:
+    code: "LAB//51301//K/uL"
+    value_max: 5
+    value_max_inclusive: True
+
+  lab_2:
+    code: "LAB//51755//K/uL"
+    value_max: 5
+    value_max_inclusive: True
+
+  abnormal_lab:
+    expr: or(lab_0,lab_1,lab_2)
+
+
+trigger: trigger_event
+
+windows:
+  input:
+    start: NULL
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    index_timestamp: end
+  target:
+    start: input.end
+    end: start + 30d
+    start_inclusive: False
+    end_inclusive: True
+    has:
+      lab: (1, None)
+    label: abnormal_lab

@@ -20,6 +20,7 @@ model:
     attn_dropout: ${model.backbone.dropout}  # dropout post-attention
     ff_dropout: ${model.backbone.dropout}  # feedforward dropout
     rotary_pos_emb: true
+    attn_flash: True
   average_pool_embed: true
 
 token_emb:
