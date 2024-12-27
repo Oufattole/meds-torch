@@ -42,6 +42,8 @@ data:
 
 model:
   token_dim: 128
+  world_size: ${trainer.devices}
+  tau: 14.2857 # 1 / 0.07
   optimizer:
     lr: 0.001
   backbone:

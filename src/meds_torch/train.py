@@ -99,6 +99,10 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     if cfg.get("test"):
         log.info("Starting testing!")
         best_model_path = trainer.checkpoint_callback.best_model_path
+        if "ddp" in cfg.trainer.strategy:
+            metric_dict = {**train_metrics}
+            return metric_dict, object_dict, best_model_path
+
         if best_model_path == "":
             log.warning("Best ckpt not found! Using current weights for testing...")
             best_model_path = None
@@ -117,7 +121,11 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     return metric_dict, object_dict, best_model_path
 
 
-@hydra.main(version_base="1.3", config_path=str(config_yaml.parent.resolve()), config_name=config_yaml.stem)
+@hydra.main(
+    version_base="1.3",
+    config_path=str(config_yaml.parent.resolve()),
+    config_name=config_yaml.stem,
+)
 def main(cfg: DictConfig) -> float | None:
     """Main entry point for training.
 

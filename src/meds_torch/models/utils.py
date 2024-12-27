@@ -1,16 +1,16 @@
-import dataclasses
 import torch
 import torch.distributed as dist
+
 
 class GatherLayer(torch.autograd.Function):
     @staticmethod
     def forward(ctx, tensor):
         """
         Performs an all_gather operation that allows gradients to flow.
-        
+
         Args:
             tensor (Tensor): The tensor to gather from all devices.
-        
+
         Returns:
             Tensor: Concatenated tensor from all devices.
         """
@@ -25,10 +25,10 @@ class GatherLayer(torch.autograd.Function):
     def backward(ctx, grad_output):
         """
         Handles backpropagation for the all_gather operation.
-        
+
         Args:
             grad_output (Tensor): Gradients passed from the next layer.
-        
+
         Returns:
             Tensor: Gradient for the local portion of the tensor.
         """
