@@ -37,8 +37,3 @@ class GatherLayer(torch.autograd.Function):
         # Return the gradient for the local tensor
         local_grad = grad_chunks[dist.get_rank()]
         return local_grad
-
-
-@dataclasses.dataclass
-class OutputBase:
-    loss: torch.Tensor
