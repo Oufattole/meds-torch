@@ -99,7 +99,7 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
     if cfg.get("test"):
         log.info("Starting testing!")
         best_model_path = trainer.checkpoint_callback.best_model_path
-        if "ddp" in cfg.trainer.strategy:
+        if "strategy" in cfg.trainer and "ddp" in cfg.trainer.strategy:
             metric_dict = {**train_metrics}
             return metric_dict, object_dict, best_model_path
 

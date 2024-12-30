@@ -1,10 +1,9 @@
 import numpy as np
-
 import torch
+import torch.distributed as dist
 import torchmetrics
 from omegaconf import DictConfig
 from torch import nn
-import torch.distributed as dist
 
 from meds_torch.models import (
     BACKBONE_EMBEDDINGS_KEY,
