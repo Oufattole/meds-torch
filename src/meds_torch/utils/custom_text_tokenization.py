@@ -163,7 +163,9 @@ def tokenize_text_values(df: pl.DataFrame) -> dict[str, dict]:
     return text_mapping
 
 
-def extract_statics_and_schema(df: pl.LazyFrame) -> tuple[pl.LazyFrame, dict[str, dict]]:
+def extract_statics_and_schema(
+    df: pl.LazyFrame,
+) -> tuple[pl.LazyFrame, dict[str, dict]]:
     """This function extracts static data and schema information (sequence of subject unique times).
 
     Args:
@@ -203,14 +205,17 @@ def extract_statics_and_schema(df: pl.LazyFrame) -> tuple[pl.LazyFrame, dict[str
 
     # This collects the unique times for each subject
     schema_by_subject = dynamic.group_by("subject_id", maintain_order=True).agg(
-        pl.col("time").min().alias("start_time"), pl.col("time").unique(maintain_order=True)
+        pl.col("time").min().alias("start_time"),
+        pl.col("time").unique(maintain_order=True),
     )
 
     result = static_by_subject.join(schema_by_subject, on="subject_id", how="full", coalesce=True)
     return result
 
 
-def extract_seq_of_subject_events(df: pl.LazyFrame) -> tuple[pl.LazyFrame, dict[str, dict]]:
+def extract_seq_of_subject_events(
+    df: pl.LazyFrame,
+) -> tuple[pl.LazyFrame, dict[str, dict]]:
     """This function extracts sequences of subject events, which are sequences of measurements.
 
     Args:
@@ -259,7 +264,7 @@ def extract_seq_of_subject_events(df: pl.LazyFrame) -> tuple[pl.LazyFrame, dict[
         .agg(
             pl.col("code").name.keep(),
             fill_to_nans("numeric_value").name.keep(),
-            fill_to_nans("modality_idx").name.keep() if "text_value" in df.columns else None,
+            (fill_to_nans("modality_idx").name.keep() if "text_value" in df.columns else None),
         )
         .group_by("subject_id", maintain_order=True)
         .agg(
@@ -274,7 +279,9 @@ def extract_seq_of_subject_events(df: pl.LazyFrame) -> tuple[pl.LazyFrame, dict[
 
 
 @hydra.main(
-    version_base=None, config_path=str(PREPROCESS_CONFIG_YAML.parent), config_name=PREPROCESS_CONFIG_YAML.stem
+    version_base=None,
+    config_path=str(PREPROCESS_CONFIG_YAML.parent),
+    config_name=PREPROCESS_CONFIG_YAML.stem,
 )
 def main(cfg: DictConfig):
     hydra_loguru_init()

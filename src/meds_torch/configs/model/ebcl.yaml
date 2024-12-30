@@ -12,6 +12,8 @@ vocab_size: ${data.vocab_size}
 get_representations: false
 task_name: ${data.task_name}
 batch_size: ${data.dataloader.batch_size}
+world_size: 1
+tau: 14.2857 # 1 / 0.07
 
 pre_window_name: window_0
 post_window_name: window_1
