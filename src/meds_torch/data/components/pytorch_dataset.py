@@ -930,5 +930,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                 if isinstance(batch[0][k], datetime):
                     tensorized[k] = [item[k] for item in batch]
                 else:
-                    tensorized[k] = torch.Tensor([item[k] for item in batch])
+                    if k == "boolean_value" and batch[0][k] is None:
+                        tensorized[k] = torch.Tensor([False] * len(batch))
+                    else:
+                        tensorized[k] = torch.Tensor([item[k] for item in batch])
         return tensorized

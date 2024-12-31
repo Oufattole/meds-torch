@@ -266,6 +266,23 @@ for TASK_NAME in "${TASKS[@]}"; do
     aces-cli --multirun hydra/launcher=joblib data=sharded data.standard=meds data.root="$MEDS_DIR/data" "data.shard=$(expand_shards $MEDS_DIR/data)" cohort_dir="${MEDS_DIR}/tasks/" cohort_name="$TASK_NAME" config_path=$CONFIG_PATH
     cp $CONFIG_PATH ${MEDS_DIR}/tasks/${TASK_NAME}.yaml
 done
+
+
+ROOT_DIR="/storage/shared/mimic-iv/meds_v0.3.2/"  # Replace with your actual root directory
+MEDS_DIR=${ROOT_DIR}/meds/
+TASKS=(
+    "time/hospital_admission/90d"
+    "time/hospital_discharge/90d"
+    "time/icu_admission/90d"
+    "time/icu_discharge/90d"
+)
+for TASK_NAME in "${TASKS[@]}"; do
+    SINGLE_TASK_DIR="${MEDS_DIR}/tasks/${TASK_NAME}"
+    mkdir -p $SINGLE_TASK_DIR # create a directory for the task
+    CONFIG_PATH=ZERO_SHOT_TUTORIAL/configs/tasks/${TASK_NAME}.yaml
+    aces-cli --multirun hydra/launcher=joblib data=sharded data.standard=meds data.root="$MEDS_DIR/data" "data.shard=$(expand_shards $MEDS_DIR/data)" cohort_dir="${MEDS_DIR}/tasks/" cohort_name="$TASK_NAME" config_path=$CONFIG_PATH
+    cp $CONFIG_PATH ${MEDS_DIR}/tasks/${TASK_NAME}.yaml
+done
 ```
 
 ### Training Models

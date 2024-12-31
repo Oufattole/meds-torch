@@ -33,6 +33,7 @@ TASKS=(
     "abnormal_lab/hospital_discharge/hematocrit/30d"
     "abnormal_lab/hospital_discharge/hematocrit/60d"
     "abnormal_lab/hospital_discharge/hematocrit/90d"
+
     # "abnormal_lab/icu_admission/hematocrit/30d"
     # "abnormal_lab/icu_admission/hematocrit/60d"
     # "abnormal_lab/icu_admission/hematocrit/90d"
@@ -81,7 +82,7 @@ for TASK_NAME in "${TASKS[@]}"; do
     echo "Processing task: ${TASK_NAME}"
 
     OUTPUT_DIR="${ROOT_DIR}/results/zero_shot/inference/eic/${TASK_NAME}"
-    TASK_CONFIG_PATH="${TASKS_DIR}/${TASK_NAME}.yaml"
+    TASK_CONFIG_PATH="$(pwd)/ZERO_SHOT_TUTORIAL/configs/tasks/eic/${TASK_NAME}.yaml"
 
     meds-torch-generate --multirun model=eic_forecasting experiment=eic_forecast_mtr \
         model/trajectory_labeler=aces_schema_labeler model.trajectory_labeler.yaml_path=$TASK_CONFIG_PATH \

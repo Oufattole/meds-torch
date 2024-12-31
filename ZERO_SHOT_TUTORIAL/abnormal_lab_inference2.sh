@@ -35,35 +35,35 @@ TASKS=(
     # "abnormal_lab/hospital_discharge/hematocrit/90d"
 
     "abnormal_lab/icu_admission/hematocrit/30d"
-    "abnormal_lab/icu_admission/hematocrit/60d"
-    "abnormal_lab/icu_admission/hematocrit/90d"
-    "abnormal_lab/icu_discharge/hematocrit/30d"
-    "abnormal_lab/icu_discharge/hematocrit/60d"
-    "abnormal_lab/icu_discharge/hematocrit/90d"
-    "abnormal_lab/hospital_admission/leukocytes/30d"
-    "abnormal_lab/hospital_admission/leukocytes/60d"
-    "abnormal_lab/hospital_admission/leukocytes/90d"
-    "abnormal_lab/hospital_discharge/leukocytes/30d"
-    "abnormal_lab/hospital_discharge/leukocytes/60d"
-    "abnormal_lab/hospital_discharge/leukocytes/90d"
-    "abnormal_lab/icu_admission/leukocytes/30d"
-    "abnormal_lab/icu_admission/leukocytes/60d"
-    "abnormal_lab/icu_admission/leukocytes/90d"
-    "abnormal_lab/icu_discharge/leukocytes/30d"
-    "abnormal_lab/icu_discharge/leukocytes/60d"
-    "abnormal_lab/icu_discharge/leukocytes/90d"
-    "abnormal_lab/hospital_admission/platets/30d"
-    "abnormal_lab/hospital_admission/platets/60d"
-    "abnormal_lab/hospital_admission/platets/90d"
-    "abnormal_lab/hospital_discharge/platets/30d"
-    "abnormal_lab/hospital_discharge/platets/60d"
-    "abnormal_lab/hospital_discharge/platets/90d"
-    "abnormal_lab/icu_admission/platets/30d"
-    "abnormal_lab/icu_admission/platets/60d"
-    "abnormal_lab/icu_admission/platets/90d"
-    "abnormal_lab/icu_discharge/platets/30d"
-    "abnormal_lab/icu_discharge/platets/60d"
-    "abnormal_lab/icu_discharge/platets/90d"
+    # "abnormal_lab/icu_admission/hematocrit/60d"
+    # "abnormal_lab/icu_admission/hematocrit/90d"
+    # "abnormal_lab/icu_discharge/hematocrit/30d"
+    # "abnormal_lab/icu_discharge/hematocrit/60d"
+    # "abnormal_lab/icu_discharge/hematocrit/90d"
+    # "abnormal_lab/hospital_admission/leukocytes/30d"
+    # "abnormal_lab/hospital_admission/leukocytes/60d"
+    # "abnormal_lab/hospital_admission/leukocytes/90d"
+    # "abnormal_lab/hospital_discharge/leukocytes/30d"
+    # "abnormal_lab/hospital_discharge/leukocytes/60d"
+    # "abnormal_lab/hospital_discharge/leukocytes/90d"
+    # "abnormal_lab/icu_admission/leukocytes/30d"
+    # "abnormal_lab/icu_admission/leukocytes/60d"
+    # "abnormal_lab/icu_admission/leukocytes/90d"
+    # "abnormal_lab/icu_discharge/leukocytes/30d"
+    # "abnormal_lab/icu_discharge/leukocytes/60d"
+    # "abnormal_lab/icu_discharge/leukocytes/90d"
+    # "abnormal_lab/hospital_admission/platets/30d"
+    # "abnormal_lab/hospital_admission/platets/60d"
+    # "abnormal_lab/hospital_admission/platets/90d"
+    # "abnormal_lab/hospital_discharge/platets/30d"
+    # "abnormal_lab/hospital_discharge/platets/60d"
+    # "abnormal_lab/hospital_discharge/platets/90d"
+    # "abnormal_lab/icu_admission/platets/30d"
+    # "abnormal_lab/icu_admission/platets/60d"
+    # "abnormal_lab/icu_admission/platets/90d"
+    # "abnormal_lab/icu_discharge/platets/30d"
+    # "abnormal_lab/icu_discharge/platets/60d"
+    # "abnormal_lab/icu_discharge/platets/90d"
 )
 
 # Define other required variables
@@ -75,7 +75,7 @@ BEST_CONFIG="${MODEL_SWEEP_DIR}/best_config.json"
 MEDS_DIR="${ROOT_DIR}/meds/"
 TENSOR_DIR="${ROOT_DIR}/eic_tensors/"
 TASKS_DIR="${MEDS_DIR}/tasks/"
-NUM_SAMPLES=20
+NUM_SAMPLES=1
 
 # Loop over tasks
 for TASK_NAME in "${TASKS[@]}"; do
@@ -83,11 +83,15 @@ for TASK_NAME in "${TASKS[@]}"; do
 
     OUTPUT_DIR="${ROOT_DIR}/results/zero_shot/inference/eic/${TASK_NAME}"
     TASK_CONFIG_PATH="${TASKS_DIR}/${TASK_NAME}.yaml"
-
+        # model/trajectory_labeler=aces_schema_labeler model.trajectory_labeler.yaml_path=$TASK_CONFIG_PATH \
+    export TORCH_LOGS="+dynamo"
+    export TORCHDYNAMO_VERBOSE=1
     meds-torch-generate --multirun model=eic_forecasting experiment=eic_forecast_mtr \
-        model/trajectory_labeler=aces_schema_labeler model.trajectory_labeler.yaml_path=$TASK_CONFIG_PATH \
-        data.dataloader.batch_size=512 model.generate_id="range(0,$NUM_SAMPLES)" trainer.devices=[1] data.predict_dataset=test \
-        data.do_include_subject_id=true data.do_include_prediction_time=true data.do_include_end_time=true \
+        model.prune_terminated=false \
+        model.max_tokens_budget=4096 \
+        data.max_seq_len=128 \
+        data.dataloader.batch_size=2048 model.generate_id="range(0,$NUM_SAMPLES)" trainer.devices=[1] data.predict_dataset=test \
+        data.do_include_subject_id=true data.do_include_prediction_time=true data.do_include_end_time=true trainer.precision='16-mixed' \
         data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
         paths.meds_cohort_dir=${MEDS_DIR} ckpt_path=${BEST_CHECKPOINT} \
         paths.data_dir=${TENSOR_DIR} paths.output_dir=${OUTPUT_DIR} \

@@ -35,3 +35,4 @@ paths:
 
 seed: ${model.generate_id}
 actual_future_name: null
+do_manual_gpu_scheduling: true

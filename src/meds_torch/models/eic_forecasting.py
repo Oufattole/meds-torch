@@ -604,7 +604,7 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         vocab_indices = metadata_df.filter(time_mask)["code/vocab_index"]
         time_values = metadata_df.filter(time_mask)["values/mean"]
 
-        code_to_time_map[vocab_indices.to_torch().to(torch.long)] = time_values.to_torch().to(torch.float)
+        code_to_time_map[vocab_indices.to_list()] = time_values.to_torch().to(code_to_time_map.dtype)
         return code_to_time_map
 
     @classmethod
@@ -672,8 +672,7 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
                 rank = int(code.split("//_Q_")[1]) - 1
                 # We estimate the numeric value is the average of the bordering quantiles it is between
                 if get_raw_values:
-                    result[vocab_idx] = mean_value
-                    # result[vocab_idx] = sum([raw_quantiles[rank], raw_quantiles[rank + 1]]) / 2
+                    result[vocab_idx] = torch.tensor(mean_value, dtype=result.dtype)
                 else:
                     result[vocab_idx] = sum([percentiles[rank], percentiles[rank + 1]]) / 2
 

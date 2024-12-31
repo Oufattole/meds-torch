@@ -1,0 +1,19 @@
+#This config checks for an abnormal creatinine lab within 90d after HOSPITAL_ADMISSION
+predicates:
+  trigger_event:
+    code: { regex: "^ICU_ADMISSION//.*" }
+
+trigger: trigger_event
+
+windows:
+  input:
+    start: NULL
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    index_timestamp: end
+  target:
+    start: input.end
+    end: start + 90d
+    start_inclusive: True
+    end_inclusive: True

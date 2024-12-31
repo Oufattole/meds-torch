@@ -10,6 +10,7 @@ import loguru
 import polars as pl
 import pyarrow.parquet as pq
 import torch
+from hydra.core.hydra_config import HydraConfig
 from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
 from mixins.seedable import seed_everything
@@ -157,6 +158,10 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     │ 2          ┆ 2024-01-01 00:00:00 ┆ 2026-12-31 17:27:36 ┆ A5   ┆ 5                ┆ NaN           │
     └────────────┴─────────────────────┴─────────────────────┴──────┴──────────────────┴───────────────┘
     """
+    if cfg.do_manual_gpu_scheduling:
+        gpu_id = HydraConfig.get().job.num % HydraConfig.get().launcher.n_jobs
+        cfg.trainer.devices = [cfg.trainer.devices[gpu_id]]
+        loguru.logger.info(f"Using gpu ids: {cfg.trainer.devices}")
     seed_everything(cfg.seed)
     loguru.logger.info(f"Set all seeds to {cfg.seed}")
     assert cfg.ckpt_path
@@ -193,6 +198,7 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
         log_hyperparameters(object_dict)
 
     log.info("Starting Generating Predictions!")
+    torch.set_float32_matmul_precision("medium")
     predictions = trainer.predict(model=model, dataloaders=datamodule)
 
     # Extract generated trajectories
