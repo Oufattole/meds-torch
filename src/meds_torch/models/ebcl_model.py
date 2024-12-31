@@ -1,4 +1,6 @@
+import numpy as np
 import torch
+import torch.distributed as dist
 import torchmetrics
 from omegaconf import DictConfig
 from torch import nn
@@ -10,6 +12,7 @@ from meds_torch.models import (
     MODEL_LOGITS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
+from meds_torch.models.utils import GatherLayer
 
 
 class EBCLModule(BaseModule):
@@ -18,30 +21,33 @@ class EBCLModule(BaseModule):
         batch_size = cfg.batch_size
         self.pre_model = self.model
         self.post_model = self.model
+        self.world_size = cfg.world_size
         #  metrics
-        self.train_pre_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
-        self.train_pre_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+        self.train_pre_acc = torchmetrics.Accuracy(num_classes=batch_size * cfg.world_size, task="multiclass")
+        self.train_pre_auc = torchmetrics.AUROC(num_classes=batch_size * cfg.world_size, task="multiclass")
 
-        self.train_post_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
-        self.train_post_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+        self.train_post_acc = torchmetrics.Accuracy(
+            num_classes=batch_size * cfg.world_size, task="multiclass"
+        )
+        self.train_post_auc = torchmetrics.AUROC(num_classes=batch_size * cfg.world_size, task="multiclass")
 
-        self.val_pre_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
-        self.val_pre_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+        self.val_pre_acc = torchmetrics.Accuracy(num_classes=batch_size * cfg.world_size, task="multiclass")
+        self.val_pre_auc = torchmetrics.AUROC(num_classes=batch_size * cfg.world_size, task="multiclass")
 
-        self.val_post_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
-        self.val_post_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+        self.val_post_acc = torchmetrics.Accuracy(num_classes=batch_size * cfg.world_size, task="multiclass")
+        self.val_post_auc = torchmetrics.AUROC(num_classes=batch_size * cfg.world_size, task="multiclass")
 
-        self.test_pre_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
-        self.test_pre_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+        self.test_pre_acc = torchmetrics.Accuracy(num_classes=batch_size * cfg.world_size, task="multiclass")
+        self.test_pre_auc = torchmetrics.AUROC(num_classes=batch_size * cfg.world_size, task="multiclass")
 
-        self.test_post_acc = torchmetrics.Accuracy(num_classes=batch_size, task="multiclass")
-        self.test_post_auc = torchmetrics.AUROC(num_classes=batch_size, task="multiclass")
+        self.test_post_acc = torchmetrics.Accuracy(num_classes=batch_size * cfg.world_size, task="multiclass")
+        self.test_post_auc = torchmetrics.AUROC(num_classes=batch_size * cfg.world_size, task="multiclass")
 
         # Model components
         self.pre_projection = nn.Linear(cfg.token_dim, cfg.token_dim)
         self.post_projection = nn.Linear(cfg.token_dim, cfg.token_dim)
 
-        self.t = nn.Linear(1, 1)
+        self.t = nn.Parameter(torch.ones(1).reshape(-1, 1) * np.log(cfg.tau))
         self.criterion = torch.nn.CrossEntropyLoss()
 
     def forward(self, batch):
@@ -64,7 +70,12 @@ class EBCLModule(BaseModule):
         pre_norm_embeds = pre_embeds / pre_embeds.norm(dim=-1, keepdim=True)
         post_norm_embeds = post_embeds / post_embeds.norm(dim=-1, keepdim=True)
 
-        logits = torch.mm(post_norm_embeds, pre_norm_embeds.T) * torch.exp(self.t.weight)
+        # Gather embeddings across all devices
+        if dist.is_initialized():
+            pre_norm_embeds = GatherLayer.apply(pre_norm_embeds)
+            post_norm_embeds = GatherLayer.apply(post_norm_embeds)
+
+        logits = torch.mm(post_norm_embeds, pre_norm_embeds.T) * torch.exp(self.t)
         labels = torch.arange(pre_norm_embeds.shape[0], device=pre_norm_embeds.device)
         logits_per_post = logits
         logits_per_pre = logits.T
@@ -106,7 +117,7 @@ class EBCLModule(BaseModule):
         self.val_post_acc.update(torch.diag(output[MODEL_LOGITS_KEY]), labels)
         if output[MODEL_LOGITS_KEY].shape[0] == self.cfg.batch_size:
             self.val_post_auc.update(output[MODEL_LOGITS_KEY], labels)
-        self.log("val/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size)
+        self.log("val/loss", output[MODEL_BATCH_LOSS_KEY], batch_size=self.cfg.batch_size, sync_dist=True)
         return output[MODEL_BATCH_LOSS_KEY]
 
     def test_step(self, batch):
@@ -150,46 +161,6 @@ class EBCLModule(BaseModule):
             self.train_post_auc,
             on_epoch=True,
             batch_size=self.cfg.batch_size,
-        )
-
-    def on_val_epoch_end(self):
-        self.log(
-            "val/pre/acc",
-            self.val_pre_acc,
-            on_epoch=True,
-            batch_size=self.cfg.batch_size,
-        )
-        self.log(
-            "val/pre/auc",
-            self.val_pre_auc,
-            on_epoch=True,
-            batch_size=self.cfg.batch_size,
-        )
-
-        self.log(
-            "val/post/acc",
-            self.val_post_acc,
-            on_epoch=True,
-            batch_size=self.cfg.batch_size,
-        )
-        self.log(
-            "val/post/auc",
-            self.val_post_auc,
-            on_epoch=True,
-            batch_size=self.cfg.batch_size,
-        )
-
-        print(
-            "val/pre/acc",
-            self.val_pre_acc.compute(),
-            "val/pre/auc",
-            self.val_pre_auc.compute(),
-        )
-        print(
-            "val/post/acc",
-            self.val_post_acc.compute(),
-            "val/post/auc",
-            self.val_post_auc.compute(),
         )
 
     def on_test_epoch_end(self):

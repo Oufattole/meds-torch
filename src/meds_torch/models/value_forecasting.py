@@ -134,7 +134,7 @@ class ValueForecastingModule(BaseModule):
             on_epoch=True,
         )
 
-    def on_val_epoch_end(self):
+    def on_validation_epoch_end(self):
         self.log(
             "val_presence_mse",
             self.val_presence_mse,

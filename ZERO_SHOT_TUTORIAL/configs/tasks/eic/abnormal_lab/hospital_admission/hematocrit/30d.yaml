@@ -1,0 +1,29 @@
+#This config checks for an abnormal hematocrit lab within 30d after HOSPITAL_ADMISSION
+predicates:
+  trigger_event:
+    code: {regex: "HOSPITAL_ADMISSION//.*"}
+  lab:
+    code: {regex: "LAB//51221//%|LAB//51638//%|LAB//50810//%"}
+  abnormal_lab:
+    code: {regex: "LAB//51221//%|LAB//51638//%|LAB//50810//%"}
+    value_max: 24
+    value_max_inclusive: True
+
+
+trigger: trigger_event
+
+windows:
+  input:
+    start: NULL
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    index_timestamp: end
+  target:
+    start: input.end
+    end: start + 30d
+    start_inclusive: True
+    end_inclusive: True
+    has:
+      lab: (1, None)
+    label: abnormal_lab
