@@ -2,4 +2,5 @@
 _target_: clinical_zeroshot_labeler.labeler.SequenceLabeler.from_yaml_file
 _partial_: true
 yaml_path: ???
-time_scale: 'D'
+time_scale: 'Y'
+early_stop: true
