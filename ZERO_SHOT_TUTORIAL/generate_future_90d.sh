@@ -27,9 +27,9 @@ for TASK_NAME in "${TASKS[@]}"; do
     OUTPUT_DIR="${ROOT_DIR}/results/zero_shot/inference/eic/${TASK_NAME}"
     TASK_CONFIG_PATH="$(pwd)/ZERO_SHOT_TUTORIAL/configs/tasks/eic/${TASK_NAME}.yaml"
 
-    meds-torch-generate --multirun hydra/launcher=joblib model=eic_forecasting experiment=eic_forecast_mtr \
+    meds-torch-generate --multirun hydra/launcher=joblib experiment=eic_inference_mtr \
         model/trajectory_labeler=aces_schema_labeler model.trajectory_labeler.yaml_path=$TASK_CONFIG_PATH \
-        data.max_seq_len=128 do_manual_gpu_scheduling=true hydra.launcher.n_jobs=2 \
+        do_manual_gpu_scheduling=true hydra.launcher.n_jobs=2 \
         data.dataloader.batch_size=512 model.generate_id="range(0,$NUM_SAMPLES)" trainer.devices=[0,1] data.predict_dataset=test \
         data.do_include_subject_id=true data.do_include_prediction_time=true data.do_include_end_time=true \
         data.task_name=${TASK_NAME} data.task_root_dir=${TASKS_DIR} \
