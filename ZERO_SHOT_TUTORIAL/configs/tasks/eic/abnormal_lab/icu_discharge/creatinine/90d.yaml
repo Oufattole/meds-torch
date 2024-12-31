@@ -1,0 +1,29 @@
+#This config checks for an abnormal creatinine lab within 90d after ICU_DISCHARGE
+predicates:
+  trigger_event:
+    code: {regex: "ICU_DISCHARGE//.*"}
+  lab:
+    code: {regex: "LAB//52546//mg/dL|LAB//50912//mg/dL|LAB//51081//mg/dL|LAB//52024//mg/dL"}
+  abnormal_lab:
+    code: {regex: "LAB//52546//mg/dL|LAB//50912//mg/dL|LAB//51081//mg/dL|LAB//52024//mg/dL"}
+    value_min: 2.0
+    value_min_inclusive: True
+
+
+trigger: trigger_event
+
+windows:
+  input:
+    start: NULL
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    index_timestamp: end
+  target:
+    start: input.end
+    end: start + 90d
+    start_inclusive: True
+    end_inclusive: True
+    has:
+      lab: (1, None)
+    label: abnormal_lab

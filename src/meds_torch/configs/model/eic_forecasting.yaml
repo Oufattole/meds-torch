@@ -37,3 +37,5 @@ next_token_auc: false
 max_tokens_budget: null
 return_logits: false
 return_tokens: false
+return_labeler: false
+prune_terminated: true

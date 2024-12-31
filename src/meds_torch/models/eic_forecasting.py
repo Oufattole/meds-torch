@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 import torch.utils
 from clinical_zeroshot_labeler.labeler import SequenceLabeler, WindowStatus
+from clinical_zeroshot_labeler.model import BaseGenerativeModel
 from loguru import logger
 from mixins import TimeableMixin
 from omegaconf import DictConfig
@@ -27,11 +28,7 @@ from meds_torch.models import (
     MODEL_TOKENS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
-from meds_torch.models.components.utils import (
-    BaseGenerativeModel,
-    TrajectoryBatch,
-    get_time_days_delta,
-)
+from meds_torch.models.components.utils import TrajectoryBatch, get_time_days_delta
 from meds_torch.utils.custom_time_token import TIME_DELTA_TOKEN
 
 
@@ -163,7 +160,7 @@ def create_dummy_sequence_labeler(batch_size: int = 2):
     # Initialize sequence labeler
     from functools import partial
 
-    labeler = partial(SequenceLabeler.from_yaml_str, yaml_str=task_config)
+    labeler = partial(SequenceLabeler.from_yaml_str, yaml_str=task_config, early_stop=True)
 
     return labeler, metadata_df, batch, task_config
 
@@ -210,6 +207,8 @@ def create_model_config(metadata_df_path: str):
         "max_tokens_budget": 10,
         "return_tokens": False,
         "return_logits": False,
+        "return_labeler": False,
+        "prune_terminated": False,
     }
     return instantiate(cfg)
 
@@ -596,17 +595,16 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         tensor([0., 0., 0., 1., 0.])
         """
         metadata_df = cls.get_metadata_means(metadata_df)
-        assert metadata_df["code/vocab_index"].is_sorted()
-        code_to_time_map = (
-            metadata_df.select(
-                pl.when(pl.col("code").str.starts_with(TIME_DELTA_TOKEN))
-                .then(pl.col("values/mean"))
-                .otherwise(pl.lit(0.0))
-            )
-            .to_torch(dtype=pl.Float32)
-            .flatten()
-        )
-        code_to_time_map = torch.cat([code_to_time_map, torch.zeros(1)])
+        # Assuming we know the vocab size
+        num_vocab = metadata_df["code/vocab_index"].max()
+        code_to_time_map = torch.zeros(num_vocab + 2)  # +2 since indices start at 1 and EOS token is added
+
+        # Set values using the indices
+        time_mask = pl.col("code").str.starts_with(TIME_DELTA_TOKEN)
+        vocab_indices = metadata_df.filter(time_mask)["code/vocab_index"]
+        time_values = metadata_df.filter(time_mask)["values/mean"]
+
+        code_to_time_map[vocab_indices.to_torch().to(torch.long)] = time_values.to_torch().to(torch.float)
         return code_to_time_map
 
     @classmethod
@@ -846,7 +844,7 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         if not hasattr(self, "value_quantile_map"):
             self.value_quantile_map = self.get_code_to_numeric_value_map(self.metadata_df)
 
-    @torch.no_grad()
+    @torch.inference_mode()
     @eval_decorator
     @TimeableMixin.TimeAs
     def generate_batch(
@@ -882,18 +880,20 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
             raise ValueError("time_offset_years must be less than or equal to 0")
 
         if self.cfg.generate_id is not None:
+            trajectory_labeler = (
+                self.trajectory_labeler(batch_size=prompts.shape[0], metadata_df=self.metadata_df)
+                if self.trajectory_labeler is not None
+                else None
+            )
             out, out_lengths, metadata = self.generate(
                 prompts=prompts,
                 mask=mask,
-                trajectory_labeler=self.trajectory_labeler(
-                    batch_size=prompts.shape[0], metadata_df=self.metadata_df
-                )
-                if self.trajectory_labeler is not None
-                else None,
+                trajectory_labeler=trajectory_labeler,
                 time_offset_years=prediction_time_offset_years,
                 temperature=self.cfg.temperature,
                 eos_tokens=self.cfg.eos_tokens,
                 log_progress=self.cfg.get("log_progress", False),
+                prune_terminated=self.cfg.prune_terminated,
                 **kwargs,
             )
             out_mask = torch.arange(out.size(1))[None, :].cpu() < out_lengths[:, None].cpu()
@@ -935,5 +935,8 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
                     labels[unknown] = 0.5
                 input_batch[MODEL_PRED_PROBA_KEY] = labels
                 input_batch[MODEL_PRED_STATUS_KEY] = status
+                input_batch["MODEL//OFFSET"] = prediction_time_offset_years
                 logger.info(f"Completed zero-shot labeling for sample {self.cfg.generate_id}")
+            if trajectory_labeler is not None and self.cfg.return_labeler:
+                input_batch["labeler"] = trajectory_labeler
         return input_batch
