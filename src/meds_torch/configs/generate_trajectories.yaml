@@ -35,4 +35,6 @@ paths:
 
 seed: ${model.generate_id}
 actual_future_name: null
-do_manual_gpu_scheduling: true
+do_manual_gpu_scheduling: false
+num_samples: 1
+worker_num: 0

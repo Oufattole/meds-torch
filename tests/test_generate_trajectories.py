@@ -7,7 +7,7 @@ import pytest
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import open_dict
 
-from meds_torch.generate_trajectories import generate_trajectories
+from meds_torch.generate_trajectories import map_generations
 from meds_torch.train import main as train_main
 from tests.conftest import SUPERVISED_TASK_NAME, create_cfg
 from tests.test_configs import get_overrides_and_exceptions
@@ -79,7 +79,7 @@ def test_train_generate(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: 
             "data.do_include_subject_id=true",
             "data.do_include_prediction_time=true",
             "data.do_include_end_time=true",
-            "model.generate_id=0",
+            "num_samples=2",
             "data.max_seq_len=10",
             "model.max_tokens_budget=10",
         ]
@@ -96,5 +96,7 @@ def test_train_generate(tmp_path: Path, get_kwargs, meds_dir) -> None:  # noqa: 
             cfg_gen.data.task_root_dir = str(meds_dir / "tasks")
 
         HydraConfig().set_config(cfg_gen)
-        generate_trajectories(cfg_gen)
-        assert Path(cfg_gen.paths.generated_trajectory_fp).exists()
+        map_generations(cfg_gen)
+        assert (Path(cfg_gen.paths.time_output_dir) / "generated_trajectory_0.parquet").exists()
+        assert (Path(cfg_gen.paths.time_output_dir) / "generated_trajectory_1.parquet").exists()
+        assert not (Path(cfg_gen.paths.time_output_dir) / "generated_trajectory_2.parquet").exists()

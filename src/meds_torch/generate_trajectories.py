@@ -13,6 +13,7 @@ import torch
 from hydra.core.hydra_config import HydraConfig
 from lightning import LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
+from MEDS_transforms.mapreduce.utils import rwlock_wrap
 from mixins.seedable import seed_everything
 from omegaconf import DictConfig
 
@@ -221,6 +222,28 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     store_predictions(cfg.paths.predict_fp, cfg.data.task_name, predictions)
 
 
+def map_generations(cfg):
+    for generate_id in range(cfg.num_samples):
+        cfg.model.generate_id = generate_id
+
+        def read_fn(_):
+            return
+
+        def compute_fn(_):
+            return
+
+        def write_fn(_, out_fp):
+            if not str(Path(cfg.paths.generated_trajectory_fp).resolve()) == str(out_fp.resolve()):
+                raise ValueError(
+                    "Generated trajectory file path mismatch: "
+                    f"{cfg.paths.generated_trajectory_fp} vs {out_fp}"
+                )
+            generate_trajectories(cfg)
+            return
+
+        rwlock_wrap(None, Path(cfg.paths.generated_trajectory_fp), read_fn, write_fn, compute_fn)
+
+
 @hydra.main(version_base="1.3", config_path=str(config_yaml.parent.resolve()), config_name=config_yaml.stem)
 def main(cfg: DictConfig) -> None:
     """Main entry point for evaluation.
@@ -232,8 +255,7 @@ def main(cfg: DictConfig) -> None:
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
     os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
     configure_logging(cfg)
-
-    generate_trajectories(cfg)
+    map_generations(cfg)
 
 
 if __name__ == "__main__":
