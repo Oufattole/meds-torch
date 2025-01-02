@@ -219,7 +219,11 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     pq.write_table(validated_table, cfg.paths.generated_trajectory_fp)
     loguru.logger.info(pl.from_arrow(validated_table).head())
 
-    store_predictions(cfg.paths.predict_fp, cfg.data.task_name, predictions)
+    try:
+        store_predictions(cfg.paths.predict_fp, cfg.data.task_name, predictions)
+    except Exception as e:
+        logger.warning("Failed to store predictions")
+        logger.warning(f"Error: {e}")
 
 
 def map_generations(cfg):
