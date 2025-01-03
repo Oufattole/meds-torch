@@ -159,10 +159,6 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     │ 2          ┆ 2024-01-01 00:00:00 ┆ 2026-12-31 17:27:36 ┆ A5   ┆ 5                ┆ NaN           │
     └────────────┴─────────────────────┴─────────────────────┴──────┴──────────────────┴───────────────┘
     """
-    if cfg.do_manual_gpu_scheduling:
-        gpu_id = HydraConfig.get().job.num % HydraConfig.get().launcher.n_jobs
-        cfg.trainer.devices = [cfg.trainer.devices[gpu_id]]
-        loguru.logger.info(f"Using gpu ids: {cfg.trainer.devices}")
     seed_everything(cfg.seed)
     loguru.logger.info(f"Set all seeds to {cfg.seed}")
     assert cfg.ckpt_path
@@ -259,6 +255,10 @@ def main(cfg: DictConfig) -> None:
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
     os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
     configure_logging(cfg)
+    if cfg.do_manual_gpu_scheduling:
+        gpu_id = HydraConfig.get().job.num % HydraConfig.get().launcher.n_jobs
+        cfg.trainer.devices = [cfg.trainer.devices[gpu_id]]
+        loguru.logger.info(f"Using gpu ids: {cfg.trainer.devices}")
     map_generations(cfg)
 
 
