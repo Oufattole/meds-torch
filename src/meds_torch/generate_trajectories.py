@@ -222,8 +222,8 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     try:
         store_predictions(cfg.paths.predict_fp, cfg.data.task_name, predictions)
     except Exception as e:
-        logger.warning("Failed to store predictions")
-        logger.warning(f"Error: {e}")
+        loguru.logger.warning("Failed to store predictions")
+        loguru.logger.warning(f"Error: {e}")
 
 
 def map_generations(cfg):
