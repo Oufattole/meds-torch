@@ -1,5 +1,5 @@
-from omegaconf import DictConfig
 import torch
+from omegaconf import DictConfig
 from torch import nn
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
@@ -10,46 +10,49 @@ def get_dummy_batch_and_cfg(num_samples: int = 3):
     class DummyConfig:
         vocab_size = 7
         token_dim = 3
+
     cfg = DummyConfig()
     histogram_values = [
-        [0., 0., 0., 0., 0., 1., 0.],
-        [0., 1., 1., 0., 1., 1., 0.],
-        [0., 0., 1., 0., 1., 1., 0.],
-        [0., 0., 0., 0., 1., 1., 0.],
-        [0., 0., 0., 0., 0., 1., 0.],
-        [1., 0., 0., 1., 1., 1., 0.],
-        [1., 0., 0., 0., 1., 1., 0.],
-        [0., 0., 0., 0., 1., 1., 0.],
-        [0., 0., 0., 0., 0., 1., 0.],
-        [0., 1., 1., 0., 1., 1., 0.],
-        [0., 0., 1., 0., 1., 1., 0.],
-        [0., 0., 0., 0., 1., 1., 0.],
-        [0., 0., 0., 0., 0., 1., 0.],
-        [0., 1., 0., 1., 1., 1., 0.],
-        [0., 0., 0., 1., 1., 1., 0.],
-        [0., 0., 0., 0., 1., 1., 0.],
-        [0., 0., 0., 0., 0., 1., 0.],
-        [0., 0., 1., 1., 1., 1., 0.],
-        [0., 0., 0., 1., 1., 1., 0.],
-        [0., 0., 0., 0., 1., 1., 0.],
-        [0., 0., 0., 0., 0., 1., 0.]
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        [0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        [0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
     ]
     histogram_tensor = torch.stack([torch.tensor(histogram_values)] * num_samples)
     # torch.zeros((num_samples, 21, 7))
 
     data_dict = {
-        'code': torch.tensor([[4, 5, 1, 2, 4, 5, 3, 0, 4, 5, 1, 2, 4, 5, 1, 3, 4, 5, 2, 3, 4]]*num_samples),
-        'mask': torch.ones((num_samples, 21), dtype=torch.int64),
-        'histogram': histogram_tensor,
-        'subject_id': torch.arange(num_samples)
+        "code": torch.tensor([[4, 5, 1, 2, 4, 5, 3, 0, 4, 5, 1, 2, 4, 5, 1, 3, 4, 5, 2, 3, 4]] * num_samples),
+        "mask": torch.ones((num_samples, 21), dtype=torch.int64),
+        "histogram": histogram_tensor,
+        "subject_id": torch.arange(num_samples),
     }
     return data_dict, cfg
 
+
 # Set the histogram values for both batches
 
+
 class EicEncoder(nn.Module, Module):
-    """Embedds integer codes and combines them with histogram embeddings.
-    
+    """Embeds integer codes and combines them with histogram embeddings.
+
     Example:
         >>> batch, cfg = get_dummy_batch_and_cfg()
         >>> encoder = EicEncoder(cfg)
