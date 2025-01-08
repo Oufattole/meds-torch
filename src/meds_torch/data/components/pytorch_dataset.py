@@ -18,9 +18,9 @@ class DummyConfig:
     """Dummy configuration for testing MEDS dataset"""
 
     schema_files_root: str
-    task_label_path: str
+    task_label_path: str | None
     data_dir: str
-    task_name: str = "dummy_task"
+    task_name: str | None = "dummy_task"
     max_seq_len: int = 10
     do_prepend_static_data: bool = True
     postpend_eos_token: bool = True
@@ -35,7 +35,7 @@ class DummyConfig:
 
 
 def create_dummy_dataset(
-    base_dir: str | Path, n_subjects: int = 3, split: str = "train", seed: int | None = 42
+    base_dir: str | Path, n_subjects: int = 3, split: str = "train", seed: int | None = 42,
 ) -> DummyConfig:
     """Creates a dummy MEDS dataset for testing purposes.
 
