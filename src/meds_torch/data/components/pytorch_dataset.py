@@ -35,7 +35,10 @@ class DummyConfig:
 
 
 def create_dummy_dataset(
-    base_dir: str | Path, n_subjects: int = 3, split: str = "train", seed: int | None = 42,
+    base_dir: str | Path,
+    n_subjects: int = 3,
+    split: str = "train",
+    seed: int | None = 42,
 ) -> DummyConfig:
     """Creates a dummy MEDS dataset for testing purposes.
 
