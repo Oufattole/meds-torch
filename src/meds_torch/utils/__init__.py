@@ -10,3 +10,6 @@ from meds_torch.utils.utils import (  # noqa
     get_metric_value,
     task_wrapper,
 )
+
+TIME_START_TOKEN = "TIME//START//TOKEN"
+TIME_DELTA_TOKEN = "TIME//DELTA//TOKEN"
