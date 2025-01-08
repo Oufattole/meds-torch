@@ -623,7 +623,7 @@ def fill_dummy_config(cfg: DummyConfig):
     return cfg
 
 
-class CumSumPytorchDataset(PytorchDataset):
+class HistogramPytorchDataset(PytorchDataset):
     """A PyTorch Dataset class that computes histograms over future time intervals or token counts.
 
     Examples:
@@ -640,7 +640,7 @@ class CumSumPytorchDataset(PytorchDataset):
         >>> config.task_name = None
         >>> config.do_include_prediction_time = False
         >>> config.postpend_eos_token = False
-        >>> dataset = CumSumPytorchDataset(config, split='train')
+        >>> dataset = HistogramPytorchDataset(config, split='train')
         >>> print(f"Dataset size: {len(dataset)}")
         Dataset size: 3
         >>> print(f"Has task: {dataset.has_task}")
@@ -674,7 +674,7 @@ class CumSumPytorchDataset(PytorchDataset):
         # >>> tmp_dir_obj = tempfile.TemporaryDirectory()
         # >>> tmp_dir = tmp_dir_obj.name
         # >>> config = create_dummy_dataset(tmp_dir)
-        # >>> dataset = CumSumPytorchDataset(config, split='train')
+        # >>> dataset = HistogramPytorchDataset(config, split='train')
         # >>> print(f"Dataset size: {len(dataset)}")
         # Dataset size: 3
         # >>> print(f"Has task: {dataset.has_task}")
@@ -687,7 +687,7 @@ class CumSumPytorchDataset(PytorchDataset):
         super().__init__(cfg, split)
         self.cfg = cfg
         if self.cfg.postpend_eos_token:
-            raise NotImplementedError("EOS token not supported for CumSumPytorchDataset")
+            raise NotImplementedError("EOS token not supported for HistogramPytorchDataset")
 
     @SeedableMixin.WithSeed
     def _seeded_getitem(self, idx: int) -> dict:
