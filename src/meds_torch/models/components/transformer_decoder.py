@@ -5,7 +5,6 @@ from omegaconf import DictConfig
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models import BACKBONE_EMBEDDINGS_KEY, BACKBONE_TOKENS_KEY
-from meds_torch.models.components.utils import get_last_token
 from meds_torch.utils.module_class import Module
 
 
@@ -85,10 +84,12 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         if cfg.token_emb:
             self.model.token_emb = cfg.token_emb
 
-    def forward(self, batch):
+    def forward(self, batch, get_last_token=None):
         input_data, mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
         output, embeddings = self.model(input_data, mask=mask, return_logits_and_embeddings=True)
-        if self.cfg.get_last_token:
+        if get_last_token is None and self.cfg.get_last_token:
+            embeddings = get_last_token(embeddings, ~mask)
+        elif get_last_token:
             embeddings = get_last_token(embeddings, ~mask)
         batch[BACKBONE_TOKENS_KEY] = output
         batch[BACKBONE_EMBEDDINGS_KEY] = embeddings

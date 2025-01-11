@@ -8,7 +8,8 @@ from loguru import logger
 from MEDS_transforms import PREPROCESS_CONFIG_YAML
 from MEDS_transforms.mapreduce.mapper import map_over
 from omegaconf import DictConfig, OmegaConf
-from meds_torch.utils import TIME_START_TOKEN, TIME_DELTA_TOKEN
+
+from meds_torch.utils import TIME_DELTA_TOKEN, TIME_START_TOKEN
 
 
 def add_new_events_fntr(fn: Callable[[pl.DataFrame], pl.DataFrame]) -> Callable[[pl.DataFrame], pl.DataFrame]:

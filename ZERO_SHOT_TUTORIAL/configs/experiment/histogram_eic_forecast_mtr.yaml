@@ -1,0 +1,54 @@
+# @package _global_
+
+# to execute this experiment run:
+
+defaults:
+  - override /data: pytorch_dataset
+  - override /logger: wandb
+  - override /model/backbone: eic_transformer_decoder
+  - override /model/input_encoder: eic_encoder
+  - override /model: supervised
+  - override /trainer: gpu
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+tags:
+  - "mimiciv"
+  - "eic"
+  - "transformer_decoder"
+
+seed: 0
+
+trainer:
+  min_epochs: 1
+  max_epochs: 10
+  gradient_clip_val: 1.0
+  precision: 16
+
+data:
+  dataloader:
+    batch_size: 128
+    num_workers: 6
+  max_seq_len: 512
+  collate_type: "eic"
+  subsequence_sampling_strategy: "to_end"
+
+model:
+  token_dim: 768
+  optimizer:
+    lr: 0.001
+  backbone:
+    n_layers: 12
+    nheads: 12
+    dropout: 0
+
+
+logger:
+  wandb:
+    tags: ${tags}
+    group: "eic_forecast_mtr"
+
+# hydra:
+#   searchpath:
+#     - pkg://meds_torch.configs

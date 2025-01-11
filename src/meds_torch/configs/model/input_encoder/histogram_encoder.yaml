@@ -1,0 +1,5 @@
+_target_: meds_torch.input_encoder.histogram_eic_encoder.HistogramEicEncoder.initialize
+collate_style: eic
+model_type: ${model.backbone.model_type}
+vocab_size: ${data.vocab_size}
+token_dim: ${model.token_dim}

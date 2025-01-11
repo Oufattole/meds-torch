@@ -14,39 +14,6 @@ class TokenInsertionStrategy(StrEnum):
     TIME_BINS = "time_bins"
 
 
-def topk(x: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
-    """
-    Creates a mask where values are 0 for the top-k elements in each batch and 1 elsewhere.
-
-    Args:
-        x : tensor of shape [B, L] containing values to find top-k elements
-        k : tensor of shape [B, 1] containing the number of top elements to find for each batch
-
-    Returns:
-        final_mask: tensor of shape [B,L] where final_mask[b,i] = 0 if x[b,i] is in
-                   the k[b] biggest values of x[b,:], else final_mask[b,i] = 1
-    """
-    B, L = x.shape  # batchsize, list size
-
-    # Get indices sorted in descending order
-    _, indices_des = torch.sort(x, dim=-1, descending=True)
-
-    # Create range mask [1, L] and repeat it B times
-    mask = torch.arange(L, device=x.device).unsqueeze(0).expand(B, -1)
-    k_expanded = k.expand(-1, L)
-    mask = mask < k_expanded
-
-    # Create one-hot encoding and apply mask
-    one_hot = torch.nn.functional.one_hot(indices_des, num_classes=L).float()
-    one_hot = one_hot * mask.unsqueeze(-1)
-
-    # Sum along the appropriate dimension to get final mask
-    final_mask = one_hot.sum(dim=1)
-
-    # Flip the mask (0 for top-k, 1 for others)
-    return final_mask
-
-
 def get_time_bin_indices(time_deltas, time_bin_size) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Gets the indices of the
 

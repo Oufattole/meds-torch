@@ -50,12 +50,12 @@ def get_dummy_batch_and_cfg(num_samples: int = 3):
 # Set the histogram values for both batches
 
 
-class EicEncoder(nn.Module, Module):
+class HistogramEicEncoder(nn.Module, Module):
     """Embeds integer codes and combines them with histogram embeddings.
 
     Example:
         >>> batch, cfg = get_dummy_batch_and_cfg()
-        >>> encoder = EicEncoder(cfg)
+        >>> encoder = HistogramEicEncoder(cfg)
         >>> output = encoder(batch)
         >>> output[INPUT_ENCODER_TOKENS_KEY].shape
         torch.Size([3, 21, 3])
@@ -77,3 +77,9 @@ class EicEncoder(nn.Module, Module):
         embeddings = self.projector(torch.cat([embedded_codes, embedded_histograms], dim=-1))
         batch[INPUT_ENCODER_TOKENS_KEY] = embeddings
         return batch
+
+    def process_sample(self, codes, histograms):
+        embedded_codes = self.code_embedder(codes)
+        embedded_histograms = self.histogram_embedder(histograms)
+        embeddings = self.projector(torch.cat([embedded_codes, embedded_histograms], dim=-1))
+        return embeddings
