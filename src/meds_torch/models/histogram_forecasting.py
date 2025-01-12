@@ -48,6 +48,9 @@ from meds_torch.models.components.utils import TrajectoryBatch, get_time_days_de
 from meds_torch.models.diffusion_utils.diffloss import DiffLoss
 from meds_torch.utils import TIME_DELTA_TOKEN
 
+MODEL_CODE_LOSS_KEY = "code_loss"
+MODEL_DIFFUSION_LOSS_KEY = "diffusion_loss"
+
 
 def eval_decorator(fn):
     def inner(self, *args, **kwargs):
@@ -99,7 +102,7 @@ def create_dummy_sequence_labeler(batch_size: int = 2):
         >>> labeler, metadata_df, batch, task_config = create_dummy_sequence_labeler()
         >>> import torch
         >>> assert isinstance(batch['code'], torch.Tensor)
-        >>> assert batch['code'].shape == (2, 3)  # batch_size=2, seq_len=3
+        >>> assert batch['code'].shape == (2, 8)  # batch_size=2, seq_len=8
         >>> assert 'mask' in batch
         >>> # Test indices are within vocab range
         >>> max_idx = batch['code'].max()
@@ -233,16 +236,16 @@ def create_model_config(metadata_df_path: str):
     Examples:
         >>> import tempfile, polars as pl
         >>> with tempfile.NamedTemporaryFile(suffix='.parquet') as temp_file:
-        ...     df = pl.DataFrame({"code": ["A"], "code/vocab_index": [0]})
+        ...     df = pl.DataFrame({"code": ["A", "[H]", "[NTP]"], "code/vocab_index": [0, 1, 2]})
         ...     df.write_parquet(temp_file.name)
         ...     cfg = create_model_config(temp_file.name)
-        >>> assert cfg.vocab_size == 2  # Original size + pad token
+        >>> assert cfg.vocab_size == 4  # Original size + pad token
     """
     from hydra.utils import instantiate
 
     metadata_df = pl.read_parquet(metadata_df_path)
 
-    vocab_size = metadata_df.height + 1
+    vocab_size = metadata_df.height
     token_dim = 5
     diffloss_w = 3
     diffloss_d = token_dim
@@ -308,7 +311,7 @@ def create_model_config(metadata_df_path: str):
 class DummyModel:
     """Dummy model that generates two fixed sequences."""
 
-    cfg = DictConfig(dict(token_emb=None))
+    cfg = dict(token_emb=torch.nn.Identity())
 
     def __init__(self, token_dim, vocab_size):
         self.token_dim = token_dim
@@ -321,7 +324,7 @@ class DummyModel:
         )
         self.model.token_emb = torch.nn.Identity()
 
-    def __call__(self, batch, get_last_token=False):
+    def __call__(self, batch, do_get_last_token=False):
         B, S = batch["code"].shape
         histogram = torch.ones(B, S, self.vocab_size)
         histogram[:, :, :1] = 0
@@ -697,24 +700,33 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         code_logits = batch[CODE_LOGITS]
         assert not torch.isnan(code_logits).any(), "code_logits is NaN"
 
-        # Code Mask
+        code_logits = batch[CODE_LOGITS]
         mask = batch["mask"]
         code_target = batch["code"]
+        histogram_mask = batch["histogram"] > 0
 
-        # Shift the target to predict the next token
-        shifted_code_target = code_target[:, 1:]  # Remove the first token
-        shifted_mask = mask[:, 1:]  # Remove the first position from the mask too
+        # Shift sequences
+        shifted_code_target = code_target[:, 1:]  # Remove first token
+        shifted_mask = mask[:, 1:]  # Remove first position from mask
 
-        # Apply the mask to code_logits and shifted_code_target
-        masked_code_logits = code_logits[:, :-1] * shifted_mask.unsqueeze(-1)  # Remove the last prediction
-        masked_code_target = shifted_code_target * shifted_mask
+        # Apply histogram mask to logits
+        filtered_code_logits = code_logits.clone()
+        filtered_code_logits[~histogram_mask] = -float("inf")
+        # Remove last prediction and transpose for cross_entropy
 
-        # Code Loss
+        filtered_code_logits = filtered_code_logits[:, :-1]
+
+        # Only compute loss on masked positions
+        masked_logits = filtered_code_logits[shifted_mask.to(torch.bool), :]  # Get logits at masked positions
+        masked_targets = shifted_code_target[shifted_mask.to(torch.bool)]  # Get targets at masked positions
+
+        # Calculate loss with both masks
         code_loss = F.cross_entropy(
-            masked_code_logits.transpose(1, 2),
-            masked_code_target.to(dtype=torch.long),
-            reduction="none",
-        ).mean(dim=-1)
+            masked_logits,
+            masked_targets,
+            ignore_index=0,  # Assuming 0 is your padding index
+            reduction="mean",
+        )
 
         assert not torch.isnan(code_loss).any(), "code_loss is NaN"
 
@@ -726,8 +738,8 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         else:
             all_token_embeddings = model_output[BACKBONE_TOKENS_KEY]
         code_logits = self.code_head(all_token_embeddings)
-        histogram_mask = model_output["histogram"] > 0
-        code_logits[~histogram_mask] = -float("inf")
+        # histogram_mask = model_output["histogram"] > 0
+        # code_logits[~histogram_mask] = -float("inf")
 
         return {
             CODE_LOGITS: code_logits,
@@ -736,13 +748,13 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
     def get_diffusion_loss(self, prompts, histogram, embeddings, mask):
         # All inputs except the last we can evaluate
         prompts = prompts[:, :-1]  # ignore last h token
-        mask = mask[:, :-1]  # ignore last h token
         embeddings = embeddings[:, :-1]  # ignore last h token
 
         # Ground truth histogram is shifted by one, as we are predicting the next histogram
         histogram = histogram[:, 1:]
+        mask = mask[:, 1:].to(torch.bool)  # last unmasked token has invalid histogram so mask it
 
-        h_mask = prompts == self.cfg.h_token
+        h_mask = (prompts == self.cfg.h_token) & mask
         patch_embeddings = embeddings[h_mask]
         num_diffusion_samples = h_mask.sum()
 
@@ -756,13 +768,13 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         diff_loss = self.diffusion(
             target,
             z=patch_embeddings.reshape(num_diffusion_samples, -1),
-            mask=mask[h_mask].reshape(num_diffusion_samples, -1),
         )
+        assert not torch.isnan(diff_loss).any(), "diff_loss is NaN"
         return diff_loss
 
     def forward(self, batch, keep_code_logits=False):
         batch = self.input_encoder(batch)
-        model_output = self.model(batch, get_last_token=False)
+        model_output = self.model(batch, do_get_last_token=False)
         embeddings = model_output[BACKBONE_EMBEDDINGS_KEY]
 
         if self.cfg.return_tokens:
@@ -775,8 +787,12 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
 
         code_loss = self.get_loss(batch)
         diffusion_loss = self.get_diffusion_loss(batch["code"], batch["histogram"], embeddings, batch["mask"])
-        batch[MODEL_LOSS_KEY] = code_loss + diffusion_loss
-        batch[MODEL_BATCH_LOSS_KEY] = code_loss.mean()
+        model_loss = code_loss + diffusion_loss
+
+        batch[MODEL_LOSS_KEY] = model_loss
+        batch[MODEL_BATCH_LOSS_KEY] = model_loss
+        batch[MODEL_CODE_LOSS_KEY] = code_loss
+        batch[MODEL_DIFFUSION_LOSS_KEY] = diffusion_loss
         batch = self._generate(batch)
 
         if not keep_code_logits:
@@ -786,6 +802,8 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
 
     def _log(self, batch, split):
         self.log(split + "/loss", batch[MODEL_BATCH_LOSS_KEY])
+        self.log(split + "/code_loss", batch[MODEL_CODE_LOSS_KEY])
+        self.log(split + "/diffusion_loss", batch[MODEL_DIFFUSION_LOSS_KEY])
         if split == "train":
             self.train_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
         elif split == "val":
@@ -1134,9 +1152,9 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 "At least one of model.backbone.max_tokens_budget or model.trajectory_labeler must be "
                 "set in the configuration."
             )
-        if self.cfg.backbone.cfg.token_emb:
+        if not self.cfg.backbone.cfg.get("token_emb", None):
             raise NotImplementedError(
-                "Token embeddings not supported, use x-transformers library for token embeddings"
+                "Manual token embeddings should be used as we jointly embed histograms and codes"
             )
         else:
             prompts, mask = input_batch[INPUT_ENCODER_TOKENS_KEY], input_batch[INPUT_ENCODER_MASK_KEY]
@@ -1341,6 +1359,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         metadata = None
         status = None
 
+        log_progress = False
         progress = (
             Progress(
                 TextColumn("[progress.description]{task.description} {task.completed}"),
@@ -1409,7 +1428,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 full_logits[orig_indices[active_indices]] = logits
                 logits = full_logits
                 # mask logits given the prev_histogram
-                logits[~(prev_histogram[: self.cfg.vocab_size - 1] > 0)] = -float("inf")
+                logits[~(prev_histogram > 0)] = -float("inf")
 
                 embeddings = embeddings[:, -1, :]
                 full_embeddings = torch.zeros(

@@ -5,7 +5,7 @@ defaults:
   - optimizer: adam
   - scheduler: null
   - _self_
-_target_: meds_torch.models.eic_forecasting.EicForecastingModule.initialize
+_target_: meds_torch.models.histogram_forecasting.HistogramForecastingModule.initialize
 
 max_seq_len: ${data.max_seq_len}
 token_dim: 4
@@ -39,3 +39,17 @@ return_logits: false
 return_tokens: false
 return_labeler: false
 prune_terminated: true
+
+diffusion_loss:
+  _target_: meds_torch.models.diffusion_utils.diffloss.DiffLoss
+  target_channels: ${data.vocab_size} + 1  # add one for the counts
+  z_channels: ${model.token_dim}
+  width: 10
+  depth: 10
+  num_sampling_steps: '100'
+  grad_checkpointing: false
+
+h_token: ${data.H_TOKEN}
+o_token: ${data.O_TOKEN}
+token_insertion_strategy: ${data.token_insertion_strategy}
+token_bin_size: ${data.token_bin_size}

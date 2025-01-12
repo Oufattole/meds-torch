@@ -5,6 +5,7 @@ from omegaconf import DictConfig
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models import BACKBONE_EMBEDDINGS_KEY, BACKBONE_TOKENS_KEY
+from meds_torch.models.components.utils import get_last_token
 from meds_torch.utils.module_class import Module
 
 
@@ -84,13 +85,19 @@ class TransformerDecoderModel(torch.nn.Module, Module):
         if cfg.token_emb:
             self.model.token_emb = cfg.token_emb
 
-    def forward(self, batch, get_last_token=None):
+    def forward(self, batch, do_get_last_token=None):
         input_data, mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
-        output, embeddings = self.model(input_data, mask=mask, return_logits_and_embeddings=True)
-        if get_last_token is None and self.cfg.get_last_token:
-            embeddings = get_last_token(embeddings, ~mask)
-        elif get_last_token:
-            embeddings = get_last_token(embeddings, ~mask)
+        if self.cfg.token_emb:
+            # x-transformers does not allow masking in the forward pass if token_emb is used, this should be
+            # fine as we do right padding and apply masking to embeddings and outputs in the implemented
+            # models
+            output, embeddings = self.model(input_data, return_logits_and_embeddings=True)
+        else:
+            output, embeddings = self.model(input_data, mask=mask, return_logits_and_embeddings=True)
+        if do_get_last_token is None and self.cfg.get_last_token:
+            embeddings = get_last_token(embeddings, ~(mask.to(torch.bool)))
+        elif do_get_last_token:
+            embeddings = get_last_token(embeddings, ~(mask.to(torch.bool)))
         batch[BACKBONE_TOKENS_KEY] = output
         batch[BACKBONE_EMBEDDINGS_KEY] = embeddings
         return batch

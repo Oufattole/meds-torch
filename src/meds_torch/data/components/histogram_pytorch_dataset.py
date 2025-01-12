@@ -190,7 +190,7 @@ def compute_cumulative_count(codes: np.ndarray, vocab_size: int) -> np.ndarray:
         >>> np.array_equal(result, expected)
         True
     """
-    one_hot = np.eye(vocab_size + 1)[codes]
+    one_hot = np.eye(vocab_size)[codes]
     return np.cumsum(one_hot, axis=0)
 
 

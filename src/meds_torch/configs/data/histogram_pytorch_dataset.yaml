@@ -5,3 +5,6 @@ dataset_cls: meds_torch.data.components.histogram_pytorch_dataset.HistogramPytor
 
 token_insertion_strategy: token_count
 token_bin_size: 8
+
+H_TOKEN: ???
+O_TOKEN: ???
