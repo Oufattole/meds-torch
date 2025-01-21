@@ -1,6 +1,6 @@
 defaults:
-  - input_encoder: eic_encoder
-  - backbone: eic_transformer_decoder
+  - input_encoder: histogram_encoder
+  - backbone: histogram_transformer_decoder
   - trajectory_labeler: null
   - optimizer: adam
   - scheduler: null
