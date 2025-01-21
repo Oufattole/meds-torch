@@ -9,13 +9,13 @@ _target_: meds_torch.models.histogram_forecasting.HistogramForecastingModule.ini
 
 max_seq_len: ${data.max_seq_len}
 token_dim: 4
-vocab_size: ${data.vocab_size}
+vocab_size: ${data.augmented_vocab_size}
 get_representations: false
 task_name: ${data.task_name}
 batch_size: ${data.dataloader.batch_size}
 code_head:
   _target_: torch.nn.Identity
-code_metadata_fp: ${data.code_metadata_fp}
+augmented_code_metadata_fp: ${data.augmented_code_metadata_fp}
 
 # compile model for faster training with pytorch 2.0
 compile: false
@@ -40,8 +40,6 @@ return_tokens: false
 return_labeler: false
 prune_terminated: true
 
-h_token: ${data.H_TOKEN}
-o_token: ${data.O_TOKEN}
 # TODO(Oufattole) add autoencoder embed_dim that is smaller than token_dim
 token_insertion_strategy: ${data.token_insertion_strategy}
 token_bin_size: ${data.token_bin_size}

@@ -1,7 +1,9 @@
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 
 import numpy as np
+import polars as pl
 import torch
 from mixins import SeedableMixin
 from omegaconf import DictConfig, OmegaConf, open_dict
@@ -171,7 +173,7 @@ def compute_cumulative_count(codes: np.ndarray, vocab_size: int) -> np.ndarray:
         >>> import numpy as np
         >>> # Test case 1: Multiple different tokens
         >>> codes = [1,2,1]
-        >>> result = compute_cumulative_count(codes, vocab_size=2)
+        >>> result = compute_cumulative_count(codes, vocab_size=3)
         >>> expected = np.array([[0,1,0], [0,1,1], [0,2,1]])
         >>> np.array_equal(result, expected)
         True
@@ -179,13 +181,13 @@ def compute_cumulative_count(codes: np.ndarray, vocab_size: int) -> np.ndarray:
         >>> # Test case 2: Single token
         >>> codes = [1]
         >>> result = compute_cumulative_count(codes, vocab_size=2)
-        >>> expected = np.array([[0,1,0]])
+        >>> expected = np.array([[0,1]])
         >>> np.array_equal(result, expected)
         True
 
         >>> # Test case 3: Repeated tokens
         >>> codes = [1,1]
-        >>> result = compute_cumulative_count(codes, vocab_size=2)
+        >>> result = compute_cumulative_count(codes, vocab_size=3)
         >>> expected = np.array([[0,1,0], [0,2,0]])
         >>> np.array_equal(result, expected)
         True
@@ -340,7 +342,7 @@ def compute_count_histogram(inserted_codes: np.ndarray, vocab_size: int, o_token
         >>> import numpy as np
         >>> H_TOKEN = 3
         >>> O_TOKEN = 4
-        >>> vocab_size = 4  # 2 for original vocab, 2 for H and O tokens
+        >>> vocab_size = 5  # 2 for original vocab, 2 for H and O tokens, plus pad token
 
         >>> # Test case 1: Multiple different tokens
         >>> codes = [1,2,1]
@@ -407,11 +409,11 @@ def compute_count_histogram(inserted_codes: np.ndarray, vocab_size: int, o_token
 def fill_dummy_config(cfg: DummyConfig):
     cfg = OmegaConf.structured(cfg)
     with open_dict(cfg):
-        cfg.vocab_size = 6
+        cfg.vocab_size = 5
+        cfg.augmented_vocab_size = 7
         cfg.token_bin_size = 2
-        cfg.H_TOKEN = cfg.vocab_size - 2
-        cfg.O_TOKEN = cfg.vocab_size - 1
         cfg.token_insertion_strategy = "token_count"
+        cfg.augmented_code_metadata_fp = str(Path(cfg.code_metadata_fp).parent / "augmented_codes.parquet")
     return cfg
 
 
@@ -481,6 +483,31 @@ class HistogramPytorchDataset(PytorchDataset):
         if self.cfg.postpend_eos_token:
             raise NotImplementedError("EOS token not supported for HistogramPytorchDataset")
 
+        if not Path(self.cfg.augmented_code_metadata_fp).exists():
+            metadata_df = pl.read_parquet(self.cfg.code_metadata_fp)
+            h_token_index = metadata_df["code/vocab_index"].max() + 1
+            ntp_token_index = metadata_df["code/vocab_index"].max() + 2
+            augmented_metadata_df_schema = {
+                k: v for k, v in metadata_df.schema.items() if k in {"code", "code/vocab_index"}
+            }
+            augmented_metadata_df = pl.DataFrame(
+                {
+                    "code": ["[H]", "[NTP]"],
+                    "code/vocab_index": [h_token_index, ntp_token_index],
+                },
+                schema=augmented_metadata_df_schema,
+            )
+            metadata_df = pl.concat((metadata_df, augmented_metadata_df), how="diagonal")
+            metadata_df.write_parquet(self.cfg.augmented_code_metadata_fp, use_pyarrow=True)
+
+        metadata_df = pl.read_parquet(self.cfg.augmented_code_metadata_fp)
+        self.h_token = metadata_df.filter(pl.col("code") == "[H]")["code/vocab_index"].last()
+        self.ntp_token = metadata_df.filter(pl.col("code") == "[NTP]")["code/vocab_index"].last()
+        from loguru import logger
+
+        logger.info(f"Using H token: {self.h_token}, NTP token: {self.ntp_token}")
+        logger.info(f"vocab_size: {self.cfg.vocab_size}")
+
     @SeedableMixin.WithSeed
     def _seeded_getitem(self, idx: int) -> dict:
         """Get a randomly windowed item from the dataset.
@@ -495,19 +522,17 @@ class HistogramPytorchDataset(PytorchDataset):
         codes = out["dynamic"].tensors["dim0/code"]
         time_deltas = out["dynamic"].tensors["dim0/time_delta_days"]
         if self.cfg.token_insertion_strategy == TokenInsertionStrategy.TOKEN_COUNT:
-            inserted_codes = insert_h_o_tokens(
-                codes, self.cfg.token_bin_size, self.cfg.H_TOKEN, self.cfg.O_TOKEN
-            )
+            inserted_codes = insert_h_o_tokens(codes, self.cfg.token_bin_size, self.h_token, self.ntp_token)
         elif self.cfg.token_insertion_strategy == TokenInsertionStrategy.TIME_BINS:
             inserted_codes = insert_h_o_tokens_with_time_bins(
-                codes, time_deltas, self.cfg.time_bin_size, self.cfg.H_TOKEN, self.cfg.O_TOKEN
+                codes, time_deltas, self.cfg.time_bin_size, self.h_token, self.ntp_token
             )
         else:
             raise ValueError(
                 f"Invalid token insertion strategy: {self.cfg.token_insertion_strategy}, "
                 f"should be one of {TokenInsertionStrategy}"
             )
-        histogram = compute_count_histogram(inserted_codes, self.cfg.vocab_size, self.cfg.O_TOKEN)
+        histogram = compute_count_histogram(inserted_codes, self.cfg.augmented_vocab_size, self.ntp_token)
 
         out["cum_sum"] = dict(
             codes=inserted_codes,

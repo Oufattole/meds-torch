@@ -247,11 +247,9 @@ def create_model_config(metadata_df_path: str):
 
     vocab_size = metadata_df.height
     token_dim = 5
-    h_token = metadata_df.filter(pl.col("code").eq("[H]"))["code/vocab_index"][0]
-    o_token = metadata_df.filter(pl.col("code").eq("[NTP]"))["code/vocab_index"][0]
 
     cfg = {
-        "code_metadata_fp": metadata_df_path,
+        "augmented_code_metadata_fp": metadata_df_path,
         "backbone": {
             "_target_": "meds_torch.models.histogram_forecasting.DummyModel",
             "token_dim": token_dim,
@@ -261,8 +259,6 @@ def create_model_config(metadata_df_path: str):
         "token_bin_size": 2,
         "vocab_size": vocab_size,  # Add 1 for pad token
         "generate_id": None,
-        "h_token": h_token,
-        "o_token": o_token,
         "store_generated_trajectory": True,
         "max_seq_len": 10,
         "temperature": 1.0,
@@ -825,7 +821,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             - vocab_size: Size of the vocabulary
             - max_seq_len: Maximum sequence length
             - zero_shot_labeler: Optional function for zero-shot prediction
-            - code_metadata_fp: Path to code metadata file
+            - augmented_code_metadata_fp: Path to augmented code metadata file (with H and NTP tokens)
 
     Examples:
         >>> import tempfile
@@ -890,11 +886,15 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             self.cfg.vocab_size, self.cfg.top_k_acc, self.cfg.next_token_auc
         )
 
-        self.metadata_df = pl.read_parquet(self.cfg.code_metadata_fp)
+        self.metadata_df = pl.read_parquet(self.cfg.augmented_code_metadata_fp)
         self.trajectory_labeler = self.cfg.get("trajectory_labeler", None)
         self.initialize_weights()
+
+        self.h_token = self.metadata_df.filter(pl.col("code") == "[H]")["code/vocab_index"].last()
+        self.ntp_token = self.metadata_df.filter(pl.col("code") == "[NTP]")["code/vocab_index"].last()
+
         self.histogram_normalizer = HistogramNormalizer(
-            self.cfg.h_token, self.cfg.o_token, self.cfg.vocab_size, self.cfg.n_bits, scale=self.cfg.scale
+            self.h_token, self.ntp_token, self.cfg.vocab_size, self.cfg.n_bits, scale=self.cfg.scale
         )
         histogram_dim = self.histogram_normalizer.get_normalized_size()
 
@@ -1021,7 +1021,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         histogram = histogram[:, 1:]
         mask = mask[:, 1:].to(torch.bool)  # last unmasked token has invalid histogram so mask it
 
-        h_mask = (prompts == self.cfg.h_token) & mask
+        h_mask = (prompts == self.h_token) & mask
         patch_embeddings = embeddings[h_mask]
         num_histogram_samples = h_mask.sum()
 
@@ -1238,7 +1238,10 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         for row in metadata_df.iter_rows(named=True):
             vocab_idx = row["code/vocab_index"]
             code = row["code"]
-            raw_quantiles = [row["values/quantiles"][each] for each in ordered_quantiles]
+            if row["values/quantiles"] is None:  # Handle case with single None quantile
+                raw_quantiles = [None]
+            else:
+                raw_quantiles = [row["values/quantiles"][each] for each in ordered_quantiles]
             min_value = row["values/min"]
             max_value = row["values/max"]
             raw_quantiles = [min_value, *raw_quantiles, max_value]
@@ -1737,18 +1740,18 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                     filtered_logits = filter_logits_fn(logits, **filter_kwargs)
                     # Apply the same masking logic for temperature sampling
                     mask = torch.ones_like(filtered_logits, dtype=torch.bool)
-                    mask[..., self.cfg.h_token] = False
-                    mask[..., self.cfg.o_token] = False
+                    mask[..., self.h_token] = False
+                    mask[..., self.ntp_token] = False
 
                     logits_finite = filtered_logits.isfinite()
-                    has_h_token = logits_finite[:, self.cfg.h_token]
-                    has_o_token = logits_finite[:, self.cfg.o_token]
+                    has_h_token = logits_finite[:, self.h_token]
+                    has_o_token = logits_finite[:, self.ntp_token]
                     num_finite_logits = logits_finite.sum(dim=-1)
                     is_histogram_only_h_o_tokens = num_finite_logits <= 2
 
-                    mask[is_histogram_only_h_o_tokens.squeeze(-1) & has_h_token, self.cfg.h_token] = True
+                    mask[is_histogram_only_h_o_tokens.squeeze(-1) & has_h_token, self.h_token] = True
                     can_sample_o = is_histogram_only_h_o_tokens & ~has_h_token & has_o_token
-                    mask[can_sample_o.squeeze(-1), self.cfg.o_token] = True
+                    mask[can_sample_o.squeeze(-1), self.ntp_token] = True
 
                     filtered_logits = filtered_logits.masked_fill(~mask, float("-inf"))
                     probs = F.softmax(filtered_logits / temperature, dim=-1)
@@ -1758,7 +1761,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 next_decrement_histogram = prev_histogram - one_hot_sample
 
                 h_token_histogram_mask = (
-                    (code[:, -1] == self.cfg.h_token).reshape(-1, 1).repeat(1, next_ae_histogram.shape[1])
+                    (code[:, -1] == self.h_token).reshape(-1, 1).repeat(1, next_ae_histogram.shape[1])
                 )
                 next_histogram = torch.where(
                     h_token_histogram_mask, next_ae_histogram, next_decrement_histogram
