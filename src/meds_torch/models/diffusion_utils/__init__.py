@@ -30,6 +30,5 @@ def create_diffusion(
             if not learn_sigma
             else gd.ModelVarType.LEARNED_RANGE
         ),
-        loss_type=loss_type
-        # rescale_timesteps=rescale_timesteps,
+        loss_type=loss_type,
     )

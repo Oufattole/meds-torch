@@ -11,7 +11,14 @@ class DiffLoss(nn.Module):
     """Diffusion Loss"""
 
     def __init__(
-        self, target_channels, z_channels, depth, width, num_sampling_steps, grad_checkpointing=False
+        self,
+        target_channels,
+        z_channels,
+        depth,
+        width,
+        num_sampling_steps,
+        grad_checkpointing=False,
+        noise_schedule="cosine",
     ):
         super().__init__()
         self.in_channels = target_channels
@@ -24,8 +31,10 @@ class DiffLoss(nn.Module):
             grad_checkpointing=grad_checkpointing,
         )
 
-        self.train_diffusion = create_diffusion(timestep_respacing="", noise_schedule="cosine")
-        self.gen_diffusion = create_diffusion(timestep_respacing=num_sampling_steps, noise_schedule="cosine")
+        self.train_diffusion = create_diffusion(timestep_respacing="", noise_schedule=noise_schedule)
+        self.gen_diffusion = create_diffusion(
+            timestep_respacing=num_sampling_steps, noise_schedule=noise_schedule
+        )
 
     def forward(self, target, z, mask=None):
         t = torch.randint(0, self.train_diffusion.num_timesteps, (target.shape[0],), device=target.device)
@@ -36,17 +45,10 @@ class DiffLoss(nn.Module):
             loss = (loss * mask).sum() / mask.sum()
         return loss.mean()
 
-    def sample(self, z, temperature=1.0, cfg=1.0):
-        # diffusion loss sampling
-        if not cfg == 1.0:
-            noise = torch.randn(z.shape[0] // 2, self.in_channels).to(z.device)
-            noise = torch.cat([noise, noise], dim=0)
-            model_kwargs = dict(c=z, cfg_scale=cfg)
-            sample_fn = self.net.forward_with_cfg
-        else:
-            noise = torch.randn(z.shape[0], self.in_channels).to(z.device)
-            model_kwargs = dict(c=z)
-            sample_fn = self.net.forward
+    def sample(self, z, temperature=1.0):
+        noise = torch.randn(z.shape[0], self.in_channels).to(z.device)
+        model_kwargs = dict(c=z)
+        sample_fn = self.net.forward
 
         sampled_token_latent = self.gen_diffusion.p_sample_loop(
             sample_fn,
@@ -56,6 +58,7 @@ class DiffLoss(nn.Module):
             model_kwargs=model_kwargs,
             progress=False,
             temperature=temperature,
+            device=z.device,
         )
 
         return sampled_token_latent
@@ -237,13 +240,3 @@ class SimpleMLPAdaLN(nn.Module):
                 x = block(x, y)
 
         return self.final_layer(x, y)
-
-    def forward_with_cfg(self, x, t, c, cfg_scale):
-        half = x[: len(x) // 2]
-        combined = torch.cat([half, half], dim=0)
-        model_out = self.forward(combined, t, c)
-        eps, rest = model_out[:, : self.in_channels], model_out[:, self.in_channels :]
-        cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
-        half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
-        eps = torch.cat([half_eps, half_eps], dim=0)
-        return torch.cat([eps, rest], dim=1)

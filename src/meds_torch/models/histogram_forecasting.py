@@ -18,8 +18,10 @@ from rich.progress import (
     TextColumn,
     TimeRemainingColumn,
 )
+from torch import nn
 from torchmetrics import Metric, MetricCollection
 from torchmetrics.classification import MulticlassAccuracy, MulticlassAUROC
+from torchvision.ops import MLP
 from x_transformers import Decoder, TransformerWrapper
 from x_transformers.autoregressive_wrapper import (
     FILTER_LOGITS_FN,
@@ -45,11 +47,9 @@ from meds_torch.models import (
 )
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components.utils import TrajectoryBatch, get_time_days_delta
-from meds_torch.models.diffusion_utils.diffloss import DiffLoss
 from meds_torch.utils import TIME_DELTA_TOKEN
 
-MODEL_CODE_LOSS_KEY = "code_loss"
-MODEL_DIFFUSION_LOSS_KEY = "diffusion_loss"
+MODEL_LOSS_KEYS = ["MODEL//code_loss", "MODEL//vae_loss", "MODEL//vae_rec_loss", "MODEL//vae_kl_loss"]
 
 
 def eval_decorator(fn):
@@ -239,7 +239,7 @@ def create_model_config(metadata_df_path: str):
         ...     df = pl.DataFrame({"code": ["A", "[H]", "[NTP]"], "code/vocab_index": [0, 1, 2]})
         ...     df.write_parquet(temp_file.name)
         ...     cfg = create_model_config(temp_file.name)
-        >>> assert cfg.vocab_size == 4  # Original size + pad token
+        >>> assert cfg.vocab_size == 3, cfg.vocab_size  # Original size + pad token
     """
     from hydra.utils import instantiate
 
@@ -247,9 +247,6 @@ def create_model_config(metadata_df_path: str):
 
     vocab_size = metadata_df.height
     token_dim = 5
-    diffloss_w = 3
-    diffloss_d = token_dim
-    num_sampling_steps = "100"
     h_token = metadata_df.filter(pl.col("code").eq("[H]"))["code/vocab_index"][0]
     o_token = metadata_df.filter(pl.col("code").eq("[NTP]"))["code/vocab_index"][0]
 
@@ -287,15 +284,6 @@ def create_model_config(metadata_df_path: str):
             "_target_": "meds_torch.models.histogram_forecasting.DummyCodeHead",
             "vocab_size": vocab_size,
         },
-        "diffusion_loss": {
-            "_target_": "meds_torch.models.diffusion_utils.diffloss.DiffLoss",
-            "target_channels": vocab_size + 1,  # add one for the counts
-            "z_channels": token_dim,
-            "width": diffloss_w,
-            "depth": diffloss_d,
-            "num_sampling_steps": num_sampling_steps,
-            "grad_checkpointing": False,
-        },
         "compile": False,
         "top_k_acc": [1],
         "next_token_auc": False,
@@ -304,6 +292,10 @@ def create_model_config(metadata_df_path: str):
         "return_logits": False,
         "return_labeler": False,
         "prune_terminated": False,
+        "histogram_batch_mul": 2,
+        "n_bits": 8,
+        "scale": 1.0,
+        "token_dim": 5,
     }
     return instantiate(cfg)
 
@@ -432,53 +424,260 @@ def topk(x: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
     return final_mask
 
 
-def convert_to_counts_batched(logits_batch: torch.Tensor, N: torch.Tensor) -> torch.Tensor:
-    """Convert logits to counts by flooring the probabilities and then distributing
-    the remaining counts to the top decimal parts.
+class HistogramNormalizer(torch.nn.Module):
+    def __init__(self, h_token, o_token, vocab_size, num_bits=16, scale=1):
+        super().__init__()
+        self.h_token = h_token
+        self.o_token = o_token
+        self.vocab_size = vocab_size
+        self.num_bits = num_bits
+        self.scale = scale
+        # Create powers of 2 as a buffer to avoid recomputing
+        self.register_buffer("powers", torch.pow(2, torch.arange(num_bits - 1, -1, -1).float()))
 
-    Args:
-        logits_batch (torch.Tensor): batch of logits of shape [B, L]
-        N (torch.Tensor): number of counts to use to convert logits to a histogram,
-        accepts shape [B] or [B, 1]
+    def get_normalized_size(self):
+        return self.vocab_size * self.num_bits
 
-    Returns:
-        torch.Tensor: counts of shape [B, L]
+    def count_to_binary(self, count):
+        """Convert number(s) to binary representation using PyTorch operations."""
+        return ((count.unsqueeze(-1) // self.powers) % 2).to(torch.int)
 
-    Examples:
-        >>> import torch
-        >>> N = torch.tensor([5,5,5,4])
-        >>> test_case = torch.tensor([
-        ...     [1., 1., 1., 1., 1., 1., 1., 1.],  # All equal
-        ...     [2., 1., 1., 1., 1., 1., 1., 1.],  # First value different
-        ...     [2., 2., 1., 0., 0., 0., 0., 0.],  # Two twos, one one
-        ...     [100., 100., 100., -100., -100., -100., -100., -100.]  # Extreme values
-        ... ])
-        >>> result = convert_to_counts_batched(test_case, N)
-        >>> expected = torch.tensor([
-        ...     [1, 1, 1, 1, 1, 0, 0, 0],
-        ...     [1, 1, 1, 1, 1, 0, 0, 0],
-        ...     [2, 2, 1, 0, 0, 0, 0, 0],
-        ...     [2, 1, 1, 0, 0, 0, 0, 0]
-        ... ])
-        >>> (result == expected).all().item()
-        True
-        >>> (result.sum(dim=-1) == N).all().item()
-        True
-    """
-    N = N.reshape(-1, 1)
-    # Expect logits_batch shape: (batch_size, vocab_size)
-    probs = F.softmax(logits_batch, dim=-1)
-    counts = torch.floor(probs * N).long()
-    remaining = N - counts.sum(dim=-1, keepdim=True)  # Shape: (batch_size, 1)
+    def binary_to_count(self, binary):
+        return (binary * self.powers).sum(dim=-1, keepdim=True)
 
-    decimal_parts = (probs * N) - counts.float()
-    # Get indices of top decimal parts for each batch
-    top_k_decimal_mask = topk(decimal_parts, remaining).to(torch.bool)
+    def transform(self, x):
+        # Zero out special tokens
+        x[:, self.h_token] = 0
+        x[:, self.o_token] = 0
 
-    # Increment top k in parallel
-    counts[top_k_decimal_mask] += 1
+        # Get counts and normalize histogram
+        b, _ = x.shape
 
-    return counts
+        # Convert counts to binary representation
+        data = self.count_to_binary(x.reshape(-1)).reshape(b, -1).to(torch.float32)
+
+        # Shift from [0,1] to [-self.scale,self.scale] range
+        return (data * 2 - 1) * self.scale
+
+    def reverse_transform(self, x):
+        # Shift from [-self.scale,self.scale] to [0,1]  range
+        x = (x / self.scale + 1) / 2
+
+        # Clip to [0,1] range
+        x = x.clip(min=0, max=1).round().int()
+        # Split into histogram and binary count
+        b, _ = x.shape
+
+        # Convert from batch_size x (vocab_size * num_bits) to (batch_size x vocab_size) x num_bits
+        x = x.reshape(b * self.vocab_size, -1)
+        # Convert binary back to count, and reshape
+        x = self.binary_to_count(x)
+        # Convert from (batch_size x vocab_size) x 1 to batch_size x vocab_size
+        x = x.reshape(b, -1)
+
+        # Restore special tokens
+        x[:, self.h_token] = 1
+        x[:, self.o_token] = 1
+
+        return x, x.sum(dim=-1)
+
+
+class VAEEncoder(nn.Module):
+    def __init__(
+        self,
+        input_dim=3,
+        latent_dim=16,
+        hidden_dims=[64, 32],
+        dropout=0.0,
+    ):
+        super().__init__()
+        # Create MLP encoder using torchvision
+        self.encoder = MLP(
+            in_channels=input_dim,
+            hidden_channels=hidden_dims,
+            norm_layer=nn.LayerNorm,
+            activation_layer=nn.SiLU,
+            dropout=dropout,
+            inplace=None,  # Explicit None for clarity
+        )
+        self.fc_mu = nn.Linear(hidden_dims[-1], latent_dim)
+        self.fc_var = nn.Linear(hidden_dims[-1], latent_dim)
+
+    def forward(self, x):
+        result = self.encoder(x)
+        mu = self.fc_mu(result)
+        log_var = self.fc_var(result)
+        return mu, log_var
+
+
+def scaled_sigmoid(x):
+    return 2 * torch.sigmoid(x) - 1  # Scales [0,1] to [-1,1]
+
+
+class VAEDecoder(nn.Module):
+    def __init__(
+        self,
+        output_dim=3,
+        latent_dim=16,
+        hidden_dims=[32, 64],
+        dropout=0.0,
+    ):
+        super().__init__()
+        self.decoder = MLP(
+            in_channels=latent_dim,
+            hidden_channels=hidden_dims + [output_dim],
+            norm_layer=nn.LayerNorm,
+            activation_layer=nn.SiLU,
+            dropout=dropout,
+            inplace=None,  # Explicit None for clarity
+        )
+
+    def forward(self, z):
+        return self.decoder(z)
+        return scaled_sigmoid(self.decoder(z))
+
+
+class DiagonalGaussianDistribution:
+    def __init__(self, parameters, deterministic=False):
+        self.parameters = parameters
+        self.mean, self.logvar = torch.chunk(parameters, 2, dim=1)
+        self.logvar = torch.clamp(self.logvar, -30.0, 20.0)
+        self.deterministic = deterministic
+        self.std = torch.exp(0.5 * self.logvar)
+        self.var = torch.exp(self.logvar)
+        if self.deterministic:
+            self.var = self.std = torch.zeros_like(self.mean).to(device=self.parameters.device)
+
+    def sample(self):
+        x = self.mean + self.std * torch.randn(self.mean.shape).to(device=self.parameters.device)
+        return x
+
+    def kl(self, other=None):
+        if self.deterministic:
+            return torch.Tensor([0.0])
+        else:
+            if other is None:
+                return 0.5 * torch.sum(
+                    torch.pow(self.mean, 2) + self.var - 1.0 - self.logvar,
+                    dim=[1],
+                )
+            else:
+                return 0.5 * torch.sum(
+                    torch.pow(self.mean - other.mean, 2) / other.var
+                    + self.var / other.var
+                    - 1.0
+                    - self.logvar
+                    + other.logvar,
+                    dim=[1],
+                )
+
+    def nll(self, sample, dims=[1]):
+        if self.deterministic:
+            return torch.Tensor([0.0])
+        logtwopi = np.log(2.0 * np.pi)
+        return 0.5 * torch.sum(
+            logtwopi + self.logvar + torch.pow(sample - self.mean, 2) / self.var,
+            dim=dims,
+        )
+
+    def mode(self):
+        return self.mean
+
+
+class AutoencoderKL(nn.Module):
+    def __init__(
+        self,
+        embed_dim,
+        input_dim,
+        output_dim=None,
+        encoder_hidden_dims=[64, 32],
+        decoder_hidden_dims=[32, 64],
+        use_variational=True,
+        beta=1.0,
+        warmup_steps=None,
+        annealing_steps=None,
+    ):
+        super().__init__()
+        assert use_variational
+        if output_dim is None:
+            output_dim = input_dim
+        self.use_variational = use_variational
+        self._encoder = VAEEncoder(input_dim=input_dim, latent_dim=embed_dim, hidden_dims=encoder_hidden_dims)
+        self._decoder = VAEDecoder(
+            output_dim=output_dim, latent_dim=embed_dim, hidden_dims=decoder_hidden_dims
+        )
+        self.embed_dim = embed_dim
+        self.beta = beta
+        self.step = 0
+        self.warmup_steps = warmup_steps if warmup_steps else 0
+        self.annealing_steps = annealing_steps if annealing_steps else 0
+        self.annealing_steps += self.warmup_steps
+
+    def encode(self, x):
+        mu, log_var = self._encoder(x)
+        moments = torch.cat((mu, log_var), 1)
+        posterior = DiagonalGaussianDistribution(moments)
+        return posterior
+
+    def decode(self, z):
+        dec = self._decoder(z)
+        return dec
+
+    def forward(self, inputs, outputs=None, disable=False):
+        return self.training_step(inputs, outputs, disable)
+
+    def training_step(self, inputs, outputs=None, disable=False):
+        """
+        Training step for the VAE model.
+
+        Args:
+            inputs: Input tensor
+            disable: Flag to disable parts of the loss computation
+            optimizer_idx: Index of the optimizer (not used in this implementation)
+
+        Returns:
+            dict: Dictionary containing loss components and reconstructed output
+        """
+        posterior = self.encode(inputs)
+
+        if disable or (self.warmup_steps and self.step < self.warmup_steps):
+            # Deterministic warmup: directly use mean
+            z = posterior.mean
+        else:
+            # Sample from posterior
+            z = posterior.sample()
+
+        if outputs is None:
+            outputs = inputs
+
+        # Decode the latent representation
+        dec = self.decode(z)
+
+        # Compute reconstruction loss (mean squared error)
+        rec_loss = torch.nn.functional.mse_loss(dec, outputs, reduction="mean")
+
+        # Compute KL divergence loss if using variational mode
+        kl_loss = torch.zeros_like(rec_loss)
+        if self.use_variational and not disable:
+            kl_loss = posterior.kl().mean()
+
+        # Total loss is reconstruction loss + KL divergence
+        if self.warmup_steps and self.step < self.warmup_steps:
+            beta = 0.0
+        elif self.annealing_steps:
+            beta = self.beta * min(1.0, (self.step / self.annealing_steps))
+        else:
+            beta = self.beta
+        loss = rec_loss + beta * kl_loss
+
+        self.step += 1
+
+        return {
+            "vae_loss": loss,
+            "vae_rec_loss": rec_loss,
+            "vae_kl_loss": kl_loss,
+            "vae_reconstruction": dec,
+        }
 
 
 # Function to pad a single array
@@ -677,7 +876,6 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
         self.code_head = self.cfg.code_head
-        self.diffusion = self.cfg.diffusion_loss
 
         num_future_codes = self.cfg.get("num_future_codes", None)
         if num_future_codes is not None:
@@ -694,9 +892,33 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
 
         self.metadata_df = pl.read_parquet(self.cfg.code_metadata_fp)
         self.trajectory_labeler = self.cfg.get("trajectory_labeler", None)
-        self.diffusion: DiffLoss = self.cfg.diffusion_loss
+        self.initialize_weights()
+        self.histogram_normalizer = HistogramNormalizer(
+            self.cfg.h_token, self.cfg.o_token, self.cfg.vocab_size, self.cfg.n_bits, scale=self.cfg.scale
+        )
+        histogram_dim = self.histogram_normalizer.get_normalized_size()
+
+        encoder_hidden_dims = [
+            self.cfg.token_dim,
+            self.cfg.token_dim,
+            self.cfg.token_dim,
+            self.cfg.token_dim // 2,
+        ]
+        decoder_hidden_dims = [self.cfg.token_dim, histogram_dim, histogram_dim, histogram_dim]
+        self.autoencoder = AutoencoderKL(
+            embed_dim=self.cfg.token_dim,
+            input_dim=self.cfg.token_dim,
+            output_dim=histogram_dim,
+            encoder_hidden_dims=encoder_hidden_dims,
+            decoder_hidden_dims=decoder_hidden_dims,
+            use_variational=True,
+            beta=1e-3,
+            warmup_steps=0,
+            annealing_steps=0,
+        )
 
     def get_loss(self, batch):
+        return self.get_loss_no_filter(batch)
         code_logits = batch[CODE_LOGITS]
         assert not torch.isnan(code_logits).any(), "code_logits is NaN"
 
@@ -732,6 +954,51 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
 
         return code_loss
 
+    def get_loss_no_filter(self, batch):
+        code_logits = batch[CODE_LOGITS]
+        assert not torch.isnan(code_logits).any(), "code_logits is NaN"
+
+        code_logits = batch[CODE_LOGITS]
+        mask = batch["mask"]
+        code_target = batch["code"]
+
+        # Shift sequences
+        shifted_code_target = code_target[:, 1:]  # Remove first token
+        shifted_mask = mask[:, 1:]  # Remove first position from mask
+
+        # Only compute loss on masked positions
+        masked_logits = code_logits[:, :-1][shifted_mask.to(torch.bool), :]  # Get logits at masked positions
+        masked_targets = shifted_code_target[shifted_mask.to(torch.bool)]  # Get targets at masked positions
+
+        # Calculate loss with both masks
+        code_loss = F.cross_entropy(
+            masked_logits,
+            masked_targets,
+            ignore_index=0,  # Assuming 0 is your padding index
+            reduction="mean",
+        )
+
+        assert not torch.isnan(code_loss).any(), "code_loss is NaN"
+
+        return code_loss
+
+    def initialize_weights(self):
+        # initialize nn.Linear and nn.LayerNorm
+        pass
+        # self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, torch.nn.Linear):
+            # we use xavier_uniform following official JAX ViT:
+            torch.nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, torch.nn.Linear) and m.bias is not None:
+                torch.nn.init.constant_(m.bias, 0)
+        elif isinstance(m, torch.nn.LayerNorm):
+            if m.bias is not None:
+                torch.nn.init.constant_(m.bias, 0)
+            if m.weight is not None:
+                torch.nn.init.constant_(m.weight, 1.0)
+
     def get_forecast_logits(self, model_output):
         if isinstance(model_output, torch.Tensor):
             all_token_embeddings = model_output
@@ -745,7 +1012,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             CODE_LOGITS: code_logits,
         }
 
-    def get_diffusion_loss(self, prompts, histogram, embeddings, mask):
+    def get_histogram_loss(self, prompts, histogram, embeddings, mask):
         # All inputs except the last we can evaluate
         prompts = prompts[:, :-1]  # ignore last h token
         embeddings = embeddings[:, :-1]  # ignore last h token
@@ -756,21 +1023,25 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
 
         h_mask = (prompts == self.cfg.h_token) & mask
         patch_embeddings = embeddings[h_mask]
-        num_diffusion_samples = h_mask.sum()
+        num_histogram_samples = h_mask.sum()
 
         # Setup target -- histogram + counts
         target = histogram[h_mask, :]
-        target[:, self.cfg.h_token] = 0
-        target[:, self.cfg.o_token] = 0
-        counts = target.sum(dim=-1)
-        target = torch.cat([target / counts.unsqueeze(-1), counts.unsqueeze(-1)], dim=-1)
 
-        diff_loss = self.diffusion(
-            target,
-            z=patch_embeddings.reshape(num_diffusion_samples, -1),
+        with torch.no_grad():
+            normalized_gt_histogram = self.histogram_normalizer.transform(target)
+        # Forward pass and loss computation
+        loss_dict = self.autoencoder.forward(
+            inputs=patch_embeddings.reshape(num_histogram_samples, -1).repeat(
+                self.cfg.histogram_batch_mul, 1
+            ),
+            outputs=normalized_gt_histogram.detach().repeat(self.cfg.histogram_batch_mul, 1),
         )
-        assert not torch.isnan(diff_loss).any(), "diff_loss is NaN"
-        return diff_loss
+        loss = loss_dict["vae_loss"]
+
+        loss_dict = {"MODEL//" + k: v.item() for k, v in loss_dict.items() if k != "vae_reconstruction"}
+        assert not torch.isnan(loss).any(), "histogram loss is NaN"
+        return loss, loss_dict
 
     def forward(self, batch, keep_code_logits=False):
         batch = self.input_encoder(batch)
@@ -786,30 +1057,42 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         batch[CODE_LOGITS] = forecast[CODE_LOGITS]
 
         code_loss = self.get_loss(batch)
-        diffusion_loss = self.get_diffusion_loss(batch["code"], batch["histogram"], embeddings, batch["mask"])
-        model_loss = code_loss + diffusion_loss
+        histogram_loss, loss_dict = self.get_histogram_loss(
+            batch["code"], batch["histogram"], embeddings, batch["mask"]
+        )
+        model_loss = code_loss + histogram_loss
+
+        loss_dict["MODEL//code_loss"] = code_loss
+        batch.update(loss_dict)
 
         batch[MODEL_LOSS_KEY] = model_loss
         batch[MODEL_BATCH_LOSS_KEY] = model_loss
-        batch[MODEL_CODE_LOSS_KEY] = code_loss
-        batch[MODEL_DIFFUSION_LOSS_KEY] = diffusion_loss
         batch = self._generate(batch)
 
         if not keep_code_logits:
             del batch[CODE_LOGITS]
-        # TODO(Oufattole) log diffusion loss and code loss separately
         return batch
 
     def _log(self, batch, split):
-        self.log(split + "/loss", batch[MODEL_BATCH_LOSS_KEY])
-        self.log(split + "/code_loss", batch[MODEL_CODE_LOSS_KEY])
-        self.log(split + "/diffusion_loss", batch[MODEL_DIFFUSION_LOSS_KEY])
+        on_step = split == "train"
+        for loss_key in MODEL_LOSS_KEYS + [MODEL_LOSS_KEY]:
+            loss_name = "/" + loss_key.split("/")[-1]
+            self.log(
+                split + loss_name,
+                batch[loss_key],
+                on_step=on_step,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
         if split == "train":
             self.train_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
         elif split == "val":
             self.val_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
         elif split == "test":
             self.test_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
+        else:
+            raise ValueError(f"Invalid split: {split}")
 
     def _generate(self, batch):
         if self.cfg.generate_id is not None:
@@ -1437,18 +1720,11 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 full_embeddings[orig_indices[active_indices]] = embeddings
                 embeddings = full_embeddings
 
-                next_histogram_logits_and_counts = self.diffusion.sample(embeddings, temperature=temperature)
-                next_histogram_logits = next_histogram_logits_and_counts[:, :-1]
-
-                counts = next_histogram_logits_and_counts[:, -1]
-                if self.cfg.token_insertion_strategy == "token_count":
-                    counts = counts.clip(1, self.cfg.token_bin_size)
-                else:
-                    counts = counts.clip(1, None)
-
-                next_diffusion_histogram = convert_to_counts_batched(next_histogram_logits, counts)
-                next_diffusion_histogram[:, self.cfg.h_token] = 1
-                next_diffusion_histogram[:, self.cfg.o_token] = 1
+                next_histogram_posterior = self.autoencoder.encode(embeddings)
+                next_ae_histogram_binary = self.autoencoder.decode(next_histogram_posterior.sample())
+                next_ae_histogram, count = self.histogram_normalizer.reverse_transform(
+                    next_ae_histogram_binary
+                )
 
                 # Update cache with pruned version
                 if cache_kv and transformer_decoder.can_cache_kv:
@@ -1482,12 +1758,10 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 next_decrement_histogram = prev_histogram - one_hot_sample
 
                 h_token_histogram_mask = (
-                    (code[:, -1] == self.cfg.h_token)
-                    .reshape(-1, 1)
-                    .repeat(1, next_diffusion_histogram.shape[1])
+                    (code[:, -1] == self.cfg.h_token).reshape(-1, 1).repeat(1, next_ae_histogram.shape[1])
                 )
                 next_histogram = torch.where(
-                    h_token_histogram_mask, next_diffusion_histogram, next_decrement_histogram
+                    h_token_histogram_mask, next_ae_histogram, next_decrement_histogram
                 )
                 if (next_histogram == 0).all():
                     raise ValueError("All histogram counts are zero somehow, this should not happen.")
@@ -1509,7 +1783,6 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                     )
 
                 # Append new tokens
-
                 code = torch.cat((code, sample), dim=-1)
                 histogram = torch.cat((histogram, next_histogram.unsqueeze(1)), dim=1)
                 next_sample_embedding = self.input_encoder.process_sample(sample, next_histogram.unsqueeze(1))
@@ -1547,3 +1820,43 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         code = code[:, t:]
 
         return code, out_lengths, metadata
+
+    def get_sample(self, batch, temperature=1.0):
+        """Get next token logits and histogram prediction for a single step.
+
+        Args:
+            batch: Dictionary containing:
+                - code: Token indices [batch_size, seq_len]
+                - histogram: Token histograms [batch_size, seq_len, vocab_size]
+                - mask: Attention mask [batch_size, seq_len]
+
+        Returns:
+            tuple: (next_token_logits, next_histogram)
+                - next_token_logits: Logits for next token prediction [batch_size, vocab_size]
+                - next_histogram: Predicted histogram [batch_size, vocab_size]
+        """
+        # Encode input
+        batch = self.input_encoder(batch)
+        tokens = batch[INPUT_ENCODER_TOKENS_KEY]
+
+        # Get model predictions
+        transformer_decoder = self.model.model
+        (logits, embeddings), _ = transformer_decoder(
+            tokens, return_logits_and_embeddings=True, return_intermediates=True
+        )
+
+        # Get last token predictions
+        next_token_logits = logits[:, -1]
+        last_embeddings = embeddings[:, -1]
+
+        # Get histogram prediction using diffusion
+        latent_next_histogram_posterior = self.autoencoder.encode(last_embeddings)
+        next_histogram, counts = self.histogram_normalizer.reverse_transform(
+            self.autoencoder.decode(latent_next_histogram_posterior.sample())
+        )
+
+        # Mask token logits based on histogram
+        prev_histogram = batch["histogram"][:, -1]
+        next_token_logits[~(prev_histogram > 0)] = -float("inf")
+
+        return next_token_logits, next_histogram, latent_next_histogram_posterior, counts, last_embeddings

@@ -40,16 +40,11 @@ return_tokens: false
 return_labeler: false
 prune_terminated: true
 
-diffusion_loss:
-  _target_: meds_torch.models.diffusion_utils.diffloss.DiffLoss
-  target_channels: ${data.vocab_size} + 1  # add one for the counts
-  z_channels: ${model.token_dim}
-  width: 10
-  depth: 10
-  num_sampling_steps: '100'
-  grad_checkpointing: false
-
 h_token: ${data.H_TOKEN}
 o_token: ${data.O_TOKEN}
+# TODO(Oufattole) add autoencoder embed_dim that is smaller than token_dim
 token_insertion_strategy: ${data.token_insertion_strategy}
 token_bin_size: ${data.token_bin_size}
+n_bits: 8
+scale: 1.0
+histogram_batch_mul: 128
