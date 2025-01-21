@@ -20,6 +20,7 @@ class DummyConfig:
     schema_files_root: str
     task_label_path: str | None
     data_dir: str
+    code_metadata_fp: str
     task_name: str | None = "dummy_task"
     max_seq_len: int = 10
     do_prepend_static_data: bool = True
@@ -197,11 +198,20 @@ def create_dummy_dataset(
 
     task_fp = base_dir / "task_labels.parquet"
     task_df.write_parquet(task_fp, use_pyarrow=True)
+    metadata_df = pl.DataFrame(
+        {
+            "code": ["1", "2", "3"],
+            "code/vocab_index": [1, 2, 3],
+        }
+    )
+    code_metadata_fp = base_dir / "codes.parquet"
+    metadata_df.write_parquet(code_metadata_fp, use_pyarrow=True)
 
     return DummyConfig(
         schema_files_root=str(base_dir / "schema"),
         task_label_path=str(task_fp),
         data_dir=str(base_dir),
+        code_metadata_fp=str(code_metadata_fp),
     )
 
 

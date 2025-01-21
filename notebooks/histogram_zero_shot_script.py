@@ -38,14 +38,15 @@ class DummyConfig:
     do_include_prediction_time: bool = True
     subsequence_sampling_strategy: str = "from_start"
     code_metadata_fp: str = field(init=False)
+    augmented_code_metadata_fp: str = field(init=False)
     token_bin_size: int = 4
     token_insertion_strategy: str = "token_count"
-    H_TOKEN: int = 4
-    O_TOKEN: int = 5
     vocab_size: int = 6
+    augmented_vocab_size: int = 8
 
     def __post_init__(self):
         self.code_metadata_fp = self.data_dir + "/metadata.parquet"
+        self.augmented_code_metadata_fp = self.data_dir + "/augmented_codes.parquet"
 
 
 def create_dummy_dataset(
@@ -191,19 +192,17 @@ overrides = [
     "model/backbone=histogram_transformer_decoder",
     "model/input_encoder=histogram_encoder",
     "data=histogram_pytorch_dataset",
-    "data.H_TOKEN=4",
-    "data.O_TOKEN=5",
     f"data.vocab_size={data_config.vocab_size}",
     "trainer=gpu",
     "data.subsequence_sampling_strategy=random",
     "data.token_insertion_strategy=token_count",
     "data.token_bin_size=8",
     f"data.code_metadata_fp={data_config.code_metadata_fp}",
+    f"data.augmented_code_metadata_fp={data_config.augmented_code_metadata_fp}",
     "model.optimizer.lr=0.001",
     "trainer.max_epochs=10",
     f"paths.output_dir={output_dir}",
     "model.top_k_acc=[1]",
-    # "model.diffusion_loss.target_channels=22",
     f"hydra.searchpath=[pkg://meds_torch.configs,{root}/ZERO_SHOT_TUTORIAL/configs/]",
 ]
 cfg = create_cfg(overrides)
@@ -293,7 +292,6 @@ print(f"mean_histogram: {mean_histogram}")
 # print(f"next_token_histogram_logits: {next_token_histogram_logits.tolist()}")
 print(f"next_token_histogram_counts: {counts.tolist()}")
 # print(f"last_embeddings: {last_embeddings.tolist()}")
-breakpoint()
 
 
 # model.diffusion.sample(last_embeddings, temperature=1.0)
