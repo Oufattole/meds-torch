@@ -1649,7 +1649,6 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         metadata = None
         status = None
 
-        log_progress = False
         progress = (
             Progress(
                 TextColumn("[progress.description]{task.description} {task.completed}"),

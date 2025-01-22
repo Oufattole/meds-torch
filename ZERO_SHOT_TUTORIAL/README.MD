@@ -305,7 +305,6 @@ meds-torch-train \
     paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
     data.task_name=$TASK_NAME data.task_root_dir=$TASKS_DIR \
     hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]
-
 ```
 
 **Let's train an autoregressive generative model**
@@ -388,7 +387,7 @@ meds-torch-tune model=histogram_forecasting trainer=gpu \
     callbacks=tune_default trainer=ray hparams_search=ray_tune \
     hparams_search.ray.resources_per_trial.GPU=1  hparams_search.ray.num_samples=8 \
     experiment=histogram_eic_forecast_mtr paths.data_dir=${EIC_DIR} \
-    data.subsequence_sampling_strategy=random \
+    data.subsequence_sampling_strategy=random data.dataloader.batch_size=128 \
     paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
     hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]
 ```
@@ -405,12 +404,13 @@ export CUDA_VISIBLE_DEVICES=1
 
 MEDS_DIR=${ROOT_DIR}/meds/
 EIC_DIR=${ROOT_DIR}/eic_tensors # set to the directory in which you want to output the tensorized MIMIC-IV data
-OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/histogram_eic_debug/
+OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/histogram_eic_63_token_bin_size/
 
 # train a model
 meds-torch-train model=histogram_forecasting trainer=gpu \
     experiment=histogram_eic_forecast_mtr paths.data_dir=${EIC_DIR} \
-    data.subsequence_sampling_strategy=random \
+    data.token_bin_size=63 model.n_bits=6 \
+    data.subsequence_sampling_strategy=random data.dataloader.batch_size=128 \
     paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
     hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]
 
