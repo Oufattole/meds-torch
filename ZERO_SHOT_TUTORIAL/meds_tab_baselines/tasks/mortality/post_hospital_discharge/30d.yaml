@@ -1,0 +1,24 @@
+predicates:
+  hospital_discharge:
+    code: { regex: "HOSPITAL_DISCHARGE//.*" }
+
+  death:
+    code: MEDS_DEATH
+
+trigger: hospital_discharge
+
+windows:
+  input:
+    start: NULL
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    index_timestamp: end
+    has:
+      death: (None, 0) # They must be alive at the time of hospital discharge
+  target:
+    start: trigger
+    end: start + 30d
+    start_inclusive: False
+    end_inclusive: True
+    label: death

@@ -1,0 +1,32 @@
+predicates:
+  hospital_admission:
+    code: { regex: "HOSPITAL_ADMISSION//.*" }
+  hospital_discharge:
+    code: { regex: "HOSPITAL_DISCHARGE//.*" }
+trigger: hospital_discharge
+
+windows:
+  input:
+    start: NULL
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    index_timestamp: end
+  prior_hospitalization:
+    start: end <- hospital_admission
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+  target:
+    start: trigger
+    end: start + 30d
+    start_inclusive: False
+    end_inclusive: True
+    label: hospital_admission
+  censoring_protection_window:
+    start: target.end
+    end: null
+    start_inclusive: False
+    end_inclusive: True
+    has:
+      _ANY_EVENT: (1, None)

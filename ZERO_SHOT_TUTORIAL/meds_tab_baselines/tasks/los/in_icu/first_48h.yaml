@@ -1,0 +1,39 @@
+description: >-
+  This file specifies the base configuration for the prediction of a icu los being greater than 3days,
+  leveraging only the first 48 hours of data after admission, with a 24 hour gap between the input window
+  and the target window. Patients who die or are discharged in the gap window are excluded. Note that this
+  task is in-**ICU** los, not in-**HOSPITAL** los which is a different task.
+
+predicates:
+  icu_admission:
+    code: { regex: "ICU_ADMISSION//.*" }
+  icu_discharge:
+    code: { regex: "ICU_DISCHARGE//.*" }
+  death:
+    code: MEDS_DEATH
+  discharge_or_death:
+    expr: or(icu_discharge, death)
+
+trigger: icu_admission
+
+windows:
+  input:
+    start: NULL
+    end: trigger + 48h
+    start_inclusive: True
+    end_inclusive: True
+    index_timestamp: end
+  gap:
+    start: input.end
+    end: start + 24h
+    start_inclusive: False
+    end_inclusive: True
+    has:
+      icu_admission: (None, 0)
+      discharge_or_death: (None, 0)
+  target:
+    start: trigger
+    end: start + 3d
+    start_inclusive: False
+    end_inclusive: True
+    label: discharge_or_death
