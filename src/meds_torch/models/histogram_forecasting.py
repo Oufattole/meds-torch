@@ -1080,7 +1080,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
     def _log(self, batch, split):
         on_step = split == "train"
         for loss_key in MODEL_LOSS_KEYS + [MODEL_LOSS_KEY]:
-            loss_name = "/" + loss_key.split("/")[-1]
+            loss_name = "/" + loss_key.split("/")[-1].lower()
             self.log(
                 split + loss_name,
                 batch[loss_key],
