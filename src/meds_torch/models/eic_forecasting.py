@@ -349,7 +349,7 @@ class NextTokenPredictionMetric(Metric):
 
         # Shift targets to align with next token prediction
         shifted_targets = targets[:, 1:]
-        shifted_mask = mask[:, :-1]
+        shifted_mask = mask[:, :-1].to(torch.bool)
 
         # Reshape tensors for metric update
         flat_logits = logits[:, :-1][shifted_mask].view(-1, self.vocab_size)
@@ -451,6 +451,7 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         self.metadata_df = pl.read_parquet(self.cfg.code_metadata_fp)
         self.trajectory_labeler = self.cfg.get("trajectory_labeler", None)
 
+    @TimeableMixin.TimeAs
     def get_loss(self, batch):
         code_logits = batch[CODE_LOGITS]
         assert not torch.isnan(code_logits).any(), "code_logits is NaN"
@@ -488,6 +489,7 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
             CODE_LOGITS: code_logits,
         }
 
+    @TimeableMixin.TimeAs
     def forward(self, batch, keep_code_logits=False):
         batch = self.input_encoder(batch)
         model_output = self.model(batch)

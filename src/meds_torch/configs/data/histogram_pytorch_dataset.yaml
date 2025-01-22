@@ -6,6 +6,6 @@ dataset_cls: meds_torch.data.components.histogram_pytorch_dataset.HistogramPytor
 token_insertion_strategy: token_count
 token_bin_size: 8
 
-augmented_code_metadata_fp: ${cache_dir}/codes.parquet
+augmented_code_metadata_fp: ${data.cache_dir}/codes.parquet
 
 augmented_vocab_size: ${add_two:${data.vocab_size}}

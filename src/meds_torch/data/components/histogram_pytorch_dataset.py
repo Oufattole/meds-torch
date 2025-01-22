@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import torch
-from mixins import SeedableMixin
+from mixins import SeedableMixin, TimeableMixin
 from omegaconf import DictConfig, OmegaConf, open_dict
 
 from meds_torch.data.components.pytorch_dataset import DummyConfig, PytorchDataset
@@ -417,7 +417,7 @@ def fill_dummy_config(cfg: DummyConfig):
     return cfg
 
 
-class HistogramPytorchDataset(PytorchDataset):
+class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
     """A PyTorch Dataset class that computes histograms over future time intervals or token counts.
 
     Examples:
@@ -483,6 +483,7 @@ class HistogramPytorchDataset(PytorchDataset):
         if self.cfg.postpend_eos_token:
             raise NotImplementedError("EOS token not supported for HistogramPytorchDataset")
 
+        Path(self.cfg.augmented_code_metadata_fp).parent.mkdir(parents=True, exist_ok=True)
         if not Path(self.cfg.augmented_code_metadata_fp).exists():
             metadata_df = pl.read_parquet(self.cfg.code_metadata_fp)
             h_token_index = metadata_df["code/vocab_index"].max() + 1
@@ -501,12 +502,8 @@ class HistogramPytorchDataset(PytorchDataset):
             metadata_df.write_parquet(self.cfg.augmented_code_metadata_fp, use_pyarrow=True)
 
         metadata_df = pl.read_parquet(self.cfg.augmented_code_metadata_fp)
-        self.h_token = metadata_df.filter(pl.col("code") == "[H]")["code/vocab_index"].last()
-        self.ntp_token = metadata_df.filter(pl.col("code") == "[NTP]")["code/vocab_index"].last()
-        from loguru import logger
-
-        logger.info(f"Using H token: {self.h_token}, NTP token: {self.ntp_token}")
-        logger.info(f"vocab_size: {self.cfg.vocab_size}")
+        self.h_token = metadata_df.filter(pl.col("code") == "[H]")["code/vocab_index"][-1]
+        self.ntp_token = metadata_df.filter(pl.col("code") == "[NTP]")["code/vocab_index"][-1]
 
     @SeedableMixin.WithSeed
     def _seeded_getitem(self, idx: int) -> dict:
@@ -541,6 +538,7 @@ class HistogramPytorchDataset(PytorchDataset):
 
         return out
 
+    @TimeableMixin.TimeAs
     def collate(self, batch: list[dict]) -> dict:
         """Combines a batch of data points into a single, tensorized batch.
 
@@ -555,7 +553,7 @@ class HistogramPytorchDataset(PytorchDataset):
             dict: A dictionary containing the collated batch data.
         """
         codes = [torch.as_tensor(item["cum_sum"]["codes"], dtype=torch.long) for item in batch]
-        masks = [torch.ones_like(code) for code in codes]
+        masks = [torch.ones_like(code, dtype=torch.bool) for code in codes]
         histograms = [torch.as_tensor(item["cum_sum"]["histogram"], dtype=torch.float32) for item in batch]
         tensorized = {}
         tensorized["code"] = torch.nn.utils.rnn.pad_sequence(codes, batch_first=True)

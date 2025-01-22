@@ -255,6 +255,7 @@ def create_model_config(metadata_df_path: str):
             "token_dim": token_dim,
             "vocab_size": vocab_size,
         },
+        "beta": 1e-3,
         "token_insertion_strategy": "token_count",
         "token_bin_size": 2,
         "vocab_size": vocab_size,  # Add 1 for pad token
@@ -890,8 +891,8 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         self.trajectory_labeler = self.cfg.get("trajectory_labeler", None)
         self.initialize_weights()
 
-        self.h_token = self.metadata_df.filter(pl.col("code") == "[H]")["code/vocab_index"].last()
-        self.ntp_token = self.metadata_df.filter(pl.col("code") == "[NTP]")["code/vocab_index"].last()
+        self.h_token = self.metadata_df.filter(pl.col("code") == "[H]")["code/vocab_index"][-1]
+        self.ntp_token = self.metadata_df.filter(pl.col("code") == "[NTP]")["code/vocab_index"][-1]
 
         self.histogram_normalizer = HistogramNormalizer(
             self.h_token, self.ntp_token, self.cfg.vocab_size, self.cfg.n_bits, scale=self.cfg.scale
@@ -912,11 +913,12 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             encoder_hidden_dims=encoder_hidden_dims,
             decoder_hidden_dims=decoder_hidden_dims,
             use_variational=True,
-            beta=1e-3,
+            beta=self.cfg.beta,
             warmup_steps=0,
             annealing_steps=0,
         )
 
+    @TimeableMixin.TimeAs
     def get_loss(self, batch):
         return self.get_loss_no_filter(batch)
         code_logits = batch[CODE_LOGITS]
@@ -939,8 +941,8 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         filtered_code_logits = filtered_code_logits[:, :-1]
 
         # Only compute loss on masked positions
-        masked_logits = filtered_code_logits[shifted_mask.to(torch.bool), :]  # Get logits at masked positions
-        masked_targets = shifted_code_target[shifted_mask.to(torch.bool)]  # Get targets at masked positions
+        masked_logits = filtered_code_logits[shifted_mask, :]  # Get logits at masked positions
+        masked_targets = shifted_code_target[shifted_mask]  # Get targets at masked positions
 
         # Calculate loss with both masks
         code_loss = F.cross_entropy(
@@ -967,8 +969,8 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         shifted_mask = mask[:, 1:]  # Remove first position from mask
 
         # Only compute loss on masked positions
-        masked_logits = code_logits[:, :-1][shifted_mask.to(torch.bool), :]  # Get logits at masked positions
-        masked_targets = shifted_code_target[shifted_mask.to(torch.bool)]  # Get targets at masked positions
+        masked_logits = code_logits[:, :-1][shifted_mask, :]  # Get logits at masked positions
+        masked_targets = shifted_code_target[shifted_mask]  # Get targets at masked positions
 
         # Calculate loss with both masks
         code_loss = F.cross_entropy(
@@ -999,6 +1001,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             if m.weight is not None:
                 torch.nn.init.constant_(m.weight, 1.0)
 
+    @TimeableMixin.TimeAs
     def get_forecast_logits(self, model_output):
         if isinstance(model_output, torch.Tensor):
             all_token_embeddings = model_output
@@ -1012,6 +1015,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             CODE_LOGITS: code_logits,
         }
 
+    @TimeableMixin.TimeAs
     def get_histogram_loss(self, prompts, histogram, embeddings, mask):
         # All inputs except the last we can evaluate
         prompts = prompts[:, :-1]  # ignore last h token
@@ -1019,7 +1023,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
 
         # Ground truth histogram is shifted by one, as we are predicting the next histogram
         histogram = histogram[:, 1:]
-        mask = mask[:, 1:].to(torch.bool)  # last unmasked token has invalid histogram so mask it
+        mask = mask[:, 1:]  # last unmasked token has invalid histogram so mask it
 
         h_mask = (prompts == self.h_token) & mask
         patch_embeddings = embeddings[h_mask]
@@ -1038,11 +1042,11 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             outputs=normalized_gt_histogram.detach().repeat(self.cfg.histogram_batch_mul, 1),
         )
         loss = loss_dict["vae_loss"]
-
-        loss_dict = {"MODEL//" + k: v.item() for k, v in loss_dict.items() if k != "vae_reconstruction"}
+        loss_dict = {"MODEL//" + k: v for k, v in loss_dict.items() if k != "vae_reconstruction"}
         assert not torch.isnan(loss).any(), "histogram loss is NaN"
         return loss, loss_dict
 
+    @TimeableMixin.TimeAs
     def forward(self, batch, keep_code_logits=False):
         batch = self.input_encoder(batch)
         model_output = self.model(batch, do_get_last_token=False)
