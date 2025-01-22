@@ -334,7 +334,7 @@ We have to add the defaults:
 - `hparams_search=ray_tune` which adds a default learning rate and dropout hparam search space
 - `callbacks=tune_default` which adds ray callbacks for storing the top_k checkpoints while training
 - `hparams_search.ray.resources_per_trial.gpu=1` will make ray launch jobs in parallel assigning one job to each gpu (set this to a fraction to having multiple jobs on each gpu)
-- ` hparams_search.ray.num_samples=8` will randomly sample 8 hyperparameter draws, so ray will run a total of 8 jobs
+- `hparams_search.ray.num_samples=8` will randomly sample 8 hyperparameter draws, so ray will run a total of 8 jobs
 
 ```console
 # unset CUDA_VISIBLE_DEVICES # remove setting of CUDA_VISIBLE_DEVICES, so all gpus can be used
@@ -414,7 +414,7 @@ meds-torch-train model=histogram_forecasting trainer=gpu \
     paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
     hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]
 
-
+OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/histogram_eic_debug/
 # histogram benchmarking
 python -m meds_torch.benchmark model=histogram_forecasting trainer=gpu \
     experiment=histogram_eic_forecast_mtr paths.data_dir=${EIC_DIR}
@@ -424,6 +424,7 @@ python -m meds_torch.benchmark model=histogram_forecasting trainer=gpu \
     hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]
 
 # eic benchmarking
+OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/histogram_eic_debug_benchmark/
 python -m meds_torch.benchmark model=eic_forecasting trainer=gpu \
     experiment=eic_forecast_mtr paths.data_dir=${EIC_DIR} \
     data.subsequence_sampling_strategy=random \
