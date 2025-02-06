@@ -30,6 +30,7 @@ class DummyConfig:
     max_seq_len: int = 10
     do_prepend_static_data: bool = True
     postpend_token: str = "eos"
+    do_flatten_tensors: bool = True
     EOS_TOKEN_ID: int = 5
     do_include_subject_id: bool = True
     do_include_subsequence_indices: bool = True
@@ -129,7 +130,7 @@ def create_dummy_dataset(
                     task_name='dummy_task',
                     max_seq_len=10,
                     do_prepend_static_data=True,
-                    postpend_token=eos,
+                    postpend_token='eos',
                     do_flatten_tensors=True,
                     EOS_TOKEN_ID=5,
                     do_include_subject_id=True,
@@ -827,7 +828,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         ...     # Create config with modified settings
         ...     config = create_dummy_dataset(tmp_dir)
         ...     config.do_prepend_static_data = False
-        ...     config.postpend_token = none
+        ...     config.postpend_token = 'none'
         ...     config.do_include_start_time_min = False
         ...
         ...     dataset = PytorchDataset(config, split='train')
