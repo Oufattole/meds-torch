@@ -226,7 +226,7 @@ def insert_h_o_tokens(codes: np.ndarray, token_bin_size: float, h_token: int, o_
         >>> np.array_equal(result, expected)
         True
     """
-    codes = np.array(codes)
+    codes = np.array(codes, dtype=np.int64)
     # Calculate output length based on token_bin_size
     num_prepended_h_o_tokens = ((len(codes) + token_bin_size - 1) // token_bin_size) * 2
     output_length = len(codes) + num_prepended_h_o_tokens + 1  # +1 for the last h_token

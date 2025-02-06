@@ -47,3 +47,5 @@ n_bits: 8
 scale: 1.0
 histogram_batch_mul: 1
 beta: 1e-3
+histogram_loss_weight: 1
+histogram_head_loss: 'l2' # bce, l2, or l1

@@ -161,7 +161,11 @@ class TrajectoryBatch:
 
         # Convert code vocab indexes to strings using the metadata mapping
         df = df.join(
-            self.metadata_df.select("code", "code/vocab_index"), left_on="code", right_on="code/vocab_index"
+            self.metadata_df.select("code", "code/vocab_index"),
+            how="left",
+            left_on="code",
+            right_on="code/vocab_index",
+            maintain_order="left",
         ).rename({"code_right": "code", "code": "code/vocab_index"})
 
         return df["subject_id", "prediction_time", "time", "code", "code/vocab_index", "numeric_value"]

@@ -400,26 +400,24 @@ ROOT_DIR="/storage/shared/mimic-iv/meds_v0.3.2/"  # Replace with your actual roo
 # unset CUDA_VISIBLE_DEVICES # remove setting of CUDA_VISIBLE_DEVICES, so all gpus can be used
 # or set some specific devices
 # Train a full vocab model:
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=0
 
 MEDS_DIR=${ROOT_DIR}/meds/
 EIC_DIR=${ROOT_DIR}/eic_tensors # set to the directory in which you want to output the tensorized MIMIC-IV data
-OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/histogram_eic_63_token_bin_size/
+OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/histogram_eic_63_token_bin_size_binary/
 
 # train a model
 meds-torch-train model=histogram_forecasting trainer=gpu \
-    experiment=histogram_eic_forecast_mtr paths.data_dir=${EIC_DIR} \
-    data.token_bin_size=63 model.n_bits=6 \
+    experiment=64_bin_histogram_eic_forecast_mtr paths.data_dir=${EIC_DIR} \
     data.subsequence_sampling_strategy=random data.dataloader.batch_size=128 \
     paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
     hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]
 
-OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/histogram_eic_debug/
+OUTPUT_DIR=${ROOT_DIR}/results/zero_shot/histogram_eic_8_token_bin_size_binary/
 # histogram benchmarking
-python -m meds_torch.benchmark model=histogram_forecasting trainer=gpu \
-    experiment=histogram_eic_forecast_mtr paths.data_dir=${EIC_DIR}
-    data.subsequence_sampling_strategy=random \
-    data.dataloader.num_workers=0  data.dataloader.batch_size=32 \
+meds-torch-train model=histogram_forecasting trainer=gpu \
+    experiment=8_bin_histogram_eic_forecast_mtr paths.data_dir=${EIC_DIR} \
+    data.subsequence_sampling_strategy=random data.dataloader.batch_size=128 \
     paths.meds_cohort_dir=${MEDS_DIR} paths.output_dir=${OUTPUT_DIR} \
     hydra.searchpath=[pkg://meds_torch.configs,$(pwd)/ZERO_SHOT_TUTORIAL/configs/]
 

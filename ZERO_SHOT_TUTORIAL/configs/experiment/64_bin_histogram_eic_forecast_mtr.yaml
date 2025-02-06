@@ -22,7 +22,7 @@ seed: 0
 
 trainer:
   min_epochs: 1
-  max_epochs: 10
+  max_epochs: 1
   gradient_clip_val: 1.0
   precision: "16-mixed"
 
@@ -45,6 +45,7 @@ model:
   n_bits: 6
   histogram_batch_mul: 1
   beta: 1e-3
+  histogram_loss_weight: 1e3
 
 
 logger:

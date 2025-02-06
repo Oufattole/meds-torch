@@ -422,17 +422,20 @@ def topk(x: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
 
 
 class HistogramNormalizer(torch.nn.Module):
-    def __init__(self, h_token, o_token, vocab_size, num_bits=16, scale=1):
+    def __init__(self, h_token, o_token, vocab_size, histogram_head_loss, num_bits=16, scale=1):
         super().__init__()
         self.h_token = h_token
         self.o_token = o_token
         self.vocab_size = vocab_size
+        self.histogram_head_loss = histogram_head_loss
         self.num_bits = num_bits
         self.scale = scale
         # Create powers of 2 as a buffer to avoid recomputing
         self.register_buffer("powers", torch.pow(2, torch.arange(num_bits - 1, -1, -1).float()))
 
     def get_normalized_size(self):
+        if self.histogram_head_loss.startswith("softmax"):
+            return self.vocab_size + self.num_bits
         return self.vocab_size * self.num_bits
 
     def count_to_binary(self, count):
@@ -449,28 +452,39 @@ class HistogramNormalizer(torch.nn.Module):
 
         # Get counts and normalize histogram
         b, _ = x.shape
-
-        # Convert counts to binary representation
-        data = self.count_to_binary(x.reshape(-1)).reshape(b, -1).to(torch.float32)
+        if self.histogram_head_loss.startswith("softmax"):
+            count = x.sum(dim=-1)
+            data = torch.hstack([x / count.unsqueeze(-1), self.count_to_binary(count)])
+        else:
+            # Convert counts to binary representation
+            data = self.count_to_binary(x.reshape(-1)).reshape(b, -1).to(torch.float32)
 
         # Shift from [0,1] to [-self.scale,self.scale] range
-        return (data * 2 - 1) * self.scale
+        return data
 
     def reverse_transform(self, x):
         # Shift from [-self.scale,self.scale] to [0,1]  range
-        x = (x / self.scale + 1) / 2
+        if self.histogram_head_loss.startswith("softmax"):
+            x, count = (
+                torch.softmax(x[:, : -self.num_bits], dim=-1),
+                torch.sigmoid(x[:, -self.num_bits :]).round(),
+            )
+            count = self.binary_to_count(count).reshape(x.shape[0], -1)
+            x = (x * count).round()
+        else:
+            x = torch.sigmoid(x)
 
-        # Clip to [0,1] range
-        x = x.clip(min=0, max=1).round().int()
-        # Split into histogram and binary count
-        b, _ = x.shape
+            # Clip to [0,1] range
+            x = x.round().int()
+            # Split into histogram and binary count
+            b, _ = x.shape
 
-        # Convert from batch_size x (vocab_size * num_bits) to (batch_size x vocab_size) x num_bits
-        x = x.reshape(b * self.vocab_size, -1)
-        # Convert binary back to count, and reshape
-        x = self.binary_to_count(x)
-        # Convert from (batch_size x vocab_size) x 1 to batch_size x vocab_size
-        x = x.reshape(b, -1)
+            # Convert from batch_size x (vocab_size * num_bits) to (batch_size x vocab_size) x num_bits
+            x = x.reshape(b * self.vocab_size, -1)
+            # Convert binary back to count, and reshape
+            x = self.binary_to_count(x)
+            # Convert from (batch_size x vocab_size) x 1 to batch_size x vocab_size
+            x = x.reshape(b, -1)
 
         # Restore special tokens
         x[:, self.h_token] = 1
@@ -507,8 +521,24 @@ class VAEEncoder(nn.Module):
         return mu, log_var
 
 
-def scaled_sigmoid(x):
-    return 2 * torch.sigmoid(x) - 1  # Scales [0,1] to [-1,1]
+class LinearVAEEncoder(nn.Module):
+    def __init__(
+        self,
+        input_dim=3,
+        latent_dim=16,
+        hidden_dims=[64, 32],
+        dropout=0.0,
+    ):
+        super().__init__()
+        # Create MLP encoder using torchvision
+        self.fc_mu = nn.Linear(input_dim // 2, latent_dim)
+        self.fc_var = nn.Linear(input_dim // 2, latent_dim)
+
+    def forward(self, x):
+        result = x
+        mu = self.fc_mu(result[:, : result.shape[1] // 2])
+        log_var = self.fc_var(result[:, result.shape[1] // 2 :])
+        return mu, log_var
 
 
 class VAEDecoder(nn.Module):
@@ -531,7 +561,6 @@ class VAEDecoder(nn.Module):
 
     def forward(self, z):
         return self.decoder(z)
-        return scaled_sigmoid(self.decoder(z))
 
 
 class DiagonalGaussianDistribution:
@@ -586,6 +615,7 @@ class AutoencoderKL(nn.Module):
         self,
         embed_dim,
         input_dim,
+        num_bits,
         output_dim=None,
         encoder_hidden_dims=[64, 32],
         decoder_hidden_dims=[32, 64],
@@ -593,13 +623,16 @@ class AutoencoderKL(nn.Module):
         beta=1.0,
         warmup_steps=None,
         annealing_steps=None,
+        histogram_head_loss="l2",
     ):
         super().__init__()
         assert use_variational
         if output_dim is None:
             output_dim = input_dim
         self.use_variational = use_variational
-        self._encoder = VAEEncoder(input_dim=input_dim, latent_dim=embed_dim, hidden_dims=encoder_hidden_dims)
+        self._encoder = LinearVAEEncoder(
+            input_dim=input_dim, latent_dim=embed_dim, hidden_dims=encoder_hidden_dims
+        )
         self._decoder = VAEDecoder(
             output_dim=output_dim, latent_dim=embed_dim, hidden_dims=decoder_hidden_dims
         )
@@ -609,6 +642,8 @@ class AutoencoderKL(nn.Module):
         self.warmup_steps = warmup_steps if warmup_steps else 0
         self.annealing_steps = annealing_steps if annealing_steps else 0
         self.annealing_steps += self.warmup_steps
+        self.histogram_head_loss = histogram_head_loss
+        self.num_bits = num_bits
 
     def encode(self, x):
         mu, log_var = self._encoder(x)
@@ -650,8 +685,56 @@ class AutoencoderKL(nn.Module):
         # Decode the latent representation
         dec = self.decode(z)
 
-        # Compute reconstruction loss (mean squared error)
-        rec_loss = torch.nn.functional.mse_loss(dec, outputs, reduction="mean")
+        if self.histogram_head_loss == "bce":
+            # Compute reconstruction loss (mean squared error)
+            rec_loss = torch.nn.functional.binary_cross_entropy_with_logits(dec, outputs, reduction="mean")
+        elif self.histogram_head_loss == "focal":
+            bce = torch.nn.functional.binary_cross_entropy_with_logits(dec, outputs, reduction="none")
+            pt = torch.exp(-bce)  # pt = probability of target class
+            gamma = 2.0
+            focal_loss = (1 - pt) ** gamma * bce
+            rec_loss = focal_loss.mean()
+        elif self.histogram_head_loss == "dice":
+            pred = torch.sigmoid(dec)  # Convert logits to probabilities
+            intersection = (pred * outputs).sum()
+            union = pred.sum() + outputs.sum()
+            rec_loss = 1 - (2 * intersection + 1e-6) / (union + 1e-6)  # Add epsilon for numerical stability
+        elif self.histogram_head_loss == "l2":
+            rec_loss = torch.nn.functional.mse_loss(torch.sigmoid(dec), outputs, reduction="mean")
+        elif self.histogram_head_loss == "l1":
+            rec_loss = torch.nn.functional.l1_loss(torch.sigmoid(dec), outputs, reduction="mean")
+        elif self.histogram_head_loss == "softmax_wasserstein":
+            pred_histogram, pred_count = dec[:, : -self.num_bits], dec[:, -self.num_bits :]
+            target_histogram, target_count = outputs[:, : -self.num_bits], outputs[:, -self.num_bits :]
+            rec_loss = torch.nn.functional.mse_loss(torch.sigmoid(pred_count), target_count, reduction="mean")
+            pred_histogram = torch.nn.functional.softmax(pred_histogram)
+            pred_cdf = torch.cumsum(pred_histogram, dim=-1)
+            target_cdf = torch.cumsum(target_histogram, dim=-1)
+            # Compute Wasserstein distance as the L1 norm of the difference in CDFs
+            rec_loss += torch.abs(pred_cdf - target_cdf).sum(dim=-1).mean()
+        elif self.histogram_head_loss == "softmax_chi":
+            pred_histogram, pred_count = dec[:, : -self.num_bits], dec[:, -self.num_bits :]
+            target_histogram, target_count = outputs[:, : -self.num_bits], outputs[:, -self.num_bits :]
+            rec_loss = torch.nn.functional.mse_loss(torch.sigmoid(pred_count), target_count, reduction="mean")
+            pred_histogram = torch.nn.functional.softmax(pred_histogram, dim=-1)
+            eps = 1e-3
+            # Compute Chi-squared loss
+            chi_sq = ((pred_histogram - target_histogram) ** 2) / (target_histogram + eps)
+            rec_loss += chi_sq.sum(dim=-1).mean()
+        elif self.histogram_head_loss == "softmax_l2":
+            pred_histogram, pred_count = dec[:, : -self.num_bits], dec[:, -self.num_bits :]
+            target_histogram, target_count = outputs[:, : -self.num_bits], outputs[:, -self.num_bits :]
+            rec_loss = torch.nn.functional.mse_loss(torch.sigmoid(pred_count), target_count, reduction="mean")
+            pred_histogram = torch.nn.functional.softmax(pred_histogram, dim=-1)
+            rec_loss += torch.nn.functional.mse_loss(pred_histogram, target_histogram, reduction="mean")
+        elif self.histogram_head_loss == "softmax_l1":
+            pred_histogram, pred_count = dec[:, : -self.num_bits], dec[:, -self.num_bits :]
+            target_histogram, target_count = outputs[:, : -self.num_bits], outputs[:, -self.num_bits :]
+            rec_loss = torch.nn.functional.mse_loss(torch.sigmoid(pred_count), target_count, reduction="mean")
+            pred_histogram = torch.nn.functional.softmax(pred_histogram, dim=-1)
+            rec_loss += torch.nn.functional.l1_loss(pred_histogram, target_histogram, reduction="mean")
+        else:
+            raise ValueError(f"Invalid model.histogram_head_loss of: {self.histogram_head_loss}")
 
         # Compute KL divergence loss if using variational mode
         kl_loss = torch.zeros_like(rec_loss)
@@ -895,20 +978,25 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         self.ntp_token = self.metadata_df.filter(pl.col("code") == "[NTP]")["code/vocab_index"][-1]
 
         self.histogram_normalizer = HistogramNormalizer(
-            self.h_token, self.ntp_token, self.cfg.vocab_size, self.cfg.n_bits, scale=self.cfg.scale
+            self.h_token,
+            self.ntp_token,
+            self.cfg.vocab_size,
+            histogram_head_loss=self.cfg.histogram_head_loss,
+            num_bits=self.cfg.n_bits,
+            scale=self.cfg.scale,
         )
         histogram_dim = self.histogram_normalizer.get_normalized_size()
 
-        encoder_hidden_dims = [
-            self.cfg.token_dim,
-            self.cfg.token_dim,
-            self.cfg.token_dim,
-            self.cfg.token_dim // 2,
-        ]
-        decoder_hidden_dims = [self.cfg.token_dim, histogram_dim, histogram_dim, histogram_dim]
+        # encoder_hidden_dims = [min(2 * self.cfg.token_dim, histogram_dim),
+        #                        min(4 * self.cfg.token_dim, histogram_dim),
+        #                        min(8 * self.cfg.token_dim, histogram_dim), histogram_dim]
+        # decoder_hidden_dims = [histogram_dim] * 4
+        encoder_hidden_dims = [32, 16]  # [self.cfg.token_dim] * 4
+        decoder_hidden_dims = [16, 32]  # [self.cfg.token_dim] * 1
         self.autoencoder = AutoencoderKL(
-            embed_dim=self.cfg.token_dim,
+            embed_dim=2,
             input_dim=self.cfg.token_dim,
+            num_bits=self.cfg.n_bits,
             output_dim=histogram_dim,
             encoder_hidden_dims=encoder_hidden_dims,
             decoder_hidden_dims=decoder_hidden_dims,
@@ -916,6 +1004,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             beta=self.cfg.beta,
             warmup_steps=0,
             annealing_steps=0,
+            histogram_head_loss=self.cfg.histogram_head_loss,
         )
 
     @TimeableMixin.TimeAs
@@ -1064,7 +1153,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         histogram_loss, loss_dict = self.get_histogram_loss(
             batch["code"], batch["histogram"], embeddings, batch["mask"]
         )
-        model_loss = code_loss + histogram_loss
+        model_loss = code_loss + self.cfg.histogram_loss_weight * histogram_loss
 
         loss_dict["MODEL//code_loss"] = code_loss
         batch.update(loss_dict)
@@ -1648,7 +1737,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         out_lengths = torch.zeros(b, dtype=torch.int32)
         metadata = None
         status = None
-
+        log_progress = False
         progress = (
             Progress(
                 TextColumn("[progress.description]{task.description} {task.completed}"),
