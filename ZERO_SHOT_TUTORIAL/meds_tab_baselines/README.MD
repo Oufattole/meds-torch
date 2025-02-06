@@ -122,3 +122,62 @@ bash tabularize_meds.sh "${MIMICIV_MEDS_DIR}" "$MIMICIV_MEDS_RESHARD_DIR" $OUTPU
     "tabularization.aggs=[static/present,code/count,value/count,value/sum,value/sum_sqd,value/min,value/max]" \
     "tabularization.window_sizes=[2h,12h,1d,7d,30d,365d,full]"
 ```
+
+```console
+MIMICIV_MEDS_DIR=/storage/shared/mimic-iv/meds_v0.3.2/meds/
+OUTPUT_TABULARIZATION_DIR=/storage/shared/mimic-iv/meds_v0.3.2/task_specific_meds_tab/
+TASKS=(
+    "abnormal_lab/hospital_admission/creatinine/30d"
+)
+TASKS_DIR=/storage/shared/mimic-iv/meds_v0.3.2/meds/tasks/
+OUTPUT_MODEL_DIR=/storage/shared/mimic-iv/meds_v0.3.2/results/task_specific_meds_tab_model/
+
+
+export N_PARALLEL_WORKERS=48 # Set number of workers
+TASKS_STR=$(echo ${TASKS[@]} | tr ' ' ',')
+bash task_tabularize_meds.sh "${MIMICIV_MEDS_DIR}" $OUTPUT_TABULARIZATION_DIR \
+    "${TASKS_STR}" $TASKS_DIR $OUTPUT_MODEL_DIR $N_PARALLEL_WORKERS \
+    "tabularization.aggs=[static/present,code/count,value/count,value/sum,value/sum_sqd,value/min,value/max]" \
+    "tabularization.window_sizes=[2h,12h,1d,7d,30d,365d,full]"
+```
+
+This does resharding correctly:
+
+```console
+TASKS=(
+    "abnormal_lab/hospital_admission/creatinine/30d"
+)
+export ROOT_DIR=/storage/shared/mimic-iv/meds_v0.3.2/
+export RESHARD_DIR=${ROOT_DIR}/reshareded_meds/ # set to directory to output reshareded meds data
+export MIMICIV_MEDS_DIR=${ROOT_DIR}/meds/ # set to the directory in which you want to store the raw MIMIC-IV data
+export OUTPUT_TABULARIZATION_DIR=${ROOT_DIR}/task_specific_meds_tab/ # set to the output directory for the tabularized data
+export OUTPUT_MODEL_DIR=${OUTPUT_TABULARIZATION_DIR}/results/ # set to the base results directory
+TASKS_DIR="${RESHARD_DIR}/tasks/" # set to the directory in which you want to store all tasks
+TASKS_STR=$(echo ${TASKS[@]} | tr ' ' ',')
+N_PARALLEL_WORKERS=48
+
+export WINDOW_SIZES="2h,12h,1d,7d,30d,365d,full"
+export AGGREGATIONS="static/present,code/count,value/count,value/sum,value/sum_sqd,value/min,value/max"
+
+bash task_tabularize_meds.sh "${MIMICIV_MEDS_DIR}" "$RESHARD_DIR" $OUTPUT_TABULARIZATION_DIR \
+    "${TASKS_STR}" $TASKS_DIR $OUTPUT_MODEL_DIR $N_PARALLEL_WORKERS \
+    ${WINDOW_SIZES} ${AGGREGATIONS}
+```
+
+```console
+MIMICIV_MEDS_DIR=/storage/shared/mimic-iv/meds_v0.3.2/meds/
+OUTPUT_TABULARIZATION_DIR=/storage/shared/mimic-iv/meds_v0.3.2/task_specific_meds_tab/
+TASKS=(
+    "mortality/in_hospital/first_24h"
+)
+TASKS_DIR=/storage/shared/mimic-iv/meds_v0.3.2/meds/tasks/
+OUTPUT_MODEL_DIR=/storage/shared/mimic-iv/meds_v0.3.2/results/task_specific_meds_tab_model/
+
+
+export N_PARALLEL_WORKERS=48 # Set number of workers
+TASKS_STR=$(echo ${TASKS[@]} | tr ' ' ',')
+bash task_tabularize_meds.sh "${MIMICIV_MEDS_DIR}" $OUTPUT_TABULARIZATION_DIR \
+    "${TASKS_STR}" $TASKS_DIR $OUTPUT_MODEL_DIR $N_PARALLEL_WORKERS \
+    "tabularization.aggs=[static/present,code/count,value/count,value/sum,value/sum_sqd,value/min,value/max]" \
+    "tabularization.window_sizes=[2h,12h,1d,7d,30d,365d,full]"
+```

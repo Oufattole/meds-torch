@@ -1,0 +1,49 @@
+#This config checks for an abnormal hemoglobin lab within 90d after HOSPITAL_DISCHARGE
+predicates:
+  trigger_event:
+    code: {regex: "HOSPITAL_DISCHARGE//.*"}
+
+  lab:
+    code: {regex: LAB//51645//g/dL|LAB//51222//g/dL|LAB//50811//g/dL|LAB//50855//UNK}
+
+  lab_0:
+    code: "LAB//51645//g/dL"
+    value_min: 2.0
+    value_min_inclusive: True
+
+  lab_1:
+    code: "LAB//51222//g/dL"
+    value_min: 2.0
+    value_min_inclusive: True
+
+  lab_2:
+    code: "LAB//50811//g/dL"
+    value_min: 2.0
+    value_min_inclusive: True
+
+  lab_3:
+    code: "LAB//50855//UNK"
+    value_min: 2.0
+    value_min_inclusive: True
+
+  abnormal_lab:
+    expr: or(lab_0,lab_1,lab_2,lab_3)
+
+
+trigger: trigger_event
+
+windows:
+  input:
+    start: NULL
+    end: trigger
+    start_inclusive: True
+    end_inclusive: True
+    index_timestamp: end
+  target:
+    start: input.end
+    end: start + 90d
+    start_inclusive: False
+    end_inclusive: True
+    has:
+      lab: (1, None)
+    label: abnormal_lab
