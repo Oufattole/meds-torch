@@ -358,7 +358,7 @@ def predict(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str,
 
     log.info(f"Instantiating model <{cfg.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.model)
-    checkpoint = torch.load(cfg.ckpt_path, map_location="cpu")
+    checkpoint = torch.load(cfg.ckpt_path, map_location="cpu", weights_only=False)
     model.load_state_dict(checkpoint["state_dict"])
 
     log.info("Instantiating loggers...")

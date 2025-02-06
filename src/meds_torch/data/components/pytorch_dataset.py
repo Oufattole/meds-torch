@@ -13,6 +13,12 @@ from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 from omegaconf import DictConfig
 
 
+class PostpendToken(StrEnum):
+    eos = "eos"
+    censor = "censor"
+    none = "none"
+
+
 @dataclass
 class DummyConfig:
     """Dummy configuration for testing MEDS dataset"""
@@ -23,7 +29,7 @@ class DummyConfig:
     task_name: str = "dummy_task"
     max_seq_len: int = 10
     do_prepend_static_data: bool = True
-    postpend_eos_token: bool = True
+    postpend_token: str = "eos"
     do_flatten_tensors: bool = True
     EOS_TOKEN_ID: int = 5
     do_include_subject_id: bool = True
@@ -124,7 +130,7 @@ def create_dummy_dataset(
                     task_name='dummy_task',
                     max_seq_len=10,
                     do_prepend_static_data=True,
-                    postpend_eos_token=True,
+                    postpend_token='eos',
                     do_flatten_tensors=True,
                     EOS_TOKEN_ID=5,
                     do_include_subject_id=True,
@@ -233,7 +239,8 @@ def subsample_subject_data(
     sampling_strategy: SubsequenceSamplingStrategy,
     do_flatten_tensors: bool = True,
     global_st: int = 0,
-) -> tuple[JointNestedRaggedTensorDict, int, int]:
+    postpend_token: PostpendToken = PostpendToken.none,
+) -> tuple[JointNestedRaggedTensorDict, int, int, bool]:
     """Subsample subject data based on maximum sequence length and sampling strategy.
 
     This function handles subsampling for both flattened and nested tensor structures.
@@ -259,9 +266,10 @@ def subsample_subject_data(
         ...     "code": [[1,2],[3,4],[5,6],[7,8,9,10],[11,12]],
         ...     "time": [0,1,2,3,4],
         ... }
+
         >>> data = JointNestedRaggedTensorDict(raw_tensors=tensors)
         >>> # Test FROM_START strategy without flattening
-        >>> subsampled, st, end = subsample_subject_data(
+        >>> subsampled, st, end, has_censor_token = subsample_subject_data(
         ...     data, max_seq_len=2,
         ...     sampling_strategy=SubsequenceSamplingStrategy.FROM_START,
         ...     do_flatten_tensors=False
@@ -272,10 +280,12 @@ def subsample_subject_data(
         [0, 1]
         >>> st, end
         (0, 2)
+        >>> has_censor_token
+        False
 
         >>> # Test TO_END strategy with flattening
         >>> data = JointNestedRaggedTensorDict(raw_tensors=tensors)
-        >>> subsampled, st, end = subsample_subject_data(
+        >>> subsampled, st, end, has_censor_token = subsample_subject_data(
         ...     data, max_seq_len=4,
         ...     sampling_strategy=SubsequenceSamplingStrategy.TO_END,
         ...     do_flatten_tensors=True
@@ -286,28 +296,69 @@ def subsample_subject_data(
         [0, 0, 4, 0]
         >>> st, end
         (3, 5)
+        >>> has_censor_token
+        False
+
+        >>> # Test censorship when it should be there
+        >>> data = JointNestedRaggedTensorDict(raw_tensors=tensors)
+        >>> subsampled, st, end, has_censor_token = subsample_subject_data(
+        ...     data, max_seq_len=4,
+        ...     sampling_strategy=SubsequenceSamplingStrategy.TO_END,
+        ...     do_flatten_tensors=True,
+        ...     postpend_token=PostpendToken.censor,
+        ... )
+        >>> subsampled.tensors["dim0/code"].tolist()
+        [10, 11, 12]
+        >>> subsampled.tensors["dim0/time"].tolist()
+        [0, 4, 0]
+        >>> st, end
+        (3, 5)
+        >>> has_censor_token
+        True
+
+        >>> # Test censorship when it should not be there
+        >>> data = JointNestedRaggedTensorDict(raw_tensors=tensors)
+        >>> subsampled, st, end, has_censor_token = subsample_subject_data(
+        ...     data, max_seq_len=4,
+        ...     sampling_strategy=SubsequenceSamplingStrategy.FROM_START,
+        ...     do_flatten_tensors=True,
+        ...     postpend_token=PostpendToken.censor,
+        ... )
+        >>> subsampled.tensors["dim0/code"].tolist()
+        [1, 2, 3, 4]
+        >>> subsampled.tensors["dim0/time"].tolist()
+        [0, 0, 1, 0]
+        >>> st, end
+        (0, 2)
+        >>> has_censor_token
+        False
 
         >>> # Test TO_END strategy
         >>> data = JointNestedRaggedTensorDict(raw_tensors=tensors)
-        >>> subsampled, st, end = subsample_subject_data(
+        >>> subsampled, st, end, has_censor_token = subsample_subject_data(
         ...     data, max_seq_len=2,
         ...     sampling_strategy=SubsequenceSamplingStrategy.TO_END,
         ...     do_flatten_tensors=False,
         ... )
         >>> st, end
         (3, 5)
+        >>> has_censor_token
+        False
 
         >>> # Test RANDOM strategy
         >>> data = JointNestedRaggedTensorDict(raw_tensors=tensors)
-        >>> subsampled, st, end = subsample_subject_data(
+        >>> subsampled, st, end, has_censor_token = subsample_subject_data(
         ...     data, max_seq_len=2,
         ...     sampling_strategy=SubsequenceSamplingStrategy.RANDOM,
         ...     do_flatten_tensors=True,
         ... )
         >>> len(subsampled.tensors["dim0/code"]) == 2
         True
+        >>> has_censor_token
+        False
     """
     seq_len = len(subject_data)
+    has_censor_token = False
 
     if do_flatten_tensors:
         # Store original lengths for each time step before flattening
@@ -318,7 +369,7 @@ def subsample_subject_data(
         if seq_len > max_seq_len:
             match sampling_strategy:
                 case SubsequenceSamplingStrategy.RANDOM:
-                    start_offset = np.random.choice(seq_len - max_seq_len)
+                    start_offset = np.random.choice(seq_len + 1 - max_seq_len)
                 case SubsequenceSamplingStrategy.TO_END:
                     start_offset = seq_len - max_seq_len
                 case SubsequenceSamplingStrategy.FROM_START:
@@ -328,6 +379,11 @@ def subsample_subject_data(
         else:
             start_offset = 0
         end = min(seq_len, start_offset + max_seq_len)
+
+        if end == seq_len and postpend_token == PostpendToken.censor:
+            has_censor_token = True
+            if end - start_offset == max_seq_len:
+                start_offset += 1
         subject_data = subject_data[start_offset:end]
 
         # Map flattened indices back to original time indices
@@ -338,7 +394,7 @@ def subsample_subject_data(
             return subject_data, global_st, global_st + seq_len
         match sampling_strategy:
             case SubsequenceSamplingStrategy.RANDOM:
-                start_offset = np.random.choice(seq_len - max_seq_len)
+                start_offset = np.random.choice(seq_len + 1 - max_seq_len)
             case SubsequenceSamplingStrategy.TO_END:
                 start_offset = seq_len - max_seq_len
             case SubsequenceSamplingStrategy.FROM_START:
@@ -347,12 +403,14 @@ def subsample_subject_data(
                 raise ValueError(f"Invalid subsequence sampling strategy {sampling_strategy}!")
 
         end = min(seq_len, start_offset + max_seq_len)
+        if postpend_token == PostpendToken.censor:
+            raise NotImplementedError("Censor token not implemented for non-flattened tensors!")
         subject_data = subject_data[start_offset:end]
 
         new_global_st = global_st + start_offset
         new_global_end = new_global_st + len(subject_data)
 
-    return subject_data, new_global_st, new_global_end
+    return subject_data, new_global_st, new_global_end, has_censor_token
 
 
 def get_task_indices_and_labels(
@@ -770,7 +828,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         ...     # Create config with modified settings
         ...     config = create_dummy_dataset(tmp_dir)
         ...     config.do_prepend_static_data = False
-        ...     config.postpend_eos_token = False
+        ...     config.postpend_token = 'none'
         ...     config.do_include_start_time_min = False
         ...
         ...     dataset = PytorchDataset(config, split='train')
@@ -821,15 +879,16 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
                 )
 
             max_seq_len -= n_static
-        if self.config.postpend_eos_token:
+        if self.config.postpend_token == PostpendToken.eos:
             max_seq_len -= 1
 
-        subject_dynamic_data, global_st, global_end = subsample_subject_data(
+        subject_dynamic_data, global_st, global_end, has_censor_token = subsample_subject_data(
             subject_dynamic_data,
             max_seq_len,
             self.config.subsequence_sampling_strategy,
             self.config.do_flatten_tensors,
             global_st,
+            self.config.postpend_token,
         )
 
         if self.config.do_include_subsequence_indices:
@@ -855,7 +914,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         else:
             tensors["dim0/static_mask"] = np.zeros(len(tensors["dim0/code"]), dtype=bool)
 
-        if self.config.postpend_eos_token:
+        if has_censor_token or (self.config.postpend_token == PostpendToken.eos):
             tensors["dim0/code"] = np.append(tensors["dim0/code"], [self.config.EOS_TOKEN_ID])
             tensors["dim0/static_mask"] = np.append(tensors["dim0/static_mask"], [False])
             tensors["dim0/numeric_value"] = np.append(tensors["dim0/numeric_value"], [0])

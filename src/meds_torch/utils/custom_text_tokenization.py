@@ -9,17 +9,19 @@ as those have been normalized alongside codes into integer indices (in the outpu
 columns of concern here thus are `subject_id`, `time`, `code`, `numeric_value`.
 """
 
+import logging
 from pathlib import Path
 
 import hydra
 import polars as pl
-from loguru import logger
 from MEDS_transforms import PREPROCESS_CONFIG_YAML
 from MEDS_transforms.mapreduce.utils import rwlock_wrap, shard_iterator
-from MEDS_transforms.utils import hydra_loguru_init, write_lazyframe
+from MEDS_transforms.utils import write_lazyframe
 from omegaconf import DictConfig, OmegaConf
 from safetensors.torch import save_file
 from transformers import AutoTokenizer
+
+logger = logging.getLogger(__name__)
 
 TOKENIZER = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
 
@@ -284,7 +286,6 @@ def extract_seq_of_subject_events(
     config_name=PREPROCESS_CONFIG_YAML.stem,
 )
 def main(cfg: DictConfig):
-    hydra_loguru_init()
     tokenize(cfg)
 
 
