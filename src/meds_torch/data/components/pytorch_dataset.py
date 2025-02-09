@@ -912,10 +912,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin, Mod
         tensorized["numeric_value_mask"] = ~torch.isnan(tensorized["numeric_value"])
         tensorized["time_delta_days"] = torch.nan_to_num(tensorized["time_delta_days"], nan=0).float()
         tensorized["numeric_value"] = torch.nan_to_num(tensorized["numeric_value"], nan=0).float()
+        if "subject_id" in batch[0].keys():
+            tensorized["subject_id"] = torch.LongTensor([item['subject_id'] for item in batch])
 
         # Add task labels to batch
         for k in batch[0].keys():
-            if k not in ("dynamic", "static_values", "static_indices", "static_mask"):
+            if k not in ("dynamic", "static_values", "static_indices", "static_mask", "subject_id"):
                 if isinstance(batch[0][k], datetime):
                     tensorized[k] = [item[k] for item in batch]
                 else:
