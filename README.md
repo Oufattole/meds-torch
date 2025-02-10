@@ -131,8 +131,9 @@ pip install meds-torch
 ```
 
 ### From Source
-
 ```bash
+conda create -n meds-torch python=3.12
+conda activate meds-torch
 git clone git@github.com:Oufattole/meds-torch.git
 cd meds-torch
 pip install -e .
