@@ -6,5 +6,5 @@ max_seq_len: ${model.max_seq_len}
 vocab_size: ${data.vocab_size}
 get_last_token: true
 use_cls_token: false
-postpend_eos_token: false
+postpend_token: none
 model_type: null
