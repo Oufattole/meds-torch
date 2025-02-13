@@ -48,6 +48,7 @@ from meds_torch.models import (
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components.utils import TrajectoryBatch, get_time_days_delta
 from meds_torch.utils import TIME_DELTA_TOKEN
+from meds_torch.models.eic_forecasting import NextTokenPredictionMetric
 
 MODEL_LOSS_KEYS = ["MODEL//code_loss", "MODEL//vae_loss", "MODEL//vae_rec_loss", "MODEL//vae_kl_loss"]
 
@@ -818,78 +819,6 @@ def three_d_align_right(t, lens, pad_id=0):
     aligned = t[batch_arange, prompt_len_arange + offset[..., None], :]
 
     return aligned
-
-
-class NextTokenPredictionMetric(Metric):
-    """
-    A metric class for calculating AUC and top-n accuracy for next token prediction in language models.
-
-    This metric computes the Area Under the Receiver Operating Characteristic Curve (AUROC) and
-    top-n accuracy for each position in the sequence, considering only the next token prediction.
-
-    Attributes:
-        vocab_size (int): The size of the vocabulary.
-        top_n (tuple): The values of n for which to calculate top-n accuracy.
-        auroc (MulticlassAUROC): The AUROC metric for multiclass classification.
-        top_n_accuracy (dict): A dictionary of MulticlassAccuracy metrics for each n in top_n.
-    """
-
-    def __init__(self, vocab_size: int, top_k_acc: list[int], next_token_auc: bool, dist_sync_on_step=False):
-        """
-        Initialize the NextTokenPredictionMetric.
-
-        Args:
-            vocab_size (int): The size of the vocabulary.
-            top_n (tuple): The values of n for which to calculate top-n accuracy. Default is (1, 5, 10).
-            dist_sync_on_step (bool): Synchronize metric state across processes at each step. Default is
-                False.
-        """
-        super().__init__(dist_sync_on_step=dist_sync_on_step)
-        self.vocab_size = vocab_size
-
-        self.top_k_acc = top_k_acc
-        metrics = {
-            f"top_{k}_accuracy": MulticlassAccuracy(num_classes=vocab_size, top_k=k) for k in top_k_acc
-        }
-        if next_token_auc:
-            metrics["auroc"] = MulticlassAUROC(num_classes=vocab_size, average="macro", thresholds=100)
-        self.next_token_metrics = MetricCollection(metrics)
-
-    def update(self, logits: torch.Tensor, targets: torch.Tensor, mask: torch.Tensor):
-        """
-        Update the metric state with batch statistics.
-
-        Args:
-            logits (torch.Tensor): Predicted logits from the model, shape (batch_size, seq_length,
-                vocab_size).
-            targets (torch.Tensor): Ground truth labels, shape (batch_size, seq_length).
-            mask (torch.Tensor): Mask to ignore padded elements, shape (batch_size,
-                seq_length).
-
-        The method shifts the targets to align with the next token prediction and updates AUROC and top-n
-            accuracy.
-        """
-
-        # Shift targets to align with next token prediction
-        shifted_targets = targets[:, 1:]
-        shifted_mask = mask[:, :-1]
-
-        # Reshape tensors for metric update
-        flat_logits = logits[:, :-1][shifted_mask].view(-1, self.vocab_size)
-        flat_targets = shifted_targets[shifted_mask].view(-1)
-
-        # Update metrics
-        self.next_token_metrics.update(flat_logits, flat_targets)
-
-    def compute(self):
-        """
-        Compute the AUROC and top-n accuracy based on accumulated statistics.
-
-        Returns:
-            dict: A dictionary containing the computed AUROC and top-n accuracy for each n in top_n.
-        """
-        results = self.next_token_metrics.compute()
-        return results
 
 
 class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):

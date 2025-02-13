@@ -297,6 +297,11 @@ def pad_array(arr, max_len):
         return np.pad(arr, pad_width, mode="constant", constant_values=0)
 
 
+import torch
+from torchmetrics import Metric, MetricCollection, MeanSquaredError
+from torchmetrics.classification import MulticlassAccuracy, MulticlassAUROC, BinaryAUROC
+
+
 class NextTokenPredictionMetric(Metric):
     """
     A metric class for calculating AUC and top-n accuracy for next token prediction in language models.
@@ -306,9 +311,49 @@ class NextTokenPredictionMetric(Metric):
 
     Attributes:
         vocab_size (int): The size of the vocabulary.
-        top_n (tuple): The values of n for which to calculate top-n accuracy.
-        auroc (MulticlassAUROC): The AUROC metric for multiclass classification.
-        top_n_accuracy (dict): A dictionary of MulticlassAccuracy metrics for each n in top_n.
+        top_k_acc (list[int]): The values of n for which to calculate top-n accuracy.
+        next_token_metrics (MetricCollection): A collection containing one or more metrics
+            (e.g., top-k accuracy metrics and optionally AUROC).
+
+    Example:
+        >>> import torch
+        >>> from torchmetrics.classification import MulticlassAUROC, MulticlassAccuracy
+        >>> from torchmetrics import MetricCollection
+
+        >>> # Instantiate the NextTokenPredictionMetric with a small vocabulary of size 3
+        >>> # and a request for top-1 and top-2 accuracy, plus AUROC.
+        >>> metric = NextTokenPredictionMetric(vocab_size=3, top_k_acc=[1,2], next_token_auc=True)
+
+        >>> # Create some example logits, targets, and a mask. Here, we have batch_size=2,
+        >>> # seq_length=2, and vocab_size=3.
+        >>> logits = torch.tensor([
+        ...     [[2.0, 1.0, 0.0],[0.0, 2.0, 1.0]],
+        ...     [[1.0, 2.0, 0.0],[2.0, 0.0, 1.0]]
+        ... ])
+        >>> targets = torch.tensor([
+        ...     [0, 2],
+        ...     [1, 0]
+        ... ])
+        >>> mask = torch.tensor([
+        ...     [1, 1],
+        ...     [1, 1]
+        ... ])
+
+        >>> # Update the metric state with the batch
+        >>> metric.update(logits, targets, mask)
+
+        >>> # Compute the results
+        >>> results = metric.compute()
+
+        >>> # Check top-1 accuracy
+        >>> results['top_1_accuracy'].item()
+        0.0
+        >>> # Check top-2 accuracy
+        >>> results['top_2_accuracy'].item()
+        0.5
+        >>> # AUROC should be between 0 and 1
+        >>> (0 <= results['auroc'] <= 1).item()
+        True
     """
 
     def __init__(self, vocab_size: int, top_k_acc: list[int], next_token_auc: bool, dist_sync_on_step=False):
@@ -317,7 +362,8 @@ class NextTokenPredictionMetric(Metric):
 
         Args:
             vocab_size (int): The size of the vocabulary.
-            top_n (tuple): The values of n for which to calculate top-n accuracy. Default is (1, 5, 10).
+            top_k_acc (list[int]): The values of k for which to calculate top-k accuracy.
+            next_token_auc (bool): Whether to include an AUROC metric for next-token classification.
             dist_sync_on_step (bool): Synchronize metric state across processes at each step. Default is
                 False.
         """
@@ -337,16 +383,13 @@ class NextTokenPredictionMetric(Metric):
         Update the metric state with batch statistics.
 
         Args:
-            logits (torch.Tensor): Predicted logits from the model, shape (batch_size, seq_length,
-                vocab_size).
+            logits (torch.Tensor): Predicted logits from the model, shape (batch_size, seq_length, vocab_size).
             targets (torch.Tensor): Ground truth labels, shape (batch_size, seq_length).
-            mask (torch.Tensor): Mask to ignore padded elements, shape (batch_size,
-                seq_length).
+            mask (torch.Tensor): Mask to ignore padded elements, shape (batch_size, seq_length).
 
         The method shifts the targets to align with the next token prediction and updates AUROC and top-n
-            accuracy.
+        accuracy.
         """
-
         # Shift targets to align with next token prediction
         shifted_targets = targets[:, 1:]
         shifted_mask = mask[:, :-1].to(torch.bool)
@@ -363,10 +406,146 @@ class NextTokenPredictionMetric(Metric):
         Compute the AUROC and top-n accuracy based on accumulated statistics.
 
         Returns:
-            dict: A dictionary containing the computed AUROC and top-n accuracy for each n in top_n.
+            dict: A dictionary containing the computed AUROC and top-n accuracy for each k in top_k_acc.
         """
         results = self.next_token_metrics.compute()
         return results
+
+
+class CodeSpecificNextTokenPredictionMetric(Metric):
+    r"""
+    A metric class for calculating AUC and MSE for next token prediction in language models.
+
+    This metric computes:
+
+    - **AUROC** treating a user-defined set of "codes" as positives vs. everything else as negatives.
+    - **MSE** for a subset of those codes that have numeric values.
+
+    Args:
+        metadata_df (pl.DataFrame): A Polars DataFrame describing the vocabulary and their numeric info.
+        vocab_size (int): The size of the vocabulary.
+        user_defined_code_regex (str): Regex pattern for which codes should be considered "positives."
+        dist_sync_on_step (bool): Synchronize metric state across processes at each step (Default False).
+
+    Example:
+    >>> import torch
+    >>> import polars as pl
+
+    >>> metadata_df = pl.DataFrame({
+    ...     "code": ["A", "A//_Q_1", "A//_Q_2", "A//_Q_3", "A//_Q_4", "B"],
+    ...     "code/vocab_index": [0, 1, 2, 3, 4, 5],
+    ...     'values/min': [0, 0, 0, 0, 0, None],
+    ...     'values/max': [4, 4, 4, 4, 4, None],
+    ...     'values/sum': [None, 0.5, 1.5, 2.5, 3.5, None],
+    ...     'values/n_occurrences': [None, 1, 1, 1, 1, None],
+    ...     "values/quantiles": [
+    ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+    ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+    ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+    ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+    ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+    ...         {'values/quantile/0.25': None, 'values/quantile/0.5': None, 'values/quantile/0.75': None},
+    ...     ],
+    ... })
+
+    >>> metric = CodeSpecificNextTokenPredictionMetric(
+    ...     metadata_df=metadata_df,
+    ...     vocab_size=6,
+    ...     user_defined_code_regex="A|A//*"
+    ... )
+    >>> # We'll define a small synthetic batch of logits that yields known AUC=1.0, MSE=0.25
+    >>> # Shape: (batch=3, seq=2, vocab=6)
+    >>> logits = torch.tensor([
+    ...   [  # Row 0
+    ...     [0.0, -100.0, -100.0, -100.0, -100.0,  -1.39],   # next token prediction
+    ...     [0.0,   0.0,    0.0,    0.0,    0.0,    0.0  ],   # (ignored by shift)
+    ...   ],
+    ...   [  # Row 1
+    ...     [-1.0, -100.0, -100.0, -100.0, -100.0,   0.0 ],   # next token prediction
+    ...     [0.0,   0.0,    0.0,    0.0,    0.0,    0.0  ],   # (ignored by shift)
+    ...   ],
+    ...   [  # Row 2
+    ...     [-100.0, 0.0,   0.0,  -100.0, -100.0, -100.0],   # next token prediction
+    ...     [0.0,   0.0,    0.0,    0.0,    0.0,    0.0  ],   # (ignored by shift)
+    ...   ]
+    ... ])
+    >>> # Targets: shape (3,2). The second column is the "next token".
+    >>> # row 0 -> next token = code 0 (in user-defined set, non-numeric)
+    >>> # row 1 -> next token = code 5 (not in user-defined set)
+    >>> # row 2 -> next token = code 2 (in user-defined set, numeric -> sum=1.5)
+    >>> targets = torch.tensor([
+    ...   [1, 0],
+    ...   [3, 5],
+    ...   [1, 2],
+    ... ])
+    >>> # All positions are valid
+    >>> mask = torch.ones_like(targets)
+    >>> # Update and compute
+    >>> metric.update(logits, targets, mask)
+    >>> results = metric.compute()
+    >>> print(results)
+    {'A|A//*/auroc': tensor(1.), 'A|A//*/mse': tensor(0.2500)}
+    """
+
+    def __init__(self, metadata_df: pl.DataFrame, vocab_size: int, user_defined_code_regex: str, dist_sync_on_step=False):
+        super().__init__(dist_sync_on_step=dist_sync_on_step)
+
+        self.codes = (
+            metadata_df.filter(pl.col("code").str.contains(user_defined_code_regex))
+                       .select("code/vocab_index")
+                       .to_torch()
+        )
+        self.numeric_codes = (
+            metadata_df.filter(
+                pl.col("code").str.contains(user_defined_code_regex)
+                & pl.col("values/sum").is_not_null()
+            )
+            .select("code/vocab_index")
+            .to_torch()
+        )
+        self.code_to_numeric_value_map = EicForecastingModule.get_code_to_numeric_value_map(metadata_df)
+
+        self.vocab_size = vocab_size
+        self.user_defined_code_regex = user_defined_code_regex
+
+        self.auc_metric = BinaryAUROC()
+        self.mse_metric = MeanSquaredError()
+
+    def update(self, logits: torch.Tensor, targets: torch.Tensor, mask: torch.Tensor):
+        shifted_targets = targets[:, 1:]
+        shifted_mask = mask[:, :-1].bool()
+
+        is_code = torch.isin(shifted_targets, self.codes)
+        is_numeric_code = torch.isin(shifted_targets, self.numeric_codes)
+
+        valid_logits = logits[:, :-1][shifted_mask].view(-1, self.vocab_size)
+        probs = torch.softmax(valid_logits, dim=-1)
+
+        # Probability of being in self.codes
+        code_indices = torch.isin(torch.arange(self.vocab_size, device=probs.device), self.codes)
+        prob_of_code = probs[:, code_indices].sum(dim=-1)
+
+        self.auc_metric.update(prob_of_code, is_code[shifted_mask].view(-1).long())
+
+        # MSE for numeric codes
+        numeric_indices = torch.isin(torch.arange(self.vocab_size, device=probs.device), self.numeric_codes)
+        numeric_values = self.code_to_numeric_value_map[self.numeric_codes].to(probs.device).T
+        predicted_value = (probs[:, numeric_indices] * numeric_values).sum(dim=-1)
+
+        ground_truth_codes = shifted_targets[shifted_mask & is_numeric_code].view(-1)
+        ground_truth_values = self.code_to_numeric_value_map[ground_truth_codes].to(probs.device)
+
+        self.mse_metric.update(
+            predicted_value[is_numeric_code[shifted_mask].view(-1)],
+            ground_truth_values
+        )
+
+    def compute(self):
+        return {
+            f"{self.user_defined_code_regex}/auroc": self.auc_metric.compute(),
+            f"{self.user_defined_code_regex}/mse": self.mse_metric.compute(),
+        }
+
 
 
 class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):

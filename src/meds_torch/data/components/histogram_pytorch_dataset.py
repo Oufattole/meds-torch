@@ -480,9 +480,8 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
     def __init__(self, cfg: DictConfig, split: str):
         super().__init__(cfg, split)
         self.cfg = cfg
-        if self.cfg.postpend_eos_token:
-            raise NotImplementedError("EOS token not supported for HistogramPytorchDataset")
-
+        if self.cfg.postpend_token != "none":
+            raise NotImplementedError(f"postpend_token {self.cfg.postpend_token} not supported for HistogramPytorchDataset")
         Path(self.cfg.augmented_code_metadata_fp).parent.mkdir(parents=True, exist_ok=True)
         if not Path(self.cfg.augmented_code_metadata_fp).exists():
             metadata_df = pl.read_parquet(self.cfg.code_metadata_fp)
