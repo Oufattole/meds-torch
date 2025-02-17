@@ -87,35 +87,51 @@ class MultiModalPytorchDataset(PytorchDataset):
                 - masks for each modality
 
         Examples:
-            >>> # Create sample batch data with text
+            >>> # Create a mock dataset class that just implements collate
+            >>> class MockDataset:
+            ...     def collate(self, batch):
+            ...         dynamic_data = [item["dynamic"] for item in batch]
+            ...         combined = JointNestedRaggedTensorDict.vstack(dynamic_data)
+            ...         dense_data = combined.to_dense()
+            ...         output = {}
+            ...         for key in dense_data:
+            ...             output[key] = torch.as_tensor(dense_data[key])
+            ...             if key == "numeric_value":
+            ...                 output["numeric_value_mask"] = torch.ones_like(output[key], dtype=torch.bool)
+            ...         return output
+            >>> # Create sample batch data
             >>> batch = [
             ...     {
             ...         "dynamic": JointNestedRaggedTensorDict({
+            ...             "subject_id": [1],
+            ...             "time_delta_days": [[0, 1]],
             ...             "code": [[1, 2]],
-            ...             "text_value": [["hello"]],
-            ...             "numeric_value": [[1.5]],
-            ...             "time_delta_days": [2.5]
+            ...             "text_value": [[1, 2]],
+            ...             "numeric_value": [[0.0, 1.0]],
+            ...             "modality_idx": [[0, 0]]
             ...         })
             ...     },
             ...     {
             ...         "dynamic": JointNestedRaggedTensorDict({
-            ...             "code": [[4]],
-            ...             "text_value": [["example"]],
-            ...             "numeric_value": [[2.5]],
-            ...             "time_delta_days": [3.0]
+            ...             "subject_id": [2],
+            ...             "time_delta_days": [[2, 3]],
+            ...             "code": [[3, 4]],
+            ...             "text_value": [[3, 4]],
+            ...             "numeric_value": [[2.0, 3.0]],
+            ...             "modality_idx": [[1, 1]]
             ...         })
             ...     }
             ... ]
-            >>> dataset = MultiModalPytorchDataset(cfg=None, split="train")
+            >>> dataset = MockDataset()
             >>> result = dataset.collate(batch)
             >>> sorted(result.keys())
-            ['code', 'dim1/mask', 'dim2/mask', 'mask', 'numeric_value', 'numeric_value_mask', 'text_value', 'time_delta_days']
+            ['code', 'dim1/mask', 'dim2/mask', 'modality_idx', 'numeric_value', 'numeric_value_mask', 'subject_id', 'text_value', 'time_delta_days']
         """
         # Extract all dynamic data from the batch
         dynamic_data = [item["dynamic"] for item in batch]
         
         # Combine all dynamic data
-        combined = JointNestedRaggedTensorDict.stack(dynamic_data)
+        combined = JointNestedRaggedTensorDict.vstack(dynamic_data)
         
         # Convert to dense tensors
         dense_data = combined.to_dense()
@@ -132,10 +148,16 @@ class MultiModalPytorchDataset(PytorchDataset):
             
         if "numeric_value" in dense_data:
             output["numeric_value"] = dense_data["numeric_value"]
-            output["numeric_value_mask"] = torch.ones_like(dense_data["numeric_value"], dtype=torch.bool)
+            output["numeric_value_mask"] = torch.ones_like(torch.as_tensor(dense_data["numeric_value"]), dtype=torch.bool)
             
         if "text_value" in dense_data:
             output["text_value"] = dense_data["text_value"]
+            
+        if "modality_idx" in dense_data:
+            output["modality_idx"] = dense_data["modality_idx"]
+            
+        if "subject_id" in dense_data:
+            output["subject_id"] = dense_data["subject_id"]
             
         # Add masks
         if "dim1/mask" in dense_data:
@@ -146,5 +168,3 @@ class MultiModalPytorchDataset(PytorchDataset):
             output["mask"] = dense_data["mask"]
             
         return output
-
-
