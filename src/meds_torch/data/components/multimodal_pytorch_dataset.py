@@ -4,11 +4,9 @@ from mixins import TimeableMixin
 from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
 
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
+from meds_torch.utils.custom_text_tensorization import convert_to_NRT
 
-
-def pop_key(
-    jnrt: JointNestedRaggedTensorDict, key: str
-) -> tuple[JointNestedRaggedTensorDict, JointNestedRaggedTensorDict]:
+def pop_key(jnrt: JointNestedRaggedTensorDict, key: str) -> tuple[JointNestedRaggedTensorDict, JointNestedRaggedTensorDict]:
     """Pops a key from the JNRT.
 
     Args:
@@ -19,49 +17,24 @@ def pop_key(
         A tuple of (jnrt_without_key, jnrt_with_only_key)
 
     Examples:
+        >>> import polars as pl
         >>> data = JointNestedRaggedTensorDict({
-        ...     "subject_id": [1],
-        ...     "time": [[0,1]],
-        ...     "code": [[[1,2], [3]]],
+        ...     "subject_id": [1, 2],
+        ...     "time_delta_days": [[0, 1], [2, 3]],
+        ...     "code": [[1, 2], [3, 4]],
+        ...     "text_value": [[1, 2], [3, 4]],
+        ...     "numeric_value": [[0.0, 1.0], [2.0, 3.0]],
+        ...     "modality_idx": [[0, 0], [1, 1]]
         ... })
-        >>> remainder, popped = pop_key(data, "code")
+        >>> remainder, popped = pop_key(data, "text_value")
         >>> sorted(list(remainder.to_dense().keys()))
-        ['dim1/mask', 'subject_id', 'time']
-        >>> popped.to_dense()['code'].tolist()
-        [[[1, 2], [3, 0]]]
-        >>> dummy_ecg = [[0.2, 0.3], [0.4, 0.5]]
-        >>> data = JointNestedRaggedTensorDict({
-        ...     "subject_id": [1],
-        ...     "time": [[0,1]],
-        ...     "code": [[[1,2], [3]]],
-        ...     "ecg": [[[dummy_ecg,[[]]], [[[]]]]]
-        ... })
-        >>> remainder, popped = pop_key(data, "ecg")
-        >>> sorted(list(remainder.to_dense().keys()))
-        ['code', 'dim1/mask', 'dim2/mask', 'subject_id', 'time']
-        >>> remainder.to_dense()['code'].tolist()
-        [[[1, 2], [3, 0]]]
-        >>> popped.keys()
-        {'ecg'}
-        >>> ecg_data = popped.to_dense()['ecg']
-        >>> ecg_data.shape
-        (1, 2, 2, 2, 2)
-        >>> ecg_data[0]
-        array([[[[0.2, 0.3],
-                 [0.4, 0.5]],
-        <BLANKLINE>
-                [[0. , 0. ],
-                 [0. , 0. ]]],
-        <BLANKLINE>
-        <BLANKLINE>
-               [[[0. , 0. ],
-                 [0. , 0. ]],
-        <BLANKLINE>
-                [[0. , 0. ],
-                 [0. , 0. ]]]], dtype=float32)
+        ['code', 'dim1/mask', 'modality_idx', 'numeric_value', 'subject_id', 'time_delta_days']
+        >>> popped.to_dense()['text_value'].tolist()
+        [[1, 2], [3, 4]]
     """
     # Reset the schema, sometimes the schema is incorrect if you don't do this
-    jnrt = JointNestedRaggedTensorDict(processed_tensors=jnrt.tensors)
+    jnrt = JointNestedRaggedTensorDict(processed_tensors=jnrt.tensors, schema=jnrt.schema)
+
     # Create two new dictionaries to hold the separated tensors
     remaining_tensors = {}
     popped_tensors = {}
@@ -80,7 +53,7 @@ def pop_key(
 
     # Create new schema dicts
     remaining_schema = {k: v for k, v in jnrt.schema.items() if k != key}
-    popped_schema = {key: jnrt.schema[key]}
+    popped_schema = {key: jnrt.schema[key]} if key in jnrt.schema else {}
 
     return (
         JointNestedRaggedTensorDict(processed_tensors=remaining_tensors, schema=remaining_schema),
@@ -88,279 +61,90 @@ def pop_key(
     )
 
 
-def extract_nested_data(jnrt: JointNestedRaggedTensorDict, key: str) -> tuple[list, dict]:
-    """Extracts nested data (like ECGs) from a JNRT along with metadata about their original locations.
+class MultiModalPytorchDataset(PytorchDataset):
+    """A PyTorch Dataset class that handles multiple modalities including text for contrastive learning.
 
-    Args:
-        jnrt: The source JointNestedRaggedTensorDict
-        key: The key containing nested data to extract
-
-    Returns:
-        A tuple of (extracted_data, location_map) where:
-        - extracted_data is a list of the extracted nested data
-        - location_map is a dict mapping from position in extracted_data to original indices
-
-    Examples:
-        >>> ecg_1 = [[0.2, 0.3], [0.4, 0.9]]
-        >>> data = JointNestedRaggedTensorDict({
-        ...     "subject_id": [1],
-        ...     "time": [[0,1]],
-        ...     "code": [[[1,2],[3]]],
-        ...     "ecg": [[[ecg_1,[[]]], [[[]]]]]
-        ... })
-        >>> ts_data, ecgs, loc_map = extract_nested_data(data, "ecg")
-        >>> len(ecgs)  # Number of non-empty ECGs
-        1
-        >>> np.array(ecgs[0]).round(1)  # Verify we got the actual ECG data
-        array([[0.2, 0.3],
-               [0.4, 0.9]])
-        >>> sorted(loc_map[0])  # Location should be a tuple of indices
-        [0, 0, 0]
-        >>> ecg_2 = [[1.2, 1.3], [1.4, 1.9]]
-        >>> more_data = JointNestedRaggedTensorDict({
-        ...     "subject_id": [1, 2],
-        ...     "time": [[0,1], [0]],
-        ...     "code": [[[1,2],[3]], [[4]]],
-        ...     "ecg": [[[ecg_1,[[]]], [[[]]]], [[ecg_2]]]
-        ... })
-        >>> ts_data, ecgs, loc_map = extract_nested_data(more_data, "ecg")
-        >>> len(ecgs) # Still only one real ECG
-        2
-        >>> np.array(ecgs[0]).round(1)
-        array([[0.2, 0.3],
-               [0.4, 0.9]])
-        >>> np.array(ecgs[1]).round(1)
-        array([[1.2, 1.3],
-               [1.4, 1.9]])
-        >>> data = JointNestedRaggedTensorDict({
-        ...     "subject_id": [1, 2, 3],
-        ...     "time": [[0,1], [0], [0]],
-        ...     "code": [[[1,2],[3]], [[4]], [[5]]],
-        ...     "ecg": [[[[[]],[[]]], [[[]]]], [[[[]]]], [[ecg_1]]]
-        ... })[:2]
-        >>> data = JointNestedRaggedTensorDict(processed_tensors=data.tensors)
-        >>> sorted(list(data.keys()))
-        ['code', 'ecg', 'subject_id', 'time']
-        >>> ts_data, ecgs, loc_map = extract_nested_data(data, "ecg")
-        >>> len(ecgs)  # No valid ECGs found
-        0
-        >>> len(loc_map)  # No locations mapped
-        0
-    """
-    extracted_data = []
-    location_map = {}
-
-    # First pop out just the key we want
-    ts_data, key_data = pop_key(jnrt, key)
-    max_modality_key_dim = key_data._get_dim(key)
-    min_modality_key_dim = jnrt._get_dim("code")
-
-    def is_valid_data(arr) -> bool:
-        """Check if an array contains valid data (non-empty 2D array with actual values)."""
-        if not isinstance(arr, (list, np.ndarray)) or len(arr) == 0:
-            return False
-        if not isinstance(arr[0], (list, np.ndarray)) or len(arr[0]) == 0:
-            return False
-        # Verify it's a 2D array with values
-        return all(isinstance(x, (list, np.ndarray)) and len(x) > 0 for x in arr)
-
-    def extract_data_recursive(key_data, extracted_data, location_map, dim, curr_indices):
-        """Recursively extract nested data while tracking indices.
-
-        Args:
-            key_data: The JNRT containing just the target key data
-            extracted_data: List to collect valid data arrays
-            location_map: Dict to track original indices
-            dim: Current dimension being processed
-            curr_indices: List of current indices in the traversal
-        """
-        # Convert to dense at current level to iterate
-        dense_data = key_data.to_dense()
-
-        # Base case: if we're at a leaf node that could contains valid data
-        if dim >= max_modality_key_dim:
-            if isinstance(dense_data, dict) and key in dense_data:
-                data = dense_data[key]
-                if is_valid_data(data):
-                    idx = len(extracted_data)
-                    extracted_data.append(data.tolist() if isinstance(data, np.ndarray) else data)
-                    location_map[idx] = tuple(curr_indices)
-            return
-
-        # Recursive case: traverse the structure
-        if isinstance(dense_data, dict) and key in dense_data:
-            data = dense_data[key]
-            for i, subdata in enumerate(data):
-                # Create slice for this index
-                subdata_jnrt = key_data[i]
-                extract_data_recursive(
-                    subdata_jnrt, extracted_data, location_map, dim + 1, curr_indices + [i]
-                )
-
-    extract_data_recursive(key_data, extracted_data, location_map, min_modality_key_dim - 1, [])
-
-    return ts_data, extracted_data, location_map
-
-
-class MultimodalPytorchDataset(PytorchDataset):
-    """A PyTorch Dataset class that generates random windows on-the-fly for contrastive learning pretraining.
-
-    This class extends PytorchDataset to support random window generation without relying on predefined
-    windows.
+    This class extends PytorchDataset to support text and other modalities for contrastive learning
+    between different data types.
 
     Args:
         cfg (DictConfig): Configuration options for the dataset.
         split (str): The data split to use (e.g., 'train', 'validation', 'test').
-        min_window_size (int): Minimum size of generated windows.
-        max_window_size (int): Maximum size of generated windows.
-        n_windows (int): Number of windows to generate for each sample.
     """
 
-    @TimeableMixin
     def collate(self, batch: list[dict]) -> dict:
-        """Collate a batch of randomly windowed sequences.
+        """Collate a batch of multimodal sequences.
 
         Args:
-            batch (List[dict]): A list of dictionaries, each containing windowed sequences.
+            batch (List[dict]): A list of dictionaries, each containing sequences with different modalities.
 
         Returns:
-            dict: A dictionary with collated data for each window, including extracted modality data
-                and location mapping.
+            dict: A dictionary with collated data for each modality, including:
+                - text embeddings (if present)
+                - codes
+                - numeric values
+                - time information
+                - masks for each modality
+
+        Examples:
+            >>> # Create sample batch data with text
+            >>> batch = [
+            ...     {
+            ...         "dynamic": JointNestedRaggedTensorDict({
+            ...             "code": [[1, 2]],
+            ...             "text_value": [["hello"]],
+            ...             "numeric_value": [[1.5]],
+            ...             "time_delta_days": [2.5]
+            ...         })
+            ...     },
+            ...     {
+            ...         "dynamic": JointNestedRaggedTensorDict({
+            ...             "code": [[4]],
+            ...             "text_value": [["example"]],
+            ...             "numeric_value": [[2.5]],
+            ...             "time_delta_days": [3.0]
+            ...         })
+            ...     }
+            ... ]
+            >>> dataset = MultiModalPytorchDataset(cfg=None, split="train")
+            >>> result = dataset.collate(batch)
+            >>> sorted(result.keys())
+            ['code', 'dim1/mask', 'dim2/mask', 'mask', 'numeric_value', 'numeric_value_mask', 'text_value', 'time_delta_days']
         """
-        return collate(batch)
+        # Extract all dynamic data from the batch
+        dynamic_data = [item["dynamic"] for item in batch]
+        
+        # Combine all dynamic data
+        combined = JointNestedRaggedTensorDict.stack(dynamic_data)
+        
+        # Convert to dense tensors
+        dense_data = combined.to_dense()
+        
+        # Create the output dictionary with all modalities
+        output = {}
+        
+        # Add basic fields
+        if "time_delta_days" in dense_data:
+            output["time_delta_days"] = dense_data["time_delta_days"]
+        
+        if "code" in dense_data:
+            output["code"] = dense_data["code"]
+            
+        if "numeric_value" in dense_data:
+            output["numeric_value"] = dense_data["numeric_value"]
+            output["numeric_value_mask"] = torch.ones_like(dense_data["numeric_value"], dtype=torch.bool)
+            
+        if "text_value" in dense_data:
+            output["text_value"] = dense_data["text_value"]
+            
+        # Add masks
+        if "dim1/mask" in dense_data:
+            output["dim1/mask"] = dense_data["dim1/mask"]
+        if "dim2/mask" in dense_data:
+            output["dim2/mask"] = dense_data["dim2/mask"]
+        if "mask" in dense_data:
+            output["mask"] = dense_data["mask"]
+            
+        return output
 
 
-def pyd_collate(batch):
-    if isinstance(batch, list):
-        data = JointNestedRaggedTensorDict.vstack([item["dynamic"] for item in batch]).to_dense()
-    elif isinstance(batch, JointNestedRaggedTensorDict):
-        data = batch.to_dense()
-    else:
-        raise ValueError(f"Invalid batch type {type(batch)}!")
-    tensorized = {k: torch.as_tensor(v) for k, v in data.items()}
-    tensorized["code"] = tensorized["code"].long()
-    tensorized["mask"] = tensorized.pop("dim1/mask")
-    tensorized["numeric_value_mask"] = ~torch.isnan(tensorized["numeric_value"])
-    tensorized["time_delta_days"] = torch.nan_to_num(tensorized["time_delta_days"], nan=0).float()
-    tensorized["numeric_value"] = torch.nan_to_num(tensorized["numeric_value"], nan=0).float()
-    return tensorized
-
-
-def collate(batch: list[dict]) -> dict:
-    """Collate a batch of randomly windowed sequences.
-
-    Args:
-        batch (List[dict]): A list of dictionaries, each containing windowed sequences.
-
-    Returns:
-        dict: A dictionary with collated data for each window, including extracted modality data
-            and location mapping.
-
-    Examples:
-        >>> # Create dummy ECG data
-        >>> ecg1 = [[0.2, 0.3], [0.4, 0.5]]
-        >>> ecg2 = [[0.6, 0.7], [0.8, 0.9]]
-        >>>
-        >>> # Create sample batch data
-        >>> batch = [
-        ...     {
-        ...         "dynamic": JointNestedRaggedTensorDict({
-        ...             "code": [[1, 2], [3]],
-        ...             "ecg": [[ecg1, []], [[]]],
-        ...             "numeric_value": [[1.5, 2.5], [3.5]],
-        ...             "time_delta_days": [2.5, 4]
-        ...         })
-        ...     },
-        ...     {
-        ...         "dynamic": JointNestedRaggedTensorDict({
-        ...             "code": [[4]],
-        ...             "ecg": [[ecg2]],
-        ...             "numeric_value": [[2.5]],
-        ...             "time_delta_days": [3.0]
-        ...         })
-        ...     }
-        ... ]
-        >>> # Create dataset instance and collate batch
-        >>> result = collate(batch)
-        >>> # Check basic structure
-        >>> for each in sorted(result.keys()): print(each)
-        code
-        dim2/mask
-        ecg
-        ecg_location_map
-        mask
-        numeric_value
-        numeric_value_mask
-        time_delta_days
-        >>>
-        >>> # Check ECG data extraction
-        >>> len(result['ecg'])
-        2
-        >>>
-        >>> # Verify first ECG
-        >>> np.array(result['ecg'][0]).round(2).tolist()
-        [[0.2, 0.3], [0.4, 0.5]]
-        >>>
-        >>> # Verify second ECG
-        >>> np.array(result['ecg'][1]).round(2).tolist()
-        [[0.6, 0.7], [0.8, 0.9]]
-        >>>
-        >>> # Check location mapping
-        >>> sorted(result['ecg_location_map'].items())  # doctest: +NORMALIZE_WHITESPACE
-        [(0, (0, 0, 0)), (1, (1, 0, 0))]
-        >>>
-        >>> # Verify numeric values and masks
-        >>> result['numeric_value'].tolist()
-        [[[1.5, 2.5], [3.5, 0.0]], [[2.5, 0.0], [0.0, 0.0]]]
-        >>> result['numeric_value_mask'].tolist()
-        [[[True, True], [True, True]], [[True, True], [True, True]]]
-        >>>
-        >>> # Verify time delta days
-        >>> result['time_delta_days'].tolist()
-        [[2.5, 4.0], [3.0, 0.0]]
-        >>>
-        >>> # Test batch with no ECG data
-        >>> batch_no_ecg = [
-        ...     {
-        ...         "dynamic": JointNestedRaggedTensorDict({
-        ...             "code": [[1]],
-        ...             "numeric_value": [[1.0]],
-        ...             "time_delta_days": [1.0]
-        ...         })
-        ...     }
-        ... ]
-        >>> result_no_ecg = collate(batch_no_ecg)
-        >>> 'ecg' in result_no_ecg
-        False
-        >>>
-        >>> # Test batch with empty ECG arrays
-        >>> data = JointNestedRaggedTensorDict({
-        ...     "subject_id": [1, 2, 3],
-        ...     "time_delta_days": [[0,1], [0], [0]],
-        ...     "code": [[[1,2],[3]], [[4]], [[5]]],
-        ...     "numeric_value": [[[1,2],[3]], [[4]], [[5]]],
-        ...     "ecg": [[[[[]],[[]]], [[[]]]], [[[[]]]], [[ecg1]]]
-        ... })[0]
-        >>> batch_empty_ecg = [
-        ...     {
-        ...         "dynamic": data
-        ...     }
-        ... ]
-        >>> result_empty_ecg = collate(batch_empty_ecg)
-        >>> result_empty_ecg['ecg']
-        []
-        >>> result_empty_ecg['ecg_location_map']
-        {}
-    """
-    jnrt = JointNestedRaggedTensorDict.vstack([item["dynamic"] for item in batch])
-    modality_key = "ecg"
-
-    # Only process modality if it exists in the data
-    if modality_key in jnrt.keys():
-        ts_data, extracted_data, location_map = extract_nested_data(jnrt, modality_key)
-        tensorized = pyd_collate(ts_data)
-        tensorized[modality_key] = extracted_data
-        tensorized[f"{modality_key}_location_map"] = location_map
-        return tensorized
-    else:
-        return pyd_collate(jnrt)
