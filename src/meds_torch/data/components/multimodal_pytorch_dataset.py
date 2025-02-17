@@ -2,9 +2,7 @@ import numpy as np
 import torch
 from mixins import TimeableMixin
 from nested_ragged_tensors.ragged_numpy import JointNestedRaggedTensorDict
-
 from meds_torch.data.components.pytorch_dataset import PytorchDataset
-from meds_torch.utils.custom_text_tensorization import convert_to_NRT
 
 def pop_key(jnrt: JointNestedRaggedTensorDict, key: str) -> tuple[JointNestedRaggedTensorDict, JointNestedRaggedTensorDict]:
     """Pops a key from the JNRT.
@@ -162,6 +160,7 @@ class MultiModalPytorchDataset(PytorchDataset):
         # Add masks
         if "dim1/mask" in dense_data:
             output["dim1/mask"] = dense_data["dim1/mask"]
+
         if "dim2/mask" in dense_data:
             output["dim2/mask"] = dense_data["dim2/mask"]
         if "mask" in dense_data:
