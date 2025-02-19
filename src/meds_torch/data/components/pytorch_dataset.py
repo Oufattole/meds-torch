@@ -929,10 +929,18 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             tensors["dim0/static_mask"] = np.zeros(len(tensors["dim0/code"]), dtype=bool)
 
         if has_censor_token or (self.config.postpend_token == PostpendToken.eos):
-            tensors["dim0/code"] = np.append(tensors["dim0/code"], [self.config.EOS_TOKEN_ID])
-            tensors["dim0/static_mask"] = np.append(tensors["dim0/static_mask"], [False])
-            tensors["dim0/numeric_value"] = np.append(tensors["dim0/numeric_value"], [0])
-            tensors["dim0/time_delta_days"] = np.append(tensors["dim0/time_delta_days"], [0])
+            tensors["dim0/code"] = np.append(tensors["dim0/code"], [self.config.EOS_TOKEN_ID]).astype(
+                tensors["dim0/code"].dtype
+            )
+            tensors["dim0/static_mask"] = np.append(tensors["dim0/static_mask"], [False]).astype(
+                tensors["dim0/static_mask"].dtype
+            )
+            tensors["dim0/numeric_value"] = np.append(tensors["dim0/numeric_value"], [0]).astype(
+                tensors["dim0/numeric_value"].dtype
+            )
+            tensors["dim0/time_delta_days"] = np.append(tensors["dim0/time_delta_days"], [0]).astype(
+                tensors["dim0/time_delta_days"].dtype
+            )
 
         subject_dynamic_data = JointNestedRaggedTensorDict(processed_tensors=tensors)
 
