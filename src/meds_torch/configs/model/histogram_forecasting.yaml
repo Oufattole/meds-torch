@@ -10,6 +10,7 @@ _target_: meds_torch.models.histogram_forecasting.HistogramForecastingModule.ini
 max_seq_len: ${data.max_seq_len}
 token_dim: 4
 vocab_size: ${data.augmented_vocab_size}
+subvocab_size: ${data.subvocab_size}
 get_representations: false
 task_name: ${data.task_name}
 batch_size: ${data.dataloader.batch_size}
@@ -49,3 +50,11 @@ histogram_batch_mul: 1
 beta: 1e-3
 histogram_loss_weight: 1
 histogram_head_loss: 'l2' # bce, l2, or l1
+use_diffusion: false
+diffusion_noise_schedule: linear
+warmup_steps: 0
+annealing_steps: 0
+
+
+encoder_dims: [768, 768, 768, 768]
+decoder_dims: [768, 768, 768, 768]

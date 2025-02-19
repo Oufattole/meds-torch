@@ -208,6 +208,7 @@ def create_dummy_dataset(
         {
             "code": ["1", "2", "3"],
             "code/vocab_index": [1, 2, 3],
+            "code/subvocab_index": [1, 1, 2],
         }
     )
     code_metadata_fp = base_dir / "codes.parquet"

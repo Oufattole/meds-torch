@@ -67,7 +67,7 @@ class HistogramEicEncoder(nn.Module, Module):
         super().__init__()
         self.cfg = cfg
         self.code_embedder = nn.Embedding(cfg.vocab_size, cfg.token_dim)
-        self.histogram_embedder = torch.nn.Linear(cfg.vocab_size, cfg.token_dim)
+        self.histogram_embedder = torch.nn.Linear(cfg.subvocab_size, cfg.token_dim)
         self.projector = nn.Linear(cfg.token_dim * 2, cfg.token_dim)
 
     def forward(self, batch):

@@ -16,6 +16,88 @@ class TokenInsertionStrategy(StrEnum):
     TIME_BINS = "time_bins"
 
 
+class SubvocabMapper:
+    """
+    A helper class to map vocabulary codes to sub-vocabulary codes
+    and to expand sub-vocabulary histograms to vocabulary-level histograms.
+
+    The metadata_df is expected to have the columns:
+      - 'code/vocab_index'
+      - 'code/subvocab_index'
+    """
+
+    def __init__(self, metadata_df: pl.DataFrame):
+        # Determine vocabulary size from metadata (assumes vocab indices are 0-indexed)
+        vocab_size = int(metadata_df["code/vocab_index"].max() + 1)
+        # Allocate a tensor that maps each vocabulary index to a sub-vocab index.
+        vocab_to_subvocab = torch.empty(vocab_size, dtype=torch.long)
+
+        # Iterate over the rows to fill the mapping.
+        # (Alternatively, if metadata_df is indexed by vocab_index, you could vectorize this.)
+        vocab_indices = metadata_df["code/vocab_index"].to_torch()
+        subvocab_indices = metadata_df["code/subvocab_index"].to_torch()
+        vocab_to_subvocab[0] = 0
+        vocab_to_subvocab[vocab_indices] = subvocab_indices
+
+        # Store the mapping as a torch tensor
+        self.vocab_to_subvocab = vocab_to_subvocab
+
+        # Also store the sizes for later use
+        self.vocab_size = vocab_size
+        self.num_subvocab = int(metadata_df["code/subvocab_index"].max() + 1)
+
+    def to_subvocab(self, codes: torch.Tensor) -> torch.Tensor:
+        """
+        Maps a tensor of vocabulary codes (of arbitrary shape) to sub-vocabulary codes.
+
+        Args:
+            codes (torch.Tensor): Tensor containing vocabulary indices.
+
+        Returns:
+            torch.Tensor: Tensor of the same shape with the corresponding sub-vocab indices.
+        """
+        # The indexing operation applies elementwise.
+        if codes.device != self.vocab_to_subvocab.device:
+            self.vocab_to_subvocab = self.vocab_to_subvocab.to(codes.device)
+        return self.vocab_to_subvocab[codes]
+
+    def from_subvocab_histogram(self, sub_hist: torch.BoolTensor) -> torch.BoolTensor:
+        """
+        Expands a boolean histogram tensor from sub-vocabulary to full vocabulary space.
+
+        Supports input of shape (L, S') or (B, L, S') where S' is the sub-vocabulary size.
+
+        Args:
+            sub_hist (torch.BoolTensor): A boolean tensor of shape (L, S') or (B, L, S').
+
+        Returns:
+            torch.BoolTensor: A boolean tensor of shape (L, S) if input was (L, S') or (B, L, S)
+                if input was (B, L, S'), where S is the vocabulary size.
+        """
+        # Determine if we have a batch dimension
+        if sub_hist.ndim == 2:
+            # Shape is (L, S'), add a batch dimension
+            sub_hist = sub_hist.unsqueeze(0)  # Now (1, L, S')
+            squeeze_out = True
+        elif sub_hist.ndim == 3:
+            squeeze_out = False
+        else:
+            raise ValueError(f"Expected input tensor with 2 or 3 dimensions, got shape {sub_hist.shape}")
+
+        B, L, _ = sub_hist.shape
+
+        # Create an index tensor of shape (1, 1, vocab_size) then expand it to (B, L, vocab_size)
+        index = self.vocab_to_subvocab.view(1, 1, -1).expand(B, L, self.vocab_size)
+        # Gather along dimension 2 (the sub-vocab dimension) to get the corresponding vocab histogram.
+        vocab_hist = torch.gather(sub_hist, dim=2, index=index)
+
+        if squeeze_out:
+            # Remove the added batch dimension to return to (L, S)
+            vocab_hist = vocab_hist.squeeze(0)
+
+        return vocab_hist
+
+
 def get_time_bin_indices(time_deltas, time_bin_size) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Gets the indices of the
 
@@ -433,7 +515,7 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
         >>> config.task_label_path = None
         >>> config.task_name = None
         >>> config.do_include_prediction_time = False
-        >>> config.postpend_eos_token = False
+        >>> config.postpend_token = "none"
         >>> dataset = HistogramPytorchDataset(config, split='train')
         >>> print(f"Dataset size: {len(dataset)}")
         Dataset size: 3
@@ -481,28 +563,36 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
         super().__init__(cfg, split)
         self.cfg = cfg
         if self.cfg.postpend_token != "none":
-            raise NotImplementedError(f"postpend_token {self.cfg.postpend_token} not supported for HistogramPytorchDataset")
+            raise NotImplementedError(
+                f"postpend_token {self.cfg.postpend_token} not supported for HistogramPytorchDataset"
+            )
         Path(self.cfg.augmented_code_metadata_fp).parent.mkdir(parents=True, exist_ok=True)
         if not Path(self.cfg.augmented_code_metadata_fp).exists():
             metadata_df = pl.read_parquet(self.cfg.code_metadata_fp)
             h_token_index = metadata_df["code/vocab_index"].max() + 1
             ntp_token_index = metadata_df["code/vocab_index"].max() + 2
+            h_histogram_index = metadata_df["code/subvocab_index"].max() + 1
+            ntp_histogram_index = metadata_df["code/subvocab_index"].max() + 2
             augmented_metadata_df_schema = {
-                k: v for k, v in metadata_df.schema.items() if k in {"code", "code/vocab_index"}
+                k: v
+                for k, v in metadata_df.schema.items()
+                if k in {"code", "code/vocab_index", "code/subvocab_index"}
             }
             augmented_metadata_df = pl.DataFrame(
                 {
                     "code": ["[H]", "[NTP]"],
                     "code/vocab_index": [h_token_index, ntp_token_index],
+                    "code/subvocab_index": [h_histogram_index, ntp_histogram_index],
                 },
                 schema=augmented_metadata_df_schema,
             )
             metadata_df = pl.concat((metadata_df, augmented_metadata_df), how="diagonal")
             metadata_df.write_parquet(self.cfg.augmented_code_metadata_fp, use_pyarrow=True)
-
         metadata_df = pl.read_parquet(self.cfg.augmented_code_metadata_fp)
+        self.subvocab_mapper = SubvocabMapper(metadata_df)
         self.h_token = metadata_df.filter(pl.col("code") == "[H]")["code/vocab_index"][-1]
         self.ntp_token = metadata_df.filter(pl.col("code") == "[NTP]")["code/vocab_index"][-1]
+        self.subvocab_ntp_token = metadata_df.filter(pl.col("code") == "[NTP]")["code/subvocab_index"][-1]
 
     @SeedableMixin.WithSeed
     def _seeded_getitem(self, idx: int) -> dict:
@@ -528,7 +618,8 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
                 f"Invalid token insertion strategy: {self.cfg.token_insertion_strategy}, "
                 f"should be one of {TokenInsertionStrategy}"
             )
-        histogram = compute_count_histogram(inserted_codes, self.cfg.augmented_vocab_size, self.ntp_token)
+        subvocab_codes = self.subvocab_mapper.to_subvocab(inserted_codes)
+        histogram = compute_count_histogram(subvocab_codes, self.cfg.subvocab_size, self.subvocab_ntp_token)
 
         out["cum_sum"] = dict(
             codes=inserted_codes,

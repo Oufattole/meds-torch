@@ -19,8 +19,6 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 from torch import nn
-from torchmetrics import Metric, MetricCollection
-from torchmetrics.classification import MulticlassAccuracy, MulticlassAUROC
 from torchvision.ops import MLP
 from x_transformers import Decoder, TransformerWrapper
 from x_transformers.autoregressive_wrapper import (
@@ -31,6 +29,7 @@ from x_transformers.autoregressive_wrapper import (
     join,
 )
 
+from meds_torch.data.components.histogram_pytorch_dataset import SubvocabMapper
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models import (
     BACKBONE_EMBEDDINGS_KEY,
@@ -47,10 +46,16 @@ from meds_torch.models import (
 )
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components.utils import TrajectoryBatch, get_time_days_delta
-from meds_torch.utils import TIME_DELTA_TOKEN
 from meds_torch.models.eic_forecasting import NextTokenPredictionMetric
+from meds_torch.utils import TIME_DELTA_TOKEN
 
-MODEL_LOSS_KEYS = ["MODEL//code_loss", "MODEL//vae_loss", "MODEL//vae_rec_loss", "MODEL//vae_kl_loss"]
+MODEL_LOSS_KEYS = [
+    "MODEL//code_loss",
+    "MODEL//vae_loss",
+    "MODEL//vae_rec_loss",
+    "MODEL//vae_kl_loss",
+    "MODEL//diffusion_loss",
+]
 
 
 def eval_decorator(fn):
@@ -162,6 +167,7 @@ def create_dummy_sequence_labeler(batch_size: int = 2):
                 "[NTP]",
             ],
             "code/vocab_index": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            "code/subvocab_index": [0, 0, 1, 1, 1, 2, 2, 2, 3, 4],
             "values/min": [None, None, 2.0, 0.0, 1.0, 0, 1, 2, None, None],
             "values/max": [None, None, 3.0, 1.0, 2.0, 1, 2, 3, None, None],
             "values/sum": [None, None, 0.5, 1.5, 2.5, 0.5, 1.5, 2.5, None, None],
@@ -423,20 +429,34 @@ def topk(x: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
 
 
 class HistogramNormalizer(torch.nn.Module):
-    def __init__(self, h_token, o_token, vocab_size, histogram_head_loss, num_bits=16, scale=1):
+    def __init__(
+        self,
+        h_token,
+        o_token,
+        vocab_size,
+        histogram_head_loss,
+        num_bits=16,
+        max_count=4,
+        scale=1,
+        use_diffusion=False,
+    ):
         super().__init__()
         self.h_token = h_token
         self.o_token = o_token
         self.vocab_size = vocab_size
         self.histogram_head_loss = histogram_head_loss
         self.num_bits = num_bits
+        self.max_count = max_count
         self.scale = scale
+        self.use_diffusion = use_diffusion
         # Create powers of 2 as a buffer to avoid recomputing
         self.register_buffer("powers", torch.pow(2, torch.arange(num_bits - 1, -1, -1).float()))
 
     def get_normalized_size(self):
         if self.histogram_head_loss.startswith("softmax"):
             return self.vocab_size + self.num_bits
+        elif self.histogram_head_loss.startswith("multinomial"):
+            return self.vocab_size * self.max_count  # TODO consider other sizes
         return self.vocab_size * self.num_bits
 
     def count_to_binary(self, count):
@@ -446,7 +466,44 @@ class HistogramNormalizer(torch.nn.Module):
     def binary_to_count(self, binary):
         return (binary * self.powers).sum(dim=-1, keepdim=True)
 
+    def multinomial_to_count(self, multinomial):
+        """
+        Recovers the count from a multinomial (one-hot) vector.
+        """
+        # multinomial is expected to be (…, max_count+1). We take the index of the maximum value.
+        return multinomial.argmax(dim=-1, keepdim=True)
+
+    def multinomial_transform(self, x):
+        """
+        Converts a batch of histograms (shape: [batch, vocab_size]) into
+        a normalized representation using a multinomial expansion.
+        """
+        # Zero out special tokens so they are not affected by the transform.
+        x[:, self.h_token] = 0
+        x[:, self.o_token] = 0
+
+        return x
+
+    def multinomial_reverse_transform(self, x):
+        """
+        Converts the normalized representation back into a histogram.
+        Returns:
+            counts: a tensor of shape [batch, vocab_size] with the recovered counts.
+            total: a tensor of shape [batch] with the sum of counts per histogram.
+        """
+        # Recover each count by taking the argmax over the multinomial dimension.
+        x = x.reshape(x.shape[0], self.vocab_size, -1)
+        counts = self.multinomial_to_count(x).squeeze(-1)
+
+        # Restore special tokens to count 1.
+        counts[:, self.h_token] = 1
+        counts[:, self.o_token] = 1
+
+        return counts, counts.sum(dim=-1)
+
     def transform(self, x):
+        if self.histogram_head_loss.startswith("multinomial"):
+            return self.multinomial_transform(x)
         # Zero out special tokens
         x[:, self.h_token] = 0
         x[:, self.o_token] = 0
@@ -454,16 +511,21 @@ class HistogramNormalizer(torch.nn.Module):
         # Get counts and normalize histogram
         b, _ = x.shape
         if self.histogram_head_loss.startswith("softmax"):
-            count = x.sum(dim=-1)
+            count = x.sum(dim=-1) + 2  # Add H and NTP token
             data = torch.hstack([x / count.unsqueeze(-1), self.count_to_binary(count)])
         else:
             # Convert counts to binary representation
             data = self.count_to_binary(x.reshape(-1)).reshape(b, -1).to(torch.float32)
 
-        # Shift from [0,1] to [-self.scale,self.scale] range
+        if self.use_diffusion:
+            # Shift from [0,1] to [-self.scale,self.scale] range
+            data = (data - 0.5) * 2 * self.scale
+
         return data
 
     def reverse_transform(self, x):
+        if self.histogram_head_loss.startswith("multinomial"):
+            return self.multinomial_reverse_transform(x)
         # Shift from [-self.scale,self.scale] to [0,1]  range
         if self.histogram_head_loss.startswith("softmax"):
             x, count = (
@@ -473,6 +535,9 @@ class HistogramNormalizer(torch.nn.Module):
             count = self.binary_to_count(count).reshape(x.shape[0], -1)
             x = (x * count).round()
         else:
+            if self.use_diffusion:
+                # Shift from [-self.scale,self.scale] to [0,1]  range
+                x = (x + self.scale) / (2 * self.scale)
             x = torch.sigmoid(x)
 
             # Clip to [0,1] range
@@ -734,6 +799,11 @@ class AutoencoderKL(nn.Module):
             rec_loss = torch.nn.functional.mse_loss(torch.sigmoid(pred_count), target_count, reduction="mean")
             pred_histogram = torch.nn.functional.softmax(pred_histogram, dim=-1)
             rec_loss += torch.nn.functional.l1_loss(pred_histogram, target_histogram, reduction="mean")
+        elif self.histogram_head_loss == "multinomial":
+            dec = dec.reshape(*outputs.shape, -1)
+            rec_loss = torch.nn.functional.cross_entropy(
+                dec.transpose(1, 2), outputs.long(), reduction="mean"
+            )
         else:
             raise ValueError(f"Invalid model.histogram_head_loss of: {self.histogram_head_loss}")
 
@@ -906,34 +976,47 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         self.h_token = self.metadata_df.filter(pl.col("code") == "[H]")["code/vocab_index"][-1]
         self.ntp_token = self.metadata_df.filter(pl.col("code") == "[NTP]")["code/vocab_index"][-1]
 
+        self.subvocab_h_token = self.metadata_df.filter(pl.col("code") == "[H]")["code/subvocab_index"][-1]
+        self.subvocab_ntp_token = self.metadata_df.filter(pl.col("code") == "[NTP]")["code/subvocab_index"][
+            -1
+        ]
+
         self.histogram_normalizer = HistogramNormalizer(
-            self.h_token,
-            self.ntp_token,
-            self.cfg.vocab_size,
+            self.subvocab_h_token,
+            self.subvocab_ntp_token,
+            self.cfg.subvocab_size,
             histogram_head_loss=self.cfg.histogram_head_loss,
             num_bits=self.cfg.n_bits,
             scale=self.cfg.scale,
+            use_diffusion=self.cfg.use_diffusion,
         )
         histogram_dim = self.histogram_normalizer.get_normalized_size()
 
-        # encoder_hidden_dims = [min(2 * self.cfg.token_dim, histogram_dim),
-        #                        min(4 * self.cfg.token_dim, histogram_dim),
-        #                        min(8 * self.cfg.token_dim, histogram_dim), histogram_dim]
-        # decoder_hidden_dims = [histogram_dim] * 4
-        encoder_hidden_dims = [32, 16]  # [self.cfg.token_dim] * 4
-        decoder_hidden_dims = [16, 32]  # [self.cfg.token_dim] * 1
         self.autoencoder = AutoencoderKL(
             embed_dim=2,
             input_dim=self.cfg.token_dim,
             num_bits=self.cfg.n_bits,
             output_dim=histogram_dim,
-            encoder_hidden_dims=encoder_hidden_dims,
-            decoder_hidden_dims=decoder_hidden_dims,
+            encoder_hidden_dims=self.cfg.encoder_dims,
+            decoder_hidden_dims=self.cfg.decoder_dims,
             use_variational=True,
             beta=self.cfg.beta,
-            warmup_steps=0,
-            annealing_steps=0,
+            warmup_steps=self.cfg.warmup_steps,
+            annealing_steps=self.cfg.annealing_steps,
             histogram_head_loss=self.cfg.histogram_head_loss,
+        )
+        self.subvocab_mapper = SubvocabMapper(metadata_df=self.metadata_df)
+
+        from meds_torch.models.diffusion_utils.diffloss import DiffLoss
+
+        self.diffusion = DiffLoss(
+            target_channels=histogram_dim,
+            z_channels=self.cfg.token_dim,
+            width=self.cfg.token_dim,
+            depth=12,
+            num_sampling_steps="100",
+            grad_checkpointing=False,
+            noise_schedule=self.cfg.diffusion_noise_schedule,
         )
 
     @TimeableMixin.TimeAs
@@ -1052,14 +1135,22 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
 
         with torch.no_grad():
             normalized_gt_histogram = self.histogram_normalizer.transform(target)
-        # Forward pass and loss computation
-        loss_dict = self.autoencoder.forward(
-            inputs=patch_embeddings.reshape(num_histogram_samples, -1).repeat(
-                self.cfg.histogram_batch_mul, 1
-            ),
-            outputs=normalized_gt_histogram.detach().repeat(self.cfg.histogram_batch_mul, 1),
-        )
-        loss = loss_dict["vae_loss"]
+        if self.cfg.use_diffusion:
+            loss = self.diffusion(
+                normalized_gt_histogram.detach().repeat(self.cfg.histogram_batch_mul, 1),
+                z=patch_embeddings.reshape(num_histogram_samples, -1).repeat(self.cfg.histogram_batch_mul, 1),
+            )
+            loss_dict = {"diffusion_loss": loss}
+        else:
+            # Forward pass and loss computation
+            repeated_histograms = normalized_gt_histogram.detach().repeat(self.cfg.histogram_batch_mul, 1)
+            loss_dict = self.autoencoder.forward(
+                inputs=patch_embeddings.reshape(num_histogram_samples, -1).repeat(
+                    self.cfg.histogram_batch_mul, 1
+                ),
+                outputs=repeated_histograms,
+            )
+            loss = loss_dict["vae_loss"]
         loss_dict = {"MODEL//" + k: v for k, v in loss_dict.items() if k != "vae_reconstruction"}
         assert not torch.isnan(loss).any(), "histogram loss is NaN"
         return loss, loss_dict
@@ -1098,15 +1189,16 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
     def _log(self, batch, split):
         on_step = split == "train"
         for loss_key in MODEL_LOSS_KEYS + [MODEL_LOSS_KEY]:
-            loss_name = "/" + loss_key.split("/")[-1].lower()
-            self.log(
-                split + loss_name,
-                batch[loss_key],
-                on_step=on_step,
-                on_epoch=True,
-                prog_bar=True,
-                logger=True,
-            )
+            if loss_key in batch:
+                loss_name = "/" + loss_key.split("/")[-1].lower()
+                self.log(
+                    split + loss_name,
+                    batch[loss_key],
+                    on_step=on_step,
+                    on_epoch=True,
+                    prog_bar=True,
+                    logger=True,
+                )
         if split == "train":
             self.train_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
         elif split == "val":
@@ -1735,7 +1827,8 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 full_logits[orig_indices[active_indices]] = logits
                 logits = full_logits
                 # mask logits given the prev_histogram
-                logits[~(prev_histogram > 0)] = -float("inf")
+                histogram_based_logit_mask = self.subvocab_mapper.from_subvocab_histogram(prev_histogram > 0)
+                logits[~histogram_based_logit_mask] = -float("inf")
 
                 embeddings = embeddings[:, -1, :]
                 full_embeddings = torch.zeros(
@@ -1744,11 +1837,16 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 full_embeddings[orig_indices[active_indices]] = embeddings
                 embeddings = full_embeddings
 
-                next_histogram_posterior = self.autoencoder.encode(embeddings)
-                next_ae_histogram_binary = self.autoencoder.decode(next_histogram_posterior.sample())
-                next_ae_histogram, count = self.histogram_normalizer.reverse_transform(
-                    next_ae_histogram_binary
-                )
+                if self.cfg.use_diffusion:
+                    next_ae_histogram, count = self.histogram_normalizer.reverse_transform(
+                        self.diffusion.sample(embeddings, temperature=temperature)
+                    )
+                else:
+                    next_histogram_posterior = self.autoencoder.encode(embeddings)
+                    next_ae_histogram_binary = self.autoencoder.decode(next_histogram_posterior.sample())
+                    next_ae_histogram, count = self.histogram_normalizer.reverse_transform(
+                        next_ae_histogram_binary
+                    )
 
                 # Update cache with pruned version
                 if cache_kv and transformer_decoder.can_cache_kv:
@@ -1778,7 +1876,9 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                     probs = F.softmax(filtered_logits / temperature, dim=-1)
                     sample = torch.multinomial(probs, 1)
 
-                one_hot_sample = torch.zeros_like(prev_histogram).scatter_(1, sample, 1)
+                # TODO: handle subvocab histogram vocabulary
+                subvocab_sample = self.subvocab_mapper.to_subvocab(sample)
+                one_hot_sample = torch.zeros_like(prev_histogram).scatter_(1, subvocab_sample, 1)
                 next_decrement_histogram = prev_histogram - one_hot_sample
 
                 h_token_histogram_mask = (
@@ -1874,13 +1974,20 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         last_embeddings = embeddings[:, -1]
 
         # Get histogram prediction using diffusion
-        latent_next_histogram_posterior = self.autoencoder.encode(last_embeddings)
-        next_histogram, counts = self.histogram_normalizer.reverse_transform(
-            self.autoencoder.decode(latent_next_histogram_posterior.sample())
-        )
+        if self.cfg.use_diffusion:
+            latent_next_histogram_posterior = None
+            next_histogram, counts = self.histogram_normalizer.reverse_transform(
+                self.diffusion.sample(last_embeddings, temperature=temperature)
+            )
+        else:
+            latent_next_histogram_posterior = self.autoencoder.encode(last_embeddings)
+            next_histogram, counts = self.histogram_normalizer.reverse_transform(
+                self.autoencoder.decode(latent_next_histogram_posterior.sample())
+            )
 
         # Mask token logits based on histogram
         prev_histogram = batch["histogram"][:, -1]
-        next_token_logits[~(prev_histogram > 0)] = -float("inf")
+        histogram_based_logit_mask = self.subvocab_mapper.from_subvocab_histogram(prev_histogram > 0)
+        next_token_logits[~histogram_based_logit_mask] = -float("inf")
 
         return next_token_logits, next_histogram, latent_next_histogram_posterior, counts, last_embeddings

@@ -9,3 +9,4 @@ token_bin_size: 8
 augmented_code_metadata_fp: ${data.cache_dir}/codes.parquet
 
 augmented_vocab_size: ${add_two:${data.vocab_size}}
+subvocab_size: ${add_two:${get_vocab_size:${data.code_metadata_fp}, ${data.postpend_token}, "code/subvocab_index"}}
