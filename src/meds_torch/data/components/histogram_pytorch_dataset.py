@@ -34,8 +34,8 @@ class SubvocabMapper:
 
         # Iterate over the rows to fill the mapping.
         # (Alternatively, if metadata_df is indexed by vocab_index, you could vectorize this.)
-        vocab_indices = metadata_df["code/vocab_index"].to_torch()
-        subvocab_indices = metadata_df["code/subvocab_index"].to_torch()
+        vocab_indices = metadata_df["code/vocab_index"].to_torch().long()
+        subvocab_indices = metadata_df["code/subvocab_index"].to_torch().long()
         vocab_to_subvocab[0] = 0
         vocab_to_subvocab[vocab_indices] = subvocab_indices
 
@@ -562,22 +562,35 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
     def __init__(self, cfg: DictConfig, split: str):
         super().__init__(cfg, split)
         self.cfg = cfg
-        if self.cfg.postpend_token != "none":
-            raise NotImplementedError(
-                f"postpend_token {self.cfg.postpend_token} not supported for HistogramPytorchDataset"
-            )
         Path(self.cfg.augmented_code_metadata_fp).parent.mkdir(parents=True, exist_ok=True)
-        if not Path(self.cfg.augmented_code_metadata_fp).exists():
+        if True or not Path(self.cfg.augmented_code_metadata_fp).exists():
             metadata_df = pl.read_parquet(self.cfg.code_metadata_fp)
-            h_token_index = metadata_df["code/vocab_index"].max() + 1
-            ntp_token_index = metadata_df["code/vocab_index"].max() + 2
-            h_histogram_index = metadata_df["code/subvocab_index"].max() + 1
-            ntp_histogram_index = metadata_df["code/subvocab_index"].max() + 2
             augmented_metadata_df_schema = {
                 k: v
                 for k, v in metadata_df.schema.items()
                 if k in {"code", "code/vocab_index", "code/subvocab_index"}
             }
+            if self.cfg.postpend_token != "none":
+                # TODO: Currently assumes that the largest subvocab index is the OTHER category
+                # and maps the EOS token to that category
+                metadata_df = pl.concat(
+                    [
+                        metadata_df,
+                        pl.DataFrame(
+                            {
+                                "code": ["[EOS]"],
+                                "code/vocab_index": [self.cfg.EOS_TOKEN_ID],
+                                "code/subvocab_index": [metadata_df["code/subvocab_index"].max()],
+                            },
+                            schema=augmented_metadata_df_schema,
+                        ),
+                    ],
+                    how="diagonal",
+                )
+            h_token_index = metadata_df["code/vocab_index"].max() + 1
+            ntp_token_index = metadata_df["code/vocab_index"].max() + 2
+            h_histogram_index = metadata_df["code/subvocab_index"].max() + 1
+            ntp_histogram_index = metadata_df["code/subvocab_index"].max() + 2
             augmented_metadata_df = pl.DataFrame(
                 {
                     "code": ["[H]", "[NTP]"],

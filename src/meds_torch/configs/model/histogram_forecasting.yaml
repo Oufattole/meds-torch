@@ -46,6 +46,7 @@ prune_terminated: true
 token_insertion_strategy: ${data.token_insertion_strategy}
 token_bin_size: ${data.token_bin_size}
 n_bits: 8
+max_count: 8
 scale: 1.0
 histogram_batch_mul: 1
 beta: 1e-3

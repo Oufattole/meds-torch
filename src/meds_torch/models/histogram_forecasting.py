@@ -989,6 +989,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             num_bits=self.cfg.n_bits,
             scale=self.cfg.scale,
             use_diffusion=self.cfg.use_diffusion,
+            max_count=self.cfg.max_count,
         )
         histogram_dim = self.histogram_normalizer.get_normalized_size()
 
