@@ -298,8 +298,8 @@ def pad_array(arr, max_len):
 
 
 import torch
-from torchmetrics import Metric, MetricCollection, MeanSquaredError
-from torchmetrics.classification import MulticlassAccuracy, MulticlassAUROC, BinaryAUROC
+from torchmetrics import MeanSquaredError
+from torchmetrics.classification import BinaryAUROC
 
 
 class NextTokenPredictionMetric(Metric):
@@ -383,7 +383,7 @@ class NextTokenPredictionMetric(Metric):
         Update the metric state with batch statistics.
 
         Args:
-            logits (torch.Tensor): Predicted logits from the model, shape (batch_size, seq_length, vocab_size).
+            logits (torch.Tensor): Predicted logits, shape (batch_size, seq_length, vocab_size).
             targets (torch.Tensor): Ground truth labels, shape (batch_size, seq_length).
             mask (torch.Tensor): Mask to ignore padded elements, shape (batch_size, seq_length).
 
@@ -487,18 +487,23 @@ class CodeSpecificNextTokenPredictionMetric(Metric):
     {'A|A//*/auroc': tensor(1.), 'A|A//*/mse': tensor(0.2500)}
     """
 
-    def __init__(self, metadata_df: pl.DataFrame, vocab_size: int, user_defined_code_regex: str, dist_sync_on_step=False):
+    def __init__(
+        self,
+        metadata_df: pl.DataFrame,
+        vocab_size: int,
+        user_defined_code_regex: str,
+        dist_sync_on_step=False,
+    ):
         super().__init__(dist_sync_on_step=dist_sync_on_step)
 
         self.codes = (
             metadata_df.filter(pl.col("code").str.contains(user_defined_code_regex))
-                       .select("code/vocab_index")
-                       .to_torch()
+            .select("code/vocab_index")
+            .to_torch()
         )
         self.numeric_codes = (
             metadata_df.filter(
-                pl.col("code").str.contains(user_defined_code_regex)
-                & pl.col("values/sum").is_not_null()
+                pl.col("code").str.contains(user_defined_code_regex) & pl.col("values/sum").is_not_null()
             )
             .select("code/vocab_index")
             .to_torch()
@@ -535,17 +540,13 @@ class CodeSpecificNextTokenPredictionMetric(Metric):
         ground_truth_codes = shifted_targets[shifted_mask & is_numeric_code].view(-1)
         ground_truth_values = self.code_to_numeric_value_map[ground_truth_codes].to(probs.device)
 
-        self.mse_metric.update(
-            predicted_value[is_numeric_code[shifted_mask].view(-1)],
-            ground_truth_values
-        )
+        self.mse_metric.update(predicted_value[is_numeric_code[shifted_mask].view(-1)], ground_truth_values)
 
     def compute(self):
         return {
             f"{self.user_defined_code_regex}/auroc": self.auc_metric.compute(),
             f"{self.user_defined_code_regex}/mse": self.mse_metric.compute(),
         }
-
 
 
 class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
@@ -1110,7 +1111,7 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
                 input_batch[MODEL_PREFIX + "STATUS"] = status
                 unknown = status != WindowStatus.SATISFIED.value
                 # Handle unknown values by setting their probability to 0.5
-                if unknown.any().item() > 0:
+                if unknown.any().item() > 0 and labels is not None:
                     logger.warning(f"Found {unknown.sum().item()} unknown zero-shot predictions")
                     labels[unknown] = 0.5
                 input_batch[MODEL_PRED_PROBA_KEY] = labels

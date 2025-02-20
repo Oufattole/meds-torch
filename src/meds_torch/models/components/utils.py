@@ -165,7 +165,6 @@ class TrajectoryBatch:
             how="left",
             left_on="code",
             right_on="code/vocab_index",
-            maintain_order="left",
         ).rename({"code_right": "code", "code": "code/vocab_index"})
 
         return df["subject_id", "prediction_time", "time", "code", "code/vocab_index", "numeric_value"]
