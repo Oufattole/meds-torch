@@ -1020,6 +1020,12 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             noise_schedule=self.cfg.diffusion_noise_schedule,
         )
 
+        EOS_TOKENS = self.metadata_df.filter(pl.col("code") == "[EOS]")["code/vocab_index"]
+        if len(EOS_TOKENS) >= 1:
+            self.EOS_TOKEN_ID = EOS_TOKENS[-1]
+        else:
+            self.EOS_TOKEN_ID = None
+
     @TimeableMixin.TimeAs
     def get_loss(self, batch):
         return self.get_loss_no_filter(batch)
@@ -1627,7 +1633,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 input_batch[MODEL_PREFIX + "STATUS"] = status
                 unknown = status != WindowStatus.SATISFIED.value
                 # Handle unknown values by setting their probability to 0.5
-                if unknown.any().item() > 0:
+                if unknown.any().item() > 0 and labels is not None:
                     logger.warning(f"Found {unknown.sum().item()} unknown zero-shot predictions")
                     labels[unknown] = 0.5
                 input_batch[MODEL_PRED_PROBA_KEY] = labels
@@ -1759,7 +1765,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         out_lengths = torch.zeros(b, dtype=torch.int32)
         metadata = None
         status = None
-        log_progress = False
+
         progress = (
             Progress(
                 TextColumn("[progress.description]{task.description} {task.completed}"),
@@ -1872,6 +1878,10 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                     mask[is_histogram_only_h_o_tokens.squeeze(-1) & has_h_token, self.h_token] = True
                     can_sample_o = is_histogram_only_h_o_tokens & ~has_h_token & has_o_token
                     mask[can_sample_o.squeeze(-1), self.ntp_token] = True
+
+                    # Always allow censored token sampling
+                    if self.EOS_TOKEN_ID is not None:
+                        mask[~is_histogram_only_h_o_tokens, self.EOS_TOKEN_ID] = True
 
                     filtered_logits = filtered_logits.masked_fill(~mask, float("-inf"))
                     probs = F.softmax(filtered_logits / temperature, dim=-1)

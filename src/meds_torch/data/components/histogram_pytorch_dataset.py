@@ -74,6 +74,8 @@ class SubvocabMapper:
             torch.BoolTensor: A boolean tensor of shape (L, S) if input was (L, S') or (B, L, S)
                 if input was (B, L, S'), where S is the vocabulary size.
         """
+        if sub_hist.device != self.vocab_to_subvocab.device:
+            self.vocab_to_subvocab = self.vocab_to_subvocab.to(sub_hist.device)
         # Determine if we have a batch dimension
         if sub_hist.ndim == 2:
             # Shape is (L, S'), add a batch dimension
