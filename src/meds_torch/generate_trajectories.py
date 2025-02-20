@@ -170,6 +170,7 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     log.info(f"Instantiating datamodule <{cfg.data._target_}>")
     if not datamodule:
         datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data)
+    datamodule.setup()
 
     log.info(f"Instantiating model <{cfg.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.model)
