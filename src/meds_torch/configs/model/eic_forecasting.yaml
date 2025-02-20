@@ -25,7 +25,8 @@ generate_id: null # null means no sampling, otherwise uses this id to generate t
 store_generated_trajectory: true # whether to store generated trajectory in the batch
 # set to false to speed up zero-shot generation
 temperature: 1.0 # sampling temperature
-eos_tokens: null
+eos_tokens:
+  - ${data.EOS_TOKEN_ID}
 log_progress: true
 
 # Autoregressive modeling metric params
