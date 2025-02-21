@@ -706,6 +706,16 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         else:
             return batch
 
+    def predict_step(self, batch):
+        batch = self(batch, False)
+        gen_key = GENERATE_PREFIX + str(self.cfg.generate_id)
+        output = {gen_key: batch[gen_key]}
+        if MODEL_PRED_STATUS_KEY in batch:
+            output[MODEL_PRED_STATUS_KEY] = batch[MODEL_PRED_STATUS_KEY]
+        if MODEL_PRED_PROBA_KEY in batch:
+            output[MODEL_PRED_PROBA_KEY] = batch[MODEL_PRED_PROBA_KEY]
+        return output
+
     def training_step(self, batch):
         batch = self(batch, True)
         assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"

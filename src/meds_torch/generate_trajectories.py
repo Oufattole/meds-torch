@@ -257,7 +257,7 @@ def main(cfg: DictConfig) -> None:
     os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
     configure_logging(cfg)
     if cfg.do_manual_gpu_scheduling:
-        gpu_id = HydraConfig.get().job.num % HydraConfig.get().launcher.n_jobs
+        gpu_id = HydraConfig.get().job.num % HydraConfig.get().launcher.n_jobs % len(cfg.trainer.devices)
         cfg.trainer.devices = [cfg.trainer.devices[gpu_id]]
         loguru.logger.info(f"Using gpu ids: {cfg.trainer.devices}")
     map_generations(cfg)
