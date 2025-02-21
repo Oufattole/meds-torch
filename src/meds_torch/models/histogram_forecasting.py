@@ -1919,7 +1919,6 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
 
                 # Append new tokens
                 code = torch.cat((code, sample), dim=-1)
-                histogram = torch.cat((histogram, next_histogram.unsqueeze(1)), dim=1)
                 next_sample_embedding = self.input_encoder.process_sample(sample, next_histogram.unsqueeze(1))
                 out = torch.cat((out, next_sample_embedding), dim=1)
 
