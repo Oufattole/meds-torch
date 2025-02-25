@@ -224,7 +224,7 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
 
 
 def map_generations(cfg):
-    for generate_id in range(cfg.num_samples):
+    for generate_id in range(cfg.min_sample_id, cfg.num_samples):
         cfg.model.generate_id = generate_id
 
         def read_fn(_):
