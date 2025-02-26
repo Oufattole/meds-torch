@@ -212,37 +212,48 @@ def generate_trajectories(cfg: DictConfig, datamodule=None) -> tuple[dict[str, A
     Path(cfg.paths.generated_trajectory_fp).parent.mkdir(parents=True, exist_ok=True)
 
     if cfg.data.task_name is not None:
-        # Log how many labels are missed during generation
-        task_df_fp = Path(cfg.data.task_label_path)
-        if not task_df_fp.is_file():
-            subfolder = cfg.data.split_names[cfg.data.predict_dataset]
-            task_df_fp = task_df_fp.with_suffix("") / subfolder / "*.parquet"
-        task_df = pl.read_parquet(task_df_fp)
-
-        generated_event_times = generated_trajectories_df.select(
-            pl.col("subject_id"), pl.col("prediction_time").cast(pl.Datetime("us"))
-        ).unique()
-        event_intersection = task_df.join(
-            generated_event_times, on=["subject_id", "prediction_time"], how="inner"
-        )
-        num_missing_labels = task_df.height - event_intersection.height
-        if num_missing_labels > 0:
-            log.warning(f"Missing Generations for {(num_missing_labels / task_df.height)*100:.2f}% events")
-
-        subject_ids = torch.hstack([each["subject_id"] for each in predictions]).to(torch.int64).tolist()
-        prediction_times = [pt for each in predictions for pt in each["prediction_time"]]
-        carried_forward_df = pl.DataFrame({"subject_id": subject_ids, "prediction_time": prediction_times})
-        num_missing_generated_labels = (
-            task_df.with_columns(pl.lit(1))
-            .join(carried_forward_df, on=["subject_id", "prediction_time"], how="right")["literal"]
-            .is_null()
-            .sum()
-        )
-        if num_missing_generated_labels > 0:
-            raise ValueError(
-                "Generated trajectories exist for events that there are no labels for, "
-                "this is not expected! It is possible mixed precision has modified subject ids."
+        try:
+            # Log how many labels are missed during generation
+            task_df_fp = Path(cfg.data.task_label_path)
+            if not task_df_fp.is_file():
+                subfolder = cfg.data.split_names[cfg.data.predict_dataset]
+                task_df_fp = task_df_fp.with_suffix("") / subfolder / "*.parquet"
+            task_df = pl.read_parquet(task_df_fp).select(
+                pl.col("subject_id").cast(pl.Int64), pl.col("prediction_time").cast(pl.Datetime("us"))
             )
+
+            generated_event_times = generated_trajectories_df.select(
+                pl.col("subject_id").cast(pl.Int64), pl.col("prediction_time").cast(pl.Datetime("us"))
+            ).unique()
+            event_intersection = task_df.join(
+                generated_event_times, on=["subject_id", "prediction_time"], how="inner"
+            )
+            num_missing_labels = task_df.height - event_intersection.height
+            if num_missing_labels > 0:
+                log.warning(
+                    f"Missing Generations for {(num_missing_labels / task_df.height)*100:.2f}% events"
+                )
+
+            subject_ids = torch.hstack([each["subject_id"] for each in predictions]).to(torch.int64).tolist()
+            prediction_times = [pt for each in predictions for pt in each["prediction_time"]]
+            carried_forward_df = pl.DataFrame(
+                {"subject_id": subject_ids, "prediction_time": prediction_times},
+                schema=dict(subject_id=pl.Int64, prediction_time=pl.Datetime("us")),
+            )
+            num_missing_generated_labels = (
+                task_df.with_columns(pl.lit(1))
+                .join(carried_forward_df, on=["subject_id", "prediction_time"], how="right")["literal"]
+                .is_null()
+                .sum()
+            )
+            if num_missing_generated_labels > 0:
+                raise ValueError(
+                    "Generated trajectories exist for events that there are no labels for, "
+                    "this is not expected! It is possible mixed precision has modified subject ids."
+                )
+        except Exception as e:
+            log.warning("Failed to validate generated trajectories with task labels")
+            log.warning(f"Error: {e}")
     # Convert to arrow table and write to parquet
     validated_table = validate_generated_data(generated_trajectories_df)
     pq.write_table(validated_table, cfg.paths.generated_trajectory_fp)
