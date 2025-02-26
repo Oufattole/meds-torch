@@ -7,6 +7,7 @@ validated_df = validate_generated_data(df)
 """
 from collections import OrderedDict
 
+import polars as pl
 import pyarrow as pa
 
 # Define struct fields in a fixed order using OrderedDict
@@ -76,12 +77,16 @@ def validate_generated_data(df):
     # Get the validated schema
     validated_schema = generation_analysis_schema()
 
+    # Ensure columns are in the correct order
+    df = df.select(validated_schema.names)
+
+    # Cast datetimes to us
+    df = df.with_columns(
+        pl.col("prediction_time").cast(pl.Datetime("us")), pl.col("time").cast(pl.Datetime("us"))
+    )
+
     # Convert to arrow
     arrow_table = df.to_arrow()
-
-    # Ensure columns are in the correct order
-    expected_columns = validated_schema.names
-    arrow_table = arrow_table.select(expected_columns)
 
     # Cast to the validated schema (this will handle struct field ordering)
     return arrow_table.cast(validated_schema)

@@ -710,10 +710,9 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         batch = self(batch, False)
         gen_key = GENERATE_PREFIX + str(self.cfg.generate_id)
         output = {gen_key: batch[gen_key]}
-        if MODEL_PRED_STATUS_KEY in batch:
-            output[MODEL_PRED_STATUS_KEY] = batch[MODEL_PRED_STATUS_KEY]
-        if MODEL_PRED_PROBA_KEY in batch:
-            output[MODEL_PRED_PROBA_KEY] = batch[MODEL_PRED_PROBA_KEY]
+        for k in [MODEL_PRED_STATUS_KEY, MODEL_PRED_PROBA_KEY, "subject_id", "prediction_time", "end_time"]:
+            if k in batch:
+                output[k] = batch[k]
         return output
 
     def training_step(self, batch):
