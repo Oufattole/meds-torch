@@ -664,9 +664,20 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
         tensorized["code"] = torch.nn.utils.rnn.pad_sequence(codes, batch_first=True)
         tensorized["mask"] = torch.nn.utils.rnn.pad_sequence(masks, batch_first=True)
         tensorized["histogram"] = torch.nn.utils.rnn.pad_sequence(histograms, batch_first=True)
+
+        if "subject_id" in batch[0].keys():
+            tensorized["subject_id"] = torch.LongTensor([item["subject_id"] for item in batch])
+
         # Add task labels to batch
         for k in batch[0].keys():
-            if k not in ("dynamic", "static_values", "static_indices", "static_mask", "cum_sum"):
+            if k not in (
+                "dynamic",
+                "static_values",
+                "static_indices",
+                "static_mask",
+                "cum_sum",
+                "subject_id",
+            ):
                 if isinstance(batch[0][k], datetime):
                     tensorized[k] = [item[k] for item in batch]
                 else:
