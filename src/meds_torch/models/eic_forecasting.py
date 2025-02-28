@@ -12,6 +12,8 @@ from torchmetrics import Metric, MetricCollection
 from torchmetrics.classification import MulticlassAccuracy, MulticlassAUROC
 from x_transformers import Decoder, TransformerWrapper
 from x_transformers.autoregressive_wrapper import eval_decorator
+from meds_torch.models.components.utils import get_last_token
+
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models import (
@@ -26,6 +28,7 @@ from meds_torch.models import (
     MODEL_PRED_STATUS_KEY,
     MODEL_PREFIX,
     MODEL_TOKENS_KEY,
+    MODEL_LOGITS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components.utils import TrajectoryBatch, get_time_days_delta
@@ -681,6 +684,8 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         if self.cfg.return_logits:
             batch[MODEL_LOGITS_SEQUENCE_KEY] = forecast[CODE_LOGITS]
         batch[CODE_LOGITS] = forecast[CODE_LOGITS]
+        if keep_code_logits:
+            batch[MODEL_LOGITS_KEY] = get_last_token(forecast[CODE_LOGITS], ~(batch["mask"].to(torch.bool)))
 
         code_loss = self.get_loss(batch)
         batch[MODEL_LOSS_KEY] = code_loss
