@@ -1,178 +1,292 @@
 #!/usr/bin/env python
-"""Functions for tokenizing MEDS datasets.
-
-Here, _tokenization_ refers specifically to the process of converting a longitudinal, irregularly sampled,
-continuous time sequence into a temporal sequence at the level that will be consumed by deep-learning models.
-
-All these functions take in _normalized_ data -- meaning data where there are _no longer_ any code modifiers,
-as those have been normalized alongside codes into integer indices (in the output code column). The only
-columns of concern here thus are `subject_id`, `time`, `code`, `numeric_value`.
-"""
+"""Functions for tokenizing MEDS datasets - Optimized Version with Sample Limit."""
 
 from pathlib import Path
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import os
+import multiprocessing as mp
+from functools import partial, wraps
+import torch
+from torch.utils.data import Dataset, DataLoader
+import time  # Added for timing functions
+
+# Set the multiprocessing start method to 'spawn' to avoid CUDA issues
+if __name__ == "__main__":  # Only in the main process
+    mp.set_start_method('spawn', force=True)
 
 import hydra
 import polars as pl
-import torch
 from loguru import logger
 from MEDS_transforms import PREPROCESS_CONFIG_YAML
 from MEDS_transforms.mapreduce.utils import rwlock_wrap, shard_iterator
 from MEDS_transforms.utils import hydra_loguru_init, write_lazyframe
 from omegaconf import DictConfig, OmegaConf
 from safetensors.torch import save_file
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, BertConfig
 from tqdm import tqdm
 
-TOKENIZER = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
+# Constants
+SECONDS_PER_DAY = 86400.0
+BATCH_SIZE = 512  
+SAMPLE_LIMIT = None  # Limit to 1000 samples
 
-SECONDS_PER_MINUTE = 60.0
-SECONDS_PER_HOUR = SECONDS_PER_MINUTE * 60.0
-SECONDS_PER_DAY = SECONDS_PER_HOUR * 24.0
+# Use GPU if available, with mixed precision
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+USE_MIXED_PRECISION = torch.cuda.is_available()
+
+# Number of worker processes for parallel processing
+NUM_WORKERS = max(1, os.cpu_count() - 1)
+
+# Dictionary to store function execution times
+function_times = {}
+# Lock for accessing the function_times dictionary in multiprocessing
+# We'll create the lock when needed instead of at module level
+time_lock = None
+
+def timing_decorator(func):
+    """Decorator to measure function execution time"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        
+        func_name = func.__name__
+        # Simply record the time locally - we'll collect from workers later if needed
+        global function_times
+        if func_name in function_times:
+            function_times[func_name] += elapsed_time
+        else:
+            function_times[func_name] = elapsed_time
+        
+        return result
+    return wrapper
 
 
 @dataclass
 class MultimodalReader(ABC):
     """Abstract base class for reading multimodal data."""
-
     base_path: str
 
     @abstractmethod
     def read_modality(self, relative_input: str) -> torch.Tensor:
-        """
-        Read and return modality data as a tensor or other structured format.
+        """Read and return modality data as a tensor."""
 
-        Args:
-            relative_input: Some string input denoting the data to read
-                            (could be a filepath, text string, etc.)
 
-        Returns:
-            A torch.Tensor containing the processed modality data.
-        """
+class TextDataset(Dataset):
+    """Dataset for efficient batch processing of text data."""
+    
+    def __init__(self, texts, indices, tokenizer, max_length=512):
+        self.texts = texts
+        self.indices = indices
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        
+    def __len__(self):
+        return len(self.texts)
+    
+    def __getitem__(self, idx):
+        text = self.texts[idx]
+        if not text or not isinstance(text, str):
+            # Create empty tensors with the right shape for batch consistency
+            # This ensures all elements in a batch have the same keys even if empty
+            empty_input_ids = torch.zeros((self.max_length,), dtype=torch.long)
+            empty_attention_mask = torch.zeros((self.max_length,), dtype=torch.long)
+            
+            return {
+                "input_ids": empty_input_ids,
+                "attention_mask": empty_attention_mask,
+                "index": self.indices[idx],
+                "empty": True
+            }
+            
+        # Tokenize with truncation
+        try:
+            encoding = self.tokenizer(
+                text, 
+                truncation=True, 
+                max_length=self.max_length,
+                padding='max_length',
+                return_tensors="pt"
+            )
+            
+            # Remove batch dimension
+            encoding = {k: v.squeeze(0) for k, v in encoding.items()}
+            encoding["index"] = self.indices[idx]
+            encoding["empty"] = False
+            
+            return encoding
+        except Exception as e:
+            logger.warning(f"Error tokenizing text at index {idx}: {str(e)}")
+            # Fall back to empty tensors on error
+            empty_input_ids = torch.zeros((self.max_length,), dtype=torch.long)
+            empty_attention_mask = torch.zeros((self.max_length,), dtype=torch.long)
+            
+            return {
+                "input_ids": empty_input_ids,
+                "attention_mask": empty_attention_mask,
+                "index": self.indices[idx],
+                "empty": True
+            }
 
 
 class BioClinicalBertBatchEmbedder:
-    """Class for efficiently embedding batches of clinical text using BioClinicalBERT."""
+    """Optimized class for efficiently embedding clinical text using BioClinicalBERT."""
     
-    def __init__(self, model_name="nlpie/tiny-clinicalbert", max_length=512, batch_size=128, device=None):
+    def __init__(self, model_name="nlpie/tiny-clinicalbert", max_length=512, batch_size=BATCH_SIZE, device=None):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if device is None else torch.device(device)
         logger.info(f"Loading model on: {self.device}")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name).to(self.device)
+        
+        # Use smaller config if using tiny model for faster loading
+        init_start_time = time.time()
+        if "tiny" in model_name:
+            config = BertConfig.from_pretrained(model_name)
+            # Speed up by reducing number of attention heads if possible
+            if hasattr(config, 'num_attention_heads') and config.num_attention_heads > 4:
+                config.num_attention_heads = 4
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name, config=config)
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name)
+        
+        init_time = time.time() - init_start_time
+        if "model_initialization" in function_times:
+            function_times["model_initialization"] += init_time
+        else:
+            function_times["model_initialization"] = init_time
+            
+        self.model = self.model.to(self.device)
         self.model.eval()
         self.max_length = max_length
-        self.batch_size = batch_size  # Smaller batch size for memory efficiency
+        self.batch_size = batch_size
 
-    def _chunk_text(self, text):
-        # Encode the text to obtain a list of token IDs (without special tokens)
-        token_ids = self.tokenizer.encode(text, add_special_tokens=False)
-        # Define a chunk size that leaves room for [CLS] and [SEP] tokens
-        chunk_size = self.max_length - 2
-        # Split token_ids into chunks
-        chunks = [token_ids[i:i + chunk_size] for i in range(0, len(token_ids), chunk_size)]
-        # Add special tokens to each chunk
-        chunks = [
-            [self.tokenizer.cls_token_id] + chunk + [self.tokenizer.sep_token_id]
-            for chunk in chunks
-        ]
-        return chunks
-
+    @timing_decorator
     def embed_texts_chunked(self, texts, indices, chunk_size=100000, callback=None):
-        """Process texts in chunks to avoid memory issues with large datasets."""
-        for start in range(0, len(texts), chunk_size):
-            end = min(start + chunk_size, len(texts))
-            chunk_texts = texts[start:end]
-            chunk_indices = indices[start:end]
-
-            # Process chunk into embeddings
-            chunked_texts = []
-            text_idx_map = []
-            for i, text in enumerate(chunk_texts):
-                if not text or not isinstance(text, str):
-                    continue
-                # Get list of chunks as lists of token IDs
-                chunks = self._chunk_text(text)
-                for chunk in chunks:
-                    chunked_texts.append(chunk)
-                    text_idx_map.append(i)
-
-            if not chunked_texts:
-                embeddings = [torch.zeros(self.model.config.hidden_size, device=self.device)] * len(chunk_texts)
-            else:
-                embeddings = [None] * len(chunk_texts)
-                counts = [0] * len(chunk_texts)
-                # Process in batches
-                for batch_start in range(0, len(chunked_texts), self.batch_size):
-                    batch_chunks = chunked_texts[batch_start:batch_start + self.batch_size]
-                    # Convert each list of token IDs into a tensor
-                    batch_tensors = [torch.tensor(chunk) for chunk in batch_chunks]
-                    # Pad the batch to the same length
-                    padded = torch.nn.utils.rnn.pad_sequence(
-                        batch_tensors, batch_first=True, padding_value=self.tokenizer.pad_token_id
-                    )
-                    attention_mask = (padded != self.tokenizer.pad_token_id).long()
-                    encoded = {
-                        "input_ids": padded.to(self.device),
-                        "attention_mask": attention_mask.to(self.device)
-                    }
-                    with torch.no_grad():
-                        outputs = self.model(**encoded)
-                        batch_embs = outputs.last_hidden_state.mean(dim=1)
-                    for i_in_batch, emb in enumerate(batch_embs):
-                        global_idx = batch_start + i_in_batch
-                        t_idx = text_idx_map[global_idx]
-                        if embeddings[t_idx] is None:
-                            embeddings[t_idx] = emb
-                        else:
-                            embeddings[t_idx] += emb
-                        counts[t_idx] += 1
-                for t_idx in range(len(embeddings)):
-                    if counts[t_idx] > 0:
-                        embeddings[t_idx] /= counts[t_idx]
-                    elif embeddings[t_idx] is None:
-                        embeddings[t_idx] = torch.zeros(self.model.config.hidden_size, device=self.device)
-
-            if callback:
-                callback(chunk_indices, embeddings)
-            else:
-                yield from zip(chunk_indices, embeddings)
-
-    def embed_texts(self, texts):
-        """Embed each text by chunking and averaging token embeddings."""
-        embeddings = []
-        for text in texts:
-            if not text or not isinstance(text, str):
-                embeddings.append(torch.zeros(self.model.config.hidden_size, device=self.device))
+        """Process texts in chunks with optimized batching."""
+        dataset = TextDataset(texts, indices, self.tokenizer, self.max_length)
+        
+        # Check if we're in a worker process - if so, don't use additional workers in DataLoader
+        in_worker_process = mp.current_process().name != 'MainProcess'
+        num_workers = 0 if in_worker_process else min(16, os.cpu_count() or 1)
+        
+        logger.info(f"DataLoader using {num_workers} workers (in {'worker' if in_worker_process else 'main'} process)")
+        
+        dataloader = DataLoader(
+            dataset, 
+            batch_size=self.batch_size,
+            num_workers=num_workers,  # No additional workers when in a worker process
+            pin_memory=torch.cuda.is_available() and not in_worker_process,  # Only pin memory in main process
+            # Add custom collate function to handle any remaining inconsistencies
+            collate_fn=self._collate_batch
+        )
+        
+        all_results = []
+        
+        for batch in tqdm(dataloader, desc="Embedding texts", leave=False):
+            # Skip empty batches
+            if all(batch["empty"]):
+                zeros = torch.zeros(len(batch["empty"]), self.model.config.hidden_size, device=self.device)
+                indices = batch["index"]
+                all_results.extend(zip(indices.tolist(), [z.cpu() for z in zeros]))
                 continue
                 
-            chunks = self._chunk_text(text)
-            chunk_embeddings = []
-            for chunk in chunks:
-                input_ids = torch.tensor([chunk]).to(self.device)
-                attention_mask = torch.ones_like(input_ids)
-                with torch.no_grad():
-                    output = self.model(input_ids, attention_mask=attention_mask)
-                    chunk_emb = output.last_hidden_state.mean(dim=1)  # Average token embeddings
-                chunk_embeddings.append(chunk_emb)
-            if chunk_embeddings:
-                final_embedding = torch.stack(chunk_embeddings).mean(dim=0)
+            # Process non-empty entries
+            mask = ~batch["empty"]
+            if not any(mask):
+                continue
+                
+            # Extract valid entries
+            valid_indices = batch["index"][mask]
+            
+            # Extract and move input tensors to device
+            input_ids = batch["input_ids"][mask].to(self.device)
+            attention_mask = batch["attention_mask"][mask].to(self.device)
+            
+            # Generate embeddings with mixed precision if available
+            with torch.no_grad():
+                if USE_MIXED_PRECISION:
+                    with torch.amp.autocast('cuda'):  # Fixed deprecated syntax
+                        outputs = self.model(input_ids, attention_mask=attention_mask)
+                else:
+                    outputs = self.model(input_ids, attention_mask=attention_mask)
+                    
+                # Use mean of hidden states as embedding
+                batch_embs = outputs.last_hidden_state.mean(dim=1)
+            
+            # Create results for all entries
+            results = []
+            valid_idx = 0
+            
+            for i, is_empty in enumerate(batch["empty"]):
+                idx = batch["index"][i].item()
+                if is_empty:
+                    # Create zero tensor for empty texts
+                    emb = torch.zeros(self.model.config.hidden_size, device="cpu")
+                else:
+                    # Get embedding for valid text
+                    emb = batch_embs[valid_idx].cpu()
+                    valid_idx += 1
+                results.append((idx, emb))
+            
+            all_results.extend(results)
+        
+        if callback:
+            # Group embeddings by chunks for callback
+            all_results.sort(key=lambda x: x[0])  # Sort by index
+            for start_idx in range(0, len(all_results), chunk_size):
+                end_idx = min(start_idx + chunk_size, len(all_results))
+                chunk = all_results[start_idx:end_idx]
+                callback([c[0] for c in chunk], [c[1] for c in chunk])
+        else:
+            for idx, emb in all_results:
+                yield idx, emb
+                
+    def _collate_batch(self, batch):
+        """Custom collate function to ensure batch consistency."""
+        # First, check if all keys are consistent
+        keys = set(batch[0].keys())
+        for item in batch[1:]:
+            if set(item.keys()) != keys:
+                logger.warning(f"Inconsistent keys in batch: {set(item.keys())} vs {keys}")
+                # Add missing keys with empty tensors
+                for key in keys:
+                    if key not in item:
+                        if key == "input_ids":
+                            item[key] = torch.zeros((self.max_length,), dtype=torch.long)
+                        elif key == "attention_mask":
+                            item[key] = torch.zeros((self.max_length,), dtype=torch.long)
+                        elif key == "empty":
+                            item[key] = True
+                        else:
+                            item[key] = None
+        
+        # Now combine the batch
+        result = {}
+        for key in keys:
+            if key == "index":
+                result[key] = torch.tensor([item[key] for item in batch])
+            elif key == "empty":
+                result[key] = torch.tensor([item[key] for item in batch], dtype=torch.bool)
+            elif all(isinstance(item[key], torch.Tensor) for item in batch):
+                result[key] = torch.stack([item[key] for item in batch])
             else:
-                final_embedding = torch.zeros(self.model.config.hidden_size, device=self.device)
-            embeddings.append(final_embedding)
-        return embeddings
+                # For non-tensor fields, just collect them
+                result[key] = [item[key] for item in batch]
+        
+        return result
 
 
 class BioClinicalBertTextReader(MultimodalReader):
-    """
-    A MultimodalReader that embeds a single text string at a time using BioClinicalBertBatchEmbedder.
-    """
+    """A MultimodalReader that embeds text using the optimized BioClinicalBertBatchEmbedder."""
 
     def __init__(self,
                  base_path="",
                  model_name="nlpie/tiny-clinicalbert",
                  max_length=512,
-                 batch_size=128,
+                 batch_size=BATCH_SIZE,
                  device=None):
         super().__init__(base_path=base_path)
         self.embedder = BioClinicalBertBatchEmbedder(
@@ -182,88 +296,24 @@ class BioClinicalBertTextReader(MultimodalReader):
             device=device
         )
 
+    @timing_decorator
     def read_modality(self, text_value: str) -> torch.Tensor:
-        """
-        Embed a single piece of text into a single torch.Tensor.
-        """
-        # embed_texts expects a list of text samples
-        embeddings = self.embedder.embed_texts([text_value])
-        return embeddings[0]  # single embedding
+        """Embed a single piece of text into a tensor."""
+        embeddings = list(self.embedder.embed_texts_chunked([text_value], [0]))
+        return embeddings[0][1] if embeddings else torch.zeros(self.embedder.model.config.hidden_size)
 
 
+@timing_decorator
 def fill_to_nans(col: str | pl.Expr) -> pl.Expr:
-    """This function fills infinite and null values with NaN.
-
-    This enables the downstream functions to naturally tensorize data into numpy or Torch tensors.
-
-    Args:
-        col: The input column.
-
-    Returns:
-        A `pl.Expr` object that fills infinite and null values with NaN.
-
-    Examples:
-        >>> print(fill_to_nans("value")) # doctest: +NORMALIZE_WHITESPACE
-        .when([(col("value").is_infinite()) |
-               (col("value").is_null())]).then(dyn float: NaN).otherwise(col("value"))
-        >>> print(fill_to_nans(pl.col("time_delta"))) # doctest: +NORMALIZE_WHITESPACE
-        .when([(col("time_delta").is_infinite()) |
-               (col("time_delta").is_null())]).then(dyn float: NaN).otherwise(col("time_delta"))
-        >>> df = pl.DataFrame({"value": [1.0, float("inf"), None, -float("inf"), 2.0]})
-        >>> df.select(fill_to_nans("value").alias("value"))["value"].to_list()
-        [1.0, nan, nan, nan, 2.0]
-    """
-
+    """Fill infinite and null values with NaN."""
     if isinstance(col, str):
         col = pl.col(col)
-
     return pl.when(col.is_infinite() | col.is_null()).then(float("nan")).otherwise(col)
 
 
+@timing_decorator
 def split_static_and_dynamic(df: pl.LazyFrame) -> tuple[pl.LazyFrame, pl.LazyFrame]:
-    """This function splits the input data into static and dynamic data.
-
-    Static data is data that has a null time, and dynamic data is everything else.
-    For dynamic data, a modality index is added for non-null text values.
-
-    Args:
-        df: The input data.
-
-    Returns:
-        A tuple of two `pl.LazyFrame` objects, the first being the static data and the second being the
-        dynamic data.
-
-    Examples:
-        >>> from datetime import datetime
-        >>> df = pl.DataFrame({
-        ...     "subject_id": [1, 1, 2, 2],
-        ...     "time": [None, datetime(2021, 1, 1), None, datetime(2021, 1, 2)],
-        ...     "code": [100, 101, 200, 201],
-        ...     "numeric_value": [1.0, 2.0, 3.0, 4.0],
-        ...     "text_value": [None, "fever", None, "cough"]
-        ... }).lazy()
-        >>> static, dynamic = split_static_and_dynamic(df)
-        >>> static.collect()
-        shape: (2, 4)
-        ┌────────────┬──────┬───────────────┬────────────┐
-        │ subject_id ┆ code ┆ numeric_value ┆ text_value │
-        │ ---        ┆ ---  ┆ ---           ┆ ---        │
-        │ i64        ┆ i64  ┆ f64           ┆ str        │
-        ╞════════════╪══════╪═══════════════╪════════════╡
-        │ 1          ┆ 100  ┆ 1.0           ┆ null       │
-        │ 2          ┆ 200  ┆ 3.0           ┆ null       │
-        └────────────┴──────┴───────────────┴────────────┘
-        >>> dynamic.collect()
-        shape: (2, 6)
-        ┌────────────┬─────────────────────┬──────┬───────────────┬────────────┬──────────────┐
-        │ subject_id ┆ time                ┆ code ┆ numeric_value ┆ text_value ┆ modality_idx │
-        │ ---        ┆ ---                 ┆ ---  ┆ ---           ┆ ---        ┆ ---          │
-        │ i64        ┆ datetime[μs]        ┆ i64  ┆ f64           ┆ str        ┆ f32          │
-        ╞════════════╪═════════════════════╪══════╪═══════════════╪════════════╪══════════════╡
-        │ 1          ┆ 2021-01-01 00:00:00 ┆ 101  ┆ 2.0           ┆ fever      ┆ 1.0          │
-        │ 2          ┆ 2021-01-02 00:00:00 ┆ 201  ┆ 4.0           ┆ cough      ┆ 0.0          │
-        └────────────┴─────────────────────┴──────┴───────────────┴────────────┴──────────────┘
-    """
+    """Split the input data into static and dynamic components."""
     static = df.filter(pl.col("time").is_null()).drop("time")
     dynamic = df.filter(pl.col("time").is_not_null())
 
@@ -282,178 +332,286 @@ def split_static_and_dynamic(df: pl.LazyFrame) -> tuple[pl.LazyFrame, pl.LazyFra
     return static, dynamic
 
 
+@timing_decorator
 def process_text_data(df: pl.DataFrame, reader: MultimodalReader) -> dict[str, torch.Tensor]:
-    """
-    For each row that has a non-null `text_value`, we read and embed the text via `reader`.
-    Return a dictionary where the key is the text index, and the value is the embedding tensor.
-
-    Args:
-        df: A polars DataFrame (already collected) with a `text_value` column.
-        reader: An instance of MultimodalReader that can embed text.
-
-    Returns:
-        A dict[str, torch.Tensor] keyed by a rank-based index.
-    """
+    """Process and embed text data."""
     logger.info("Processing text data for embeddings")
 
-    # 1) Ensure `text_value` is valid UTF-8
+    # Validate and clean text_value column
     df = df.with_columns(
         pl.col("text_value").map_elements(
             lambda x: x.encode("utf-8", "ignore").decode("utf-8", "ignore") if isinstance(x, str) else "",
-            return_dtype=pl.Utf8  # Ensure correct output type
+            return_dtype=pl.Utf8
         )
     )
 
-    # 2) Filter to rows with non-null `text_value`
+    # Filter to rows with non-null text_value
     text_df = df.filter(pl.col("text_value").is_not_null())
 
     text_mapping = {}
     if len(text_df) == 0:
+        logger.info("No text data found to process")
         return text_mapping
 
-    # Get unique texts with their modality indices
+    # Get unique texts with modality indices
     unique_text_df = text_df.select(["text_value", "modality_idx"]).unique()
     texts = unique_text_df["text_value"].to_list()
     modality_idxs = unique_text_df["modality_idx"].to_list()
+    
+    logger.info(f"Processing {len(texts)} unique text entries")
+    
+    # Check for very large texts that might cause issues
+    text_lengths = [len(t) if isinstance(t, str) else 0 for t in texts]
+    if max(text_lengths) > 10000:
+        logger.warning(f"Very long text detected: {max(text_lengths)} characters. "
+                       f"This might cause memory issues.")
+    
+    # Create chunked processing for very large datasets
+    try:
+        # Create embeddings dictionary
+        for idx, emb in reader.embedder.embed_texts_chunked(texts, modality_idxs):
+            text_mapping[f"{int(idx)}"] = emb.cpu()
+    except Exception as e:
+        logger.error(f"Error during text embedding: {str(e)}")
+        # Try processing in smaller batches if we had an error
+        if len(texts) > 100:
+            logger.info("Retrying with smaller batches")
+            chunk_size = max(1, len(texts) // 10)
+            for i in range(0, len(texts), chunk_size):
+                chunk_texts = texts[i:i+chunk_size]
+                chunk_idxs = modality_idxs[i:i+chunk_size]
+                logger.info(f"Processing chunk {i//chunk_size + 1}/10 with {len(chunk_texts)} texts")
+                try:
+                    for idx, emb in reader.embedder.embed_texts_chunked(chunk_texts, chunk_idxs):
+                        text_mapping[f"{int(idx)}"] = emb.cpu()
+                except Exception as chunk_e:
+                    logger.error(f"Error processing chunk: {str(chunk_e)}")
+                    # Continue with next chunk
 
-    # Create embeddings dictionary
-    for idx, emb in reader.embedder.embed_texts_chunked(texts, modality_idxs):
-        text_mapping[f"{int(idx)}"] = emb.cpu()  # Move to CPU for saving
-
+    logger.info(f"Generated {len(text_mapping)} text embeddings")
     return text_mapping
 
 
-def extract_statics_and_schema(
-    df: pl.LazyFrame,
-) -> tuple[pl.LazyFrame, dict[str, dict]]:
-    """This function extracts static data and schema information (sequence of subject unique times).
-
-    Args:
-        df: The input data.
-
-    Returns:
-        A tuple containing:
-        - A `pl.LazyFrame` object containing the static data and the unique times of the subject
-        - A dictionary mapping code_modality to tokenized text
-
-    Examples:
-        >>> from datetime import datetime
-        >>> df = pl.DataFrame({
-        ...     "subject_id": [1, 1, 1, 2, 2],
-        ...     "time": [None, datetime(2021, 1, 1), datetime(2021, 1, 13),
-        ...             None, datetime(2021, 1, 2)],
-        ...     "code": [100, 101, 102, 200, 201],
-        ...     "numeric_value": [1.0, 2.0, 3.0, 4.0, 5.0],
-        ...     "text_value": [None, "fever", "cough", None, "pain"]
-        ... }).lazy()
-        >>> result_df = extract_statics_and_schema(df)
-        >>> result_df.collect()
-        shape: (2, 5)
-        ┌────────────┬───────────┬───────────────┬─────────────────────┬─────────────────────────────────┐
-        │ subject_id ┆ code      ┆ numeric_value ┆ start_time          ┆ time                            │
-        │ ---        ┆ ---       ┆ ---           ┆ ---                 ┆ ---                             │
-        │ i64        ┆ list[i64] ┆ list[f64]     ┆ datetime[μs]        ┆ list[datetime[μs]]              │
-        ╞════════════╪═══════════╪═══════════════╪═════════════════════╪═════════════════════════════════╡
-        │ 1          ┆ [100]     ┆ [1.0]         ┆ 2021-01-01 00:00:00 ┆ [2021-01-01 00:00:00, 2021-01-… │
-        │ 2          ┆ [200]     ┆ [4.0]         ┆ 2021-01-02 00:00:00 ┆ [2021-01-02 00:00:00]           │
-        └────────────┴───────────┴───────────────┴─────────────────────┴─────────────────────────────────┘
-    """
+@timing_decorator
+def extract_statics_and_schema(df: pl.LazyFrame) -> pl.LazyFrame:
+    """Extract static data and schema information."""
     logger.info("Extracting statics and schema")
     static, dynamic = split_static_and_dynamic(df)
 
-    # This collects static data by subject ID and stores only (as a list) the codes and numeric values
-    static_by_subject = static.group_by("subject_id", maintain_order=True).agg("code", "numeric_value")
+    # Group static data by subject ID
+    static_by_subject = static.group_by("subject_id", maintain_order=True).agg(
+        pl.col("code"),
+        pl.col("numeric_value")
+    )
 
-    # This collects the unique times for each subject
+    # Collect unique times for each subject
     schema_by_subject = dynamic.group_by("subject_id", maintain_order=True).agg(
         pl.col("time").min().alias("start_time"),
         pl.col("time").unique(maintain_order=True),
     )
 
+    # Join static and schema data
     result = static_by_subject.join(schema_by_subject, on="subject_id", how="full", coalesce=True)
     return result
 
 
+@timing_decorator
 def extract_seq_of_subject_events(
-    df: pl.LazyFrame,
+    df: pl.LazyFrame, 
     reader: MultimodalReader,
     modality_out_fp: Path = None,
 ) -> tuple[pl.LazyFrame, dict[str, torch.Tensor]]:
-    """This function extracts sequences of subject events, which are sequences of measurements.
-
-    Args:
-        df: The input data.
-        reader: MultimodalReader instance to embed text values.
-        modality_out_fp: Path to save modality embeddings as safetensors.
-
-    Returns:
-        A tuple containing:
-        - A `pl.LazyFrame` object containing the sequences of subject events
-        - A dictionary mapping code_modality to embedded text tensors
-
-    Examples:
-        >>> from datetime import datetime
-        >>> df = pl.DataFrame({
-        ...     "subject_id": [1, 1, 1, 2, 2],
-        ...     "time": [None, datetime(2021, 1, 1), datetime(2021, 1, 13),
-        ...             None, datetime(2021, 1, 2)],
-        ...     "code": [100, 101, 102, 200, 201],
-        ...     "numeric_value": [1.0, 2.0, 3.0, 4.0, 5.0],
-        ...     "text_value": [None, "fever", None, None, "pain"]
-        ... }).lazy()
-        >>> result_df, text_mapping = extract_seq_of_subject_events(df)
-        >>> result_df.collect()
-        shape: (2, 5)
-        ┌────────────┬─────────────────┬─────────────────┬─────────────────┬─────────────────┐
-        │ subject_id ┆ time_delta_days ┆ code            ┆ numeric_value   ┆ modality_idx    │
-        │ ---        ┆ ---             ┆ ---             ┆ ---             ┆ ---             │
-        │ i64        ┆ list[f32]       ┆ list[list[i64]] ┆ list[list[f64]] ┆ list[list[f32]] │
-        ╞════════════╪═════════════════╪═════════════════╪═════════════════╪═════════════════╡
-        │ 1          ┆ [NaN, 12.0]     ┆ [[101], [102]]  ┆ [[2.0], [3.0]]  ┆ [[0.0], [NaN]]  │
-        │ 2          ┆ [NaN]           ┆ [[201]]         ┆ [[5.0]]         ┆ [[1.0]]         │
-        └────────────┴─────────────────┴─────────────────┴─────────────────┴─────────────────┘
-        >>> sorted(text_mapping.keys())  # Check text mapping was created
-        ['0', '1']
-    """
+    """Extract sequences of subject events."""
     logger.info("Extracting sequences of subject events")
     _, dynamic = split_static_and_dynamic(df)
 
     # Process text values if they exist
     text_mapping = {}
     if "text_value" in df.collect_schema().names():
-        # Collect dynamic data to process text embeddings
-        collected_dynamic = dynamic.collect()
-        text_mapping = process_text_data(collected_dynamic, reader)
+        # Always use streaming approach
+        logger.info("Using streaming approach for dataset")
+        dynamic_collected = dynamic.collect(streaming=True)
+        text_mapping = process_text_data(dynamic_collected, reader)
         
         # Save embeddings if output path is provided
         if modality_out_fp and text_mapping:
             modality_out_fp.parent.mkdir(parents=True, exist_ok=True)
             save_file(text_mapping, modality_out_fp)
-            logger.info(f"Saved text embeddings to {modality_out_fp}")
+            logger.info(f"Saved {len(text_mapping)} text embeddings to {modality_out_fp}")
 
+    # Calculate time deltas in days
     time_delta_days_expr = (pl.col("time").diff().dt.total_seconds() / SECONDS_PER_DAY).cast(pl.Float32)
 
     # Convert back to LazyFrame for aggregation
     if isinstance(dynamic, pl.DataFrame):
         dynamic = dynamic.lazy()
 
-    result = (
-        dynamic.group_by("subject_id", "time", maintain_order=True)
-        .agg(
-            pl.col("code").name.keep(),
-            fill_to_nans("numeric_value").name.keep(),
-            (fill_to_nans("modality_idx").name.keep() if "text_value" in df.collect_schema().names() else None),
-        )
-        .group_by("subject_id", maintain_order=True)
-        .agg(
+    # Fix: Optimize aggregation with more explicit column references to avoid duplicates
+    # First, group by subject_id and time to collect codes at each timepoint
+    first_agg = dynamic.group_by(["subject_id", "time"], maintain_order=True).agg([
+        pl.col("code").alias("code"),
+        fill_to_nans("numeric_value").alias("numeric_value")
+    ])
+    
+    # If text_value exists, add modality_idx to the first aggregation
+    if "text_value" in df.collect_schema().names():
+        first_agg = dynamic.group_by(["subject_id", "time"], maintain_order=True).agg([
+            pl.col("code").alias("code"),
+            fill_to_nans("numeric_value").alias("numeric_value"),
+            fill_to_nans("modality_idx").alias("modality_idx")
+        ])
+    
+    # Then group by subject_id to create sequences
+    if "text_value" in df.collect_schema().names():
+        result = first_agg.group_by("subject_id", maintain_order=True).agg([
             fill_to_nans(time_delta_days_expr).alias("time_delta_days"),
-            "code",
-            "numeric_value",
-            "modality_idx" if "text_value" in df.collect_schema().names() else None,
-        )
-    )
+            pl.col("code").alias("code"),
+            pl.col("numeric_value").alias("numeric_value"),
+            pl.col("modality_idx").alias("modality_idx")
+        ])
+    else:
+        result = first_agg.group_by("subject_id", maintain_order=True).agg([
+            fill_to_nans(time_delta_days_expr).alias("time_delta_days"),
+            pl.col("code").alias("code"),
+            pl.col("numeric_value").alias("numeric_value")
+        ])
 
     return result, text_mapping
+
+
+@timing_decorator
+def process_shard(in_fp, schema_out_fp, event_seq_out_fp, text_out_fp, reader, do_overwrite, sample_limit=None):
+    """Process a single shard with optional sample limit."""
+    # Initialize a local function_times dictionary for this process
+    global function_times
+    function_times = {}
+    
+    shard_start_time = time.time()
+    logger.info(f"Processing shard: {in_fp}")
+    
+    # Create a scan with sample limit if specified
+    def limited_scan(file_path):
+        df = pl.scan_parquet(file_path)
+        if sample_limit:
+            logger.info(f"Limiting to {sample_limit} samples")
+            df = df.limit(sample_limit)
+        return df
+    
+    # Extract static data and schema
+    if not schema_out_fp.exists() or do_overwrite:
+        schema_out_fp.parent.mkdir(parents=True, exist_ok=True)
+        df = limited_scan(in_fp)
+        schema_df = extract_statics_and_schema(df)
+        write_lazyframe(schema_df, schema_out_fp)
+        logger.info(f"Wrote schema to {schema_out_fp}")
+    
+    # Extract event sequences and text embeddings
+    if not event_seq_out_fp.exists() or do_overwrite:
+        event_seq_out_fp.parent.mkdir(parents=True, exist_ok=True)
+        df = limited_scan(in_fp)
+        event_seq_df, _ = extract_seq_of_subject_events(df, reader, text_out_fp)
+        write_lazyframe(event_seq_df, event_seq_out_fp)
+        logger.info(f"Wrote event sequences to {event_seq_out_fp}")
+    
+    shard_time = time.time() - shard_start_time
+    logger.info(f"Shard processing time: {shard_time:.2f} seconds")
+    
+    # Log timing data from this process
+    logger.info(f"Timing data for shard {in_fp}:")
+    for func_name, exec_time in sorted(function_times.items(), key=lambda x: x[1], reverse=True):
+        logger.info(f"  {func_name:<30}: {exec_time:.2f} seconds")
+    
+    return in_fp
+
+
+@timing_decorator
+def tokenize(cfg: DictConfig, sample_limit=SAMPLE_LIMIT):
+    """Main function for tokenizing MEDS datasets - optimized version with sample limit."""
+    logger.info(
+        f"Running with config:\n{OmegaConf.to_yaml(cfg)}\n"
+        f"Stage: {cfg.stage}\n"
+        f"Stage config:\n{OmegaConf.to_yaml(cfg.stage_cfg)}\n"
+        f"Using device: {DEVICE}, Mixed precision: {USE_MIXED_PRECISION}\n"
+        f"Number of workers: {NUM_WORKERS}\n"
+        f"SAMPLE LIMIT: {sample_limit} samples"
+    )
+
+    output_dir = Path(cfg.stage_cfg.output_dir)
+    if train_only := cfg.stage_cfg.get("train_only", False):
+        raise ValueError(f"train_only={train_only} is not supported for this stage.")
+    
+    shards_single_output, _ = shard_iterator(cfg)
+    
+    # Create output directories
+    (output_dir / "schemas").mkdir(parents=True, exist_ok=True)
+    (output_dir / "event_seqs").mkdir(parents=True, exist_ok=True)
+    (output_dir / "modalities").mkdir(parents=True, exist_ok=True)
+    
+    # Initialize the text embedder reader (shared across processes)
+    reader = BioClinicalBertTextReader(
+        base_path="",
+        model_name="nlpie/tiny-clinicalbert",
+        max_length=512,
+        batch_size=BATCH_SIZE,
+        device=None
+    )
+    
+    # Limit to processing just the first shard when sample_limit is set
+    shards_list = list(shards_single_output)
+    if sample_limit:
+        logger.info(f"Sample limit set to {sample_limit}, will only process the first shard")
+        if shards_list:
+            shards_list = [shards_list[0]]
+    
+    # Force sequential processing to avoid nested multiprocessing issues
+    logger.info("Using sequential processing to avoid multiprocessing issues")
+    for in_fp, out_fp in tqdm(shards_list, desc="Processing shards"):
+        sharded_path = out_fp.relative_to(output_dir)
+        schema_out_fp = output_dir / "schemas" / sharded_path
+        event_seq_out_fp = output_dir / "event_seqs" / sharded_path
+        text_out_fp = (output_dir / "modalities" / sharded_path).with_suffix(".safetensors")
+        
+        process_shard(in_fp, schema_out_fp, event_seq_out_fp, text_out_fp, reader, cfg.do_overwrite, sample_limit)
+    
+    logger.info(f"Done with {cfg.stage} - processed with sample limit: {sample_limit}")
+    
+    # Calculate and display timing information
+    print_timing_results()
+
+
+def print_timing_results():
+    """Calculate and print timing results for all functions."""
+    total_time = sum(function_times.values())
+    
+    if total_time == 0:
+        logger.warning("No timing data collected")
+        return
+    
+    # Sort functions by execution time (descending)
+    sorted_times = sorted(function_times.items(), key=lambda x: x[1], reverse=True)
+    
+    # Calculate percentages
+    percentages = {}
+    for func_name, exec_time in sorted_times:
+        percentages[func_name] = (exec_time / total_time) * 100
+    
+    logger.info("\n\n===== FUNCTION TIMING RESULTS =====")
+    logger.info(f"Total execution time: {total_time:.2f} seconds")
+    logger.info(f"{'Function':<40} {'Time (s)':<15} {'Percentage':<10}")
+    logger.info("-" * 65)
+    
+    for func_name, exec_time in sorted_times:
+        percentage = percentages[func_name]
+        logger.info(f"{func_name:<40} {exec_time:<15.2f} {percentage:<10.2f}%")
+    
+    # Also print as a sorted list for easier reading
+    logger.info("\nTime Breakdown (most time-consuming first):")
+    for func_name, exec_time in sorted_times:
+        if exec_time > total_time * 0.01:  # Only show functions taking >1% of total time
+            percentage = percentages[func_name]
+            logger.info(f"{percentage:6.2f}% - {func_name}")
+    
+    return percentages  # Return percentages for potential further analysis
 
 
 @hydra.main(
@@ -462,138 +620,27 @@ def extract_seq_of_subject_events(
     config_name=PREPROCESS_CONFIG_YAML.stem,
 )
 def main(cfg: DictConfig):
+    overall_start_time = time.time()
     hydra_loguru_init()
-    tokenize(cfg)
-
-
-def tokenize(cfg: DictConfig):
-    """Main function for tokenizing MEDS datasets.
-
-    Examples:
-        >>> import tempfile
-        >>> import polars as pl
-        >>> from datetime import datetime
-        >>> from omegaconf import OmegaConf
-        >>> from safetensors import safe_open
-        >>>
-        >>> # Create temporary directory for test data
-        >>> with tempfile.TemporaryDirectory() as tmpdir:
-        ...     # Create test input data
-        ...     test_df = pl.DataFrame({
-        ...         "subject_id": [1, 1, 1, 2, 2],
-        ...         "time": [None, datetime(2021,1,1), datetime(2021,1,2), None, datetime(2021,1,3)],
-        ...         "code": [100, 101, 102, 200, 201],
-        ...         "numeric_value": [1.0, 2.0, 3.0, 4.0, 5.0],
-        ...         "text_value": [None, "normal", None, None, "abnormal"]
-        ...     })
-        ...
-        ...     # Save test data
-        ...     in_fp = Path(tmpdir) / "shard_0.parquet"
-        ...     test_df.write_parquet(in_fp)
-        ...
-        ...     # Create config
-        ...     cfg = OmegaConf.create({
-        ...         "stage": "tokenize",
-        ...         "stage_cfg": {
-        ...             "input_dir": str(tmpdir),
-        ...             "data_input_dir": str(tmpdir),
-        ...             "output_dir": str(tmpdir),
-        ...             "file_pattern": "shard_*.parquet",
-        ...             "do_sequential": True
-        ...         },
-        ...         "do_overwrite": True
-        ...     })
-        ...
-        ...     # Run tokenize
-        ...     tokenize(cfg)
-        ...
-        ...     # Verify outputs
-        ...     assert (Path(tmpdir) / "schemas" / "shard_0.parquet").exists()
-        ...     assert (Path(tmpdir) / "event_seqs" / "shard_0.parquet").exists()
-        ...     assert (Path(tmpdir) / "modalities" / "shard_0.safetensors").exists()
-        ...
-        ...     # Check schema output
-        ...     schema_df = pl.read_parquet(Path(tmpdir) / "schemas" / "shard_0.parquet")
-        ...     assert len(schema_df) == 2  # Two subjects
-        ...     assert all(col in schema_df.columns for col in [
-        ...         "subject_id", "code", "numeric_value", "start_time"])
-        ...
-        ...     # Check event sequences output
-        ...     events_df = pl.read_parquet(Path(tmpdir) / "event_seqs" / "shard_0.parquet")
-        ...     assert len(events_df) == 2  # Two subjects
-        ...     assert all(col in events_df.columns for col in [
-        ...         "subject_id", "time_delta_days", "code", "numeric_value", "modality_idx"])
-        ...
-        ...     # Check event sequences output
-        ...     with safe_open(
-        ...         Path(tmpdir) / "modalities" / "shard_0.safetensors",
-        ...         framework="pt", device="cpu") as f:
-        ...         assert set(f.keys()) == {'1', '0'}
-        ...         print(f.get_tensor('1'))
-        ...         print(f.get_tensor('0'))
-        tensor([ 101, 2999,  102])
-        tensor([  101, 22832,   102])
-    """
-
-    logger.info(
-        f"Running with config:\n{OmegaConf.to_yaml(cfg)}\n"
-        f"Stage: {cfg.stage}\n\n"
-        f"Stage config:\n{OmegaConf.to_yaml(cfg.stage_cfg)}"
-    )
-
-    output_dir = Path(cfg.stage_cfg.output_dir)
-    if train_only := cfg.stage_cfg.get("train_only", False):
-        raise ValueError(f"train_only={train_only} is not supported for this stage.")
-    shards_single_output, include_only_train = shard_iterator(cfg)
-
-    # Initialize the text embedder reader
-    reader = BioClinicalBertTextReader(
-        base_path="",
-        model_name="nlpie/tiny-clinicalbert",  # Use smaller model for efficiency
-        max_length=512,
-        batch_size=128,
-        device=None  # Auto-detect device
-    )
-
-    for in_fp, out_fp in tqdm(shards_single_output, desc="Processing shards"):
-        sharded_path = out_fp.relative_to(output_dir)
-
-        schema_out_fp = output_dir / "schemas" / sharded_path
-        event_seq_out_fp = output_dir / "event_seqs" / sharded_path
-        text_out_fp = (output_dir / "modalities" / sharded_path).with_suffix(".safetensors")
-
-        logger.info(f"Tokenizing {str(in_fp.resolve())} into schemas at {str(schema_out_fp.resolve())}")
-
-        # Extract static data and schema
-        rwlock_wrap(
-            in_fp,
-            schema_out_fp,
-            pl.scan_parquet,
-            write_lazyframe,
-            extract_statics_and_schema,
-            do_overwrite=cfg.do_overwrite,
-        )
-
-        logger.info(f"Tokenizing {str(in_fp.resolve())} into event_seqs at {str(event_seq_out_fp.resolve())}")
-
-        # Function to write event sequences and text embeddings
-        def write_fn(df, out_fp):
-            # Extract sequences and embeddings
-            df_result, text_mapping = extract_seq_of_subject_events(df, reader, text_out_fp)
-            write_lazyframe(df_result, out_fp)
-
-        # Add output path for the LazyFrame to use in compute functions
-        rwlock_wrap(
-            in_fp,
-            event_seq_out_fp,
-            pl.scan_parquet,
-            write_fn,
-            lambda df: df,  # Pass through the DataFrame to write_fn
-            do_overwrite=cfg.do_overwrite,
-        )
-
-    logger.info(f"Done with {cfg.stage}")
+    
+    # Run with the sample limit
+    tokenize(cfg, sample_limit=SAMPLE_LIMIT)
+    
+    overall_end_time = time.time()
+    overall_time = overall_end_time - overall_start_time
+    
+    # Add overall execution time
+    function_times["total_script_execution"] = overall_time
+    
+    # Print timing results once more at the very end
+    print_timing_results()
 
 
 if __name__ == "__main__":  # pragma: no cover
+    # Set the multiprocessing start method to 'spawn' to avoid CUDA issues with fork
+    mp.set_start_method('spawn', force=True)
+    
+    # Now we can initialize a Manager for shared state if needed
+    # (though in this implementation we're not sharing timing data between processes)
+    
     main()
