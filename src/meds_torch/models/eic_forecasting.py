@@ -12,8 +12,6 @@ from torchmetrics import Metric, MetricCollection
 from torchmetrics.classification import MulticlassAccuracy, MulticlassAUROC
 from x_transformers import Decoder, TransformerWrapper
 from x_transformers.autoregressive_wrapper import eval_decorator
-from meds_torch.models.components.utils import get_last_token
-
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models import (
@@ -22,16 +20,20 @@ from meds_torch.models import (
     GENERATE_PREFIX,
     MODEL_BATCH_LOSS_KEY,
     MODEL_EMBEDDINGS_KEY,
+    MODEL_LOGITS_KEY,
     MODEL_LOGITS_SEQUENCE_KEY,
     MODEL_LOSS_KEY,
     MODEL_PRED_PROBA_KEY,
     MODEL_PRED_STATUS_KEY,
     MODEL_PREFIX,
     MODEL_TOKENS_KEY,
-    MODEL_LOGITS_KEY,
 )
 from meds_torch.models.base_model import BaseModule
-from meds_torch.models.components.utils import TrajectoryBatch, get_time_days_delta
+from meds_torch.models.components.utils import (
+    TrajectoryBatch,
+    get_last_token,
+    get_time_days_delta,
+)
 from meds_torch.utils import TIME_DELTA_TOKEN
 
 
@@ -639,24 +641,25 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         code_logits = batch[CODE_LOGITS]
         assert not torch.isnan(code_logits).any(), "code_logits is NaN"
 
-        # Code Mask
+        code_logits = batch[CODE_LOGITS]
         mask = batch["mask"]
         code_target = batch["code"]
 
-        # Shift the target to predict the next token
-        shifted_code_target = code_target[:, 1:]  # Remove the first token
-        shifted_mask = mask[:, 1:]  # Remove the first position from the mask too
+        # Shift sequences
+        shifted_code_target = code_target[:, 1:]  # Remove first token
+        shifted_mask = mask[:, 1:]  # Remove first position from mask
 
-        # Apply the mask to code_logits and shifted_code_target
-        masked_code_logits = code_logits[:, :-1] * shifted_mask.unsqueeze(-1)  # Remove the last prediction
-        masked_code_target = shifted_code_target * shifted_mask
+        # Only compute loss on masked positions
+        masked_logits = code_logits[:, :-1][shifted_mask, :]  # Get logits at masked positions
+        masked_targets = shifted_code_target[shifted_mask]  # Get targets at masked positions
 
-        # Code Loss
+        # Calculate loss with both masks
         code_loss = F.cross_entropy(
-            masked_code_logits.transpose(1, 2),
-            masked_code_target.to(dtype=torch.long),
-            reduction="none",
-        ).mean(dim=-1)
+            masked_logits,
+            masked_targets,
+            ignore_index=0,  # Assuming 0 is your padding index
+            reduction="mean",
+        )
 
         assert not torch.isnan(code_loss).any(), "code_loss is NaN"
 
