@@ -24,9 +24,8 @@ search_space:
     upper: 10000
 
 scheduler:
-  _target_: ray.tune.schedulers.ASHAScheduler
+  _target_: ray.tune.schedulers.HyperBandScheduler
   max_t: ${trainer.max_epochs}
-  grace_period: 2
   reduction_factor: 2
 
 # Choose between train and finetune
