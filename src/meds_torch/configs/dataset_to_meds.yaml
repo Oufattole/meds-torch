@@ -1,0 +1,31 @@
+# @package _global_
+
+defaults:
+  - _self_
+  - data: pytorch_dataset # choose datamodule with `test_dataloader()` for evaluation
+  - logger: null
+  - paths: default
+  - extras: default
+  - hydra: default
+  # experiment configs allow for version control of specific hyperparameters
+  # e.g. best hyperparameters for given model and datamodule
+  - experiment: null
+
+  # optional local config for machine/user specific settings
+  # it's optional since it doesn't need to exist and is excluded from version control
+  - optional local: default
+
+  # debugging config (enable through command line, e.g. `python train.py debug=default)
+  - debug: null
+
+name: "generate_trajectory"
+
+task_name: null
+
+tags: ["dev"]
+
+seed: 0
+
+
+paths:
+  time_output_dir: ${paths.output_dir}

@@ -254,6 +254,7 @@ def subsample_subject_data(
     do_flatten_tensors: bool = True,
     global_st: int = 0,
     postpend_token: PostpendToken = PostpendToken.none,
+    includes_end: bool = True,
 ) -> tuple[JointNestedRaggedTensorDict, int, int, bool]:
     """Subsample subject data based on maximum sequence length and sampling strategy.
 
@@ -394,7 +395,7 @@ def subsample_subject_data(
             start_offset = 0
         end = min(seq_len, start_offset + max_seq_len)
 
-        if end == seq_len and postpend_token == PostpendToken.censor:
+        if includes_end and end == seq_len and postpend_token == PostpendToken.censor:
             has_censor_token = True
             if end - start_offset == max_seq_len:
                 start_offset += 1
@@ -786,7 +787,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
     @SeedableMixin.WithSeed
     @TimeableMixin.TimeAs
     def load_subject(
-        self, subject_dynamic_data, subject_id: int, global_st: int, global_end: int
+        self,
+        subject_dynamic_data,
+        subject_id: int,
+        global_st: int,
+        global_end: int,
+        idx: int,
     ) -> dict[str, list[float]]:
         """Load and process data for a single subject.
 
@@ -903,6 +909,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             self.config.do_flatten_tensors,
             global_st,
             self.config.postpend_token,
+            includes_end=global_end
+            == self.subj_seq_bounds[subject_id][1],  # Check if the end is the end of the data
         )
 
         if self.config.do_include_subsequence_indices:
@@ -962,7 +970,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         subject_dynamic_data, subject_id, st, end = self.load_subject_dynamic_data(idx)
 
-        out = self.load_subject(subject_dynamic_data, subject_id, st, end)
+        out = self.load_subject(subject_dynamic_data, subject_id, st, end, idx)
 
         if self.config.do_include_subject_id:
             out["subject_id"] = subject_id
