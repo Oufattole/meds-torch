@@ -229,6 +229,9 @@ class MultiModalPytorchDataset(PytorchDataset):
                 else:
                     tensorized[k] = torch.Tensor([item[k] for item in batch])
         tensorized["modality"] = torch.concat(modality_data)
+        tensorized["modality"] = torch.nan_to_num(
+            tensorized["modality"], nan=0.0
+        )  # TODO: interpolate these in pre-processing instead
         tensorized["modality_sequence_idx"] = modality_sequence_idx
         tensorized["modality_batch_idx"] = modality_batch_idx
         assert (

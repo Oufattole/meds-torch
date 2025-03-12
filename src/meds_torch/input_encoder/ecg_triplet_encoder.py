@@ -4,7 +4,6 @@ from torch import nn
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models.components.cve import CVE
-from meds_torch.models.components.ecg_encoder import ECGEncoder
 from meds_torch.utils.module_class import Module
 
 
@@ -122,7 +121,7 @@ class ECGTripletEncoder(nn.Module, Module):
         self.date_embedder = CVE(cfg)
         self.code_embedder = torch.nn.Embedding(cfg.vocab_size, embedding_dim=cfg.token_dim)
         self.numeric_value_embedder = CVE(cfg)
-        self.ecg_embedder = ECGEncoder(cfg)
+        self.ecg_embedder = self.cfg.ecg_embedder
 
     def embed_func(self, embedder, x):
         out = embedder.forward(x[None, :].transpose(2, 0)).permute(1, 2, 0)
@@ -145,6 +144,7 @@ class ECGTripletEncoder(nn.Module, Module):
         # Embed the ECGs.
         # Shape: (E, token_dim).
         ecg_emb = self.ecg_embedder.forward(batch["modality"])
+        assert ecg_emb.isfinite().all(), "ECG embedding is not finite"
 
         # Sum the (time, code, value) triplets.
         # Shape is (B, token_dim, seq_len), transposed to (B, seq_len, token_dim).
@@ -187,13 +187,36 @@ class ECGTripletEncoder(nn.Module, Module):
 
             return {"EHR_embedding": ehr_emb, "ECG_embedding": ecg_mean_emb}
 
-        # Add ECG embeddings to EHR embedding via early fusion.
-        #
-        # batch["modality_batch_idx"] and batch["modality_sequence_idx"] are
-        # size (E), the number of ECGs. These tell you which batch and which
-        # element in the time series to add each ECG into.
-        fused_emb = ehr_emb
-        fused_emb[batch["modality_batch_idx"], batch["modality_sequence_idx"]] += ecg_emb
+        # TODO(zberger): I hate this logic structuring and abuse of notation
+        # for fused_embeddings and especially hate that we have it here for
+        # early fusion and in multimodal_supervised for late fusion. Terrible.
+        if self.cfg.isolate_ehr:
+            fused_emb = ehr_emb
+        elif self.cfg.isolate_ecg:
+            fused_emb = ehr_emb
+            B, seq_len, token_dim = fused_emb.shape
+
+            # Mark positions where ECGs occur as True.
+            mask_ecg_positions = torch.zeros(B, seq_len, dtype=torch.bool, device=fused_emb.device)
+            mask_ecg_positions[batch["modality_batch_idx"], batch["modality_sequence_idx"]] = True
+
+            # Expand mask to match embedding dimensions: (B, seq_len, token_dim).
+            mask_ecg_positions = mask_ecg_positions.unsqueeze(-1).expand(-1, -1, token_dim)
+
+            # Zero out EHR entries that are not associated with ECG positions,
+            # then add ECG embeddings at the specified positions.
+            fused_emb = fused_emb * mask_ecg_positions
+            fused_emb[batch["modality_batch_idx"], batch["modality_sequence_idx"]] += ecg_emb
+        elif self.cfg.remove_data:
+            fused_emb = torch.zeros(ehr_emb.shape, device=ehr_emb.device)
+        else:
+            # Add ECG embeddings to EHR embedding via early fusion.
+            #
+            # batch["modality_batch_idx"] and batch["modality_sequence_idx"] are
+            # size (E), the number of ECGs. These tell you which batch and which
+            # element in the time series to add each ECG into.
+            fused_emb = ehr_emb
+            fused_emb[batch["modality_batch_idx"], batch["modality_sequence_idx"]] += ecg_emb
 
         assert fused_emb.isfinite().all(), "Fused embedding is not finite"
         return fused_emb

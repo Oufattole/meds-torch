@@ -27,19 +27,28 @@ class MultimodalSupervisedModule(SupervisedModule):
             "ECG_embedding"
         ]  # Shape: (B, token_dim)
 
-        # Intermediate fusion
-        #
-        # TODO(zberger): Currently we only support taking the mean of the
-        # two modalities, but should make this a configurable option and
-        # provide other mechanisms of intermediate fusion. Depending on results,
-        # might consider normalizing embeddings first.
-        #
-        # Stack the two embeddings along a new dimension (modality dimension)
-        # Shape: (2, B, token_dim)
-        stacked_embeddings = torch.stack([ehr_embeddings, ecg_embeddings])
-        # Compute the mean across the modality dimension (dim=0)
-        # Shape: (B, token_dim)
-        fused_embeddings = stacked_embeddings.mean(dim=0)
+        # TODO(zberger): I hate this logic structuring and abuse of notation
+        # for fused_embeddings.
+        if self.cfg.isolate_ehr:
+            fused_embeddings = ehr_embeddings
+        elif self.cfg.isolate_ecg:
+            fused_embeddings = ecg_embeddings
+        elif self.cfg.remove_data:
+            fused_embeddings = torch.zeros(ehr_embeddings.shape, device=ehr_embeddings.device)
+        else:
+            # Intermediate fusion
+            #
+            # TODO(zberger): Currently we only support taking the mean of the
+            # two modalities, but should make this a configurable option and
+            # provide other mechanisms of intermediate fusion. Depending on results,
+            # might consider normalizing embeddings first.
+            #
+            # Stack the two embeddings along a new dimension (modality dimension)
+            # Shape: (2, B, token_dim)
+            stacked_embeddings = torch.stack([ehr_embeddings, ecg_embeddings])
+            # Compute the mean across the modality dimension (dim=0)
+            # Shape: (B, token_dim)
+            fused_embeddings = stacked_embeddings.mean(dim=0)
 
         logits = self.projection(fused_embeddings)
         if self.cfg.get_representations:

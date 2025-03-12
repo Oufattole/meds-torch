@@ -22,6 +22,9 @@ max_seq_len: ${data.max_seq_len}
 token_dim: 4
 vocab_size: ${data.vocab_size}
 get_representations: False
+isolate_ehr: False
+isolate_ecg: False
+remove_data: False
 task_name: ${data.task_name}
 batch_size: ${data.dataloader.batch_size}
 

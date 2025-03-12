@@ -1,8 +1,16 @@
+defaults:
+  - ecg_embedder: ecg_resnet_encoder
+
 _target_: meds_torch.input_encoder.ecg_triplet_encoder.ECGTripletEncoder.initialize
 early_fusion: True
 max_seq_len: ${model.max_seq_len}
 token_dim: ${model.token_dim}
 vocab_size: ${data.vocab_size}
+
+# TODO: Remove these terrible flags and do something more clean.
+isolate_ehr: False
+isolate_ecg: False
+remove_data: False
 
 # TODO: Move to a separate subyaml file
 num_patches: 50

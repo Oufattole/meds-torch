@@ -69,7 +69,10 @@ def test_ecg_early_fusion_train(meds_dir, tmp_path):  # noqa: F811
         f"paths.data_dir={modality_dir}",
         "data=multimodal_pytorch_dataset",
         "model/input_encoder=ecg_triplet_encoder",
+        "model/input_encoder/ecg_embedder=ecg_resnet_encoder",
         "model.input_encoder.early_fusion=True",
+        "model.input_encoder.ecg_embedder.kernel_size=1",
+        "model.input_encoder.ecg_embedder.embedding_dim=4",
         "model=supervised",
     ]
     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir, supervised=True)
@@ -94,7 +97,10 @@ def test_ecg_intermediate_fusion_train(meds_dir, tmp_path):  # noqa: F811
         f"paths.data_dir={modality_dir}",
         "data=multimodal_pytorch_dataset",
         "model/input_encoder=ecg_triplet_encoder",
+        "model/input_encoder/ecg_embedder=ecg_resnet_encoder",
         "model.input_encoder.early_fusion=False",
+        "model.input_encoder.ecg_embedder.kernel_size=1",
+        "model.input_encoder.ecg_embedder.embedding_dim=4",
         "model=multimodal_supervised",
     ]
     cfg = create_cfg(overrides=overrides, meds_dir=meds_dir, supervised=True)
