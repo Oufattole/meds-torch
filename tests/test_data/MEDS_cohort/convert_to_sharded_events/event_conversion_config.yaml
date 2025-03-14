@@ -32,6 +32,7 @@ admit_vitals:
     time: col(vitals_date)
     time_format: '%m/%d/%Y, %H:%M:%S'
     numeric_value: HR
+    text_value: col(HR_text)
     _metadata:
       input_metadata:
         description:
@@ -53,3 +54,9 @@ admit_vitals:
         parent_codes:
           LOINC/{loinc}:
             lab_code: temp
+ecg:
+  ecg:
+    code: ECG
+    time: col(ecg_date)
+    time_format: '%m/%d/%Y, %H:%M:%S'
+    modality_fp: col(ecg_path)

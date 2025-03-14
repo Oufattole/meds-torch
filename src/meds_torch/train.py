@@ -1,7 +1,5 @@
-import os
 import shutil
 from importlib.resources import files
-from pathlib import Path
 from typing import Any
 
 import hydra
@@ -9,11 +7,11 @@ import lightning as L
 import loguru
 from lightning import Callback, LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from meds_torch.utils import (
     RankedLogger,
-    extras,
+    configure_logging,
     get_metric_value,
     instantiate_callbacks,
     instantiate_loggers,
@@ -81,8 +79,6 @@ def train(cfg: DictConfig) -> tuple[dict[str, Any], dict[str, Any]]:
         A tuple with metrics and dict with all instantiated objects.
     """
     # cache hydra config
-    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
-    OmegaConf.save(config=cfg, f=Path(cfg.paths.time_output_dir) / "hydra_config.yaml")
 
     object_dict = initialize_train_objects(cfg)
     logger = object_dict["logger"]
@@ -132,8 +128,7 @@ def main(cfg: DictConfig) -> float | None:
     """
     # apply extra utilities
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
-    os.makedirs(cfg.paths.time_output_dir, exist_ok=True)
-    extras(cfg)
+    configure_logging(cfg)
 
     # train the model
     metric_dict, _, best_model_path = train(cfg)
@@ -141,7 +136,7 @@ def main(cfg: DictConfig) -> float | None:
     # safely retrieve metric value for hydra-based hyperparameter optimization
     metric_value = get_metric_value(metric_dict=metric_dict, metric_name=cfg.get("optimized_metric"))
 
-    checkpoint_dir = Path(cfg.paths.time_output_dir) / "checkpoints"
+    checkpoint_dir = cfg.paths.time_output_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     if not cfg.trainer.get("fast_dev_run"):

@@ -143,6 +143,38 @@ def extract_statics_and_schema(df: pl.LazyFrame) -> pl.LazyFrame:
         │ 1          ┆ 2021-01-13 00:00:00 │
         │ 2          ┆ 2021-01-02 00:00:00 │
         └────────────┴─────────────────────┘
+        >>> df = pl.DataFrame({
+        ...     "subject_id": [1, 1, 1, 1, 2, 2, 2],
+        ...     "time": [
+        ...         datetime(2020, 1, 1), datetime(2021, 1, 1), datetime(2021, 1, 1), datetime(2021, 1, 13),
+        ...         datetime(2020, 1, 1), datetime(2021, 1, 2), datetime(2021, 1, 2)],
+        ...     "code": [100, 101, 102, 103, 200, 201, 202],
+        ...     "numeric_value": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
+        ... }).lazy()
+        >>> df = extract_statics_and_schema(df).collect()
+        >>> df.drop("time")
+        shape: (2, 4)
+        ┌────────────┬───────────┬───────────────┬─────────────────────┐
+        │ subject_id ┆ code      ┆ numeric_value ┆ start_time          │
+        │ ---        ┆ ---       ┆ ---           ┆ ---                 │
+        │ i64        ┆ list[i64] ┆ list[f64]     ┆ datetime[μs]        │
+        ╞════════════╪═══════════╪═══════════════╪═════════════════════╡
+        │ 1          ┆ null      ┆ null          ┆ 2020-01-01 00:00:00 │
+        │ 2          ┆ null      ┆ null          ┆ 2020-01-01 00:00:00 │
+        └────────────┴───────────┴───────────────┴─────────────────────┘
+        >>> df.select("subject_id", "time").explode("time")
+        shape: (5, 2)
+        ┌────────────┬─────────────────────┐
+        │ subject_id ┆ time                │
+        │ ---        ┆ ---                 │
+        │ i64        ┆ datetime[μs]        │
+        ╞════════════╪═════════════════════╡
+        │ 1          ┆ 2020-01-01 00:00:00 │
+        │ 1          ┆ 2021-01-01 00:00:00 │
+        │ 1          ┆ 2021-01-13 00:00:00 │
+        │ 2          ┆ 2020-01-01 00:00:00 │
+        │ 2          ┆ 2021-01-02 00:00:00 │
+        └────────────┴─────────────────────┘
     """
 
     static, dynamic = split_static_and_dynamic(df)
@@ -228,10 +260,9 @@ def main(cfg: DictConfig):
     )
 
     output_dir = Path(cfg.stage_cfg.output_dir)
+    if train_only := cfg.stage_cfg.get("train_only", False):
+        raise ValueError(f"train_only={train_only} is not supported for this stage.")
     shards_single_output, include_only_train = shard_iterator(cfg)
-
-    if include_only_train:
-        raise ValueError("Not supported for this stage.")
 
     for in_fp, out_fp in shards_single_output:
         sharded_path = out_fp.relative_to(output_dir)
@@ -264,5 +295,5 @@ def main(cfg: DictConfig):
     logger.info(f"Done with {cfg.stage}")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

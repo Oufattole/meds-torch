@@ -1,0 +1,4 @@
+_target_: meds_torch.models.components.ecg_resnet_encoder.ECGResnetEncoder
+
+embedding_dim: 512
+kernel_size: 7

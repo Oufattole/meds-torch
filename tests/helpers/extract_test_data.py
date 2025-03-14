@@ -155,7 +155,9 @@ def generate_admit_vitals(rng, subjects, num_visits_per_subject=2):
                     f"{vitals_date.strftime('%m/%d/%Y, %H:%M:%S')}\",{hr},{temp},{hr_text}"
                 )
 
-    return "\n".join(["subject_id,admit_date,disch_date,department,vitals_date,HR,temp,HR_text"] + admit_vitals)
+    return "\n".join(
+        ["subject_id,admit_date,disch_date,department,vitals_date,HR,temp,HR_text"] + admit_vitals
+    )
 
 
 def test_extraction(output_dir: Path):

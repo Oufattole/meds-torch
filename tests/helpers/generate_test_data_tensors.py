@@ -230,13 +230,17 @@ def generate_test_multimodal_triplet_tokenize(tmp_path):
     stderr, stdout = run_command("MEDS_transform-fit_vocabulary_indices", args, {}, "fit_vocabulary_indices")
 
     logger.info("Normalizing data (converting codes to use integer encodings)...")
-    stderr, stdout = run_command("python -m meds_torch.utils.custom_text_normalization", args, {}, "normalize")
+    stderr, stdout = run_command(
+        "python -m meds_torch.utils.custom_text_normalization", args, {}, "normalize"
+    )
 
     logger.info("Converting to tokenization...")
     stderr, stdout = run_command("python -m meds_torch.utils.custom_text_tokenization", args, {}, "tokenize")
 
     logger.info("Converting to tensor...")
-    stderr, stdout = run_command("python -m meds_torch.utils.custom_text_tensorization", args, {}, "text tensorize")
+    stderr, stdout = run_command(
+        "python -m meds_torch.utils.custom_text_tensorization", args, {}, "text tensorize"
+    )
 
 
 def generate_test_eic_tokenize(tmp_path):

@@ -1,0 +1,17 @@
+predicates:
+    event:
+        code: _IGNORE
+
+trigger: _ANY_EVENT
+
+windows:
+    pre:
+        start: null
+        end: trigger
+        start_inclusive: True
+        end_inclusive: False
+    post:
+        start: pre.end
+        end: null
+        start_inclusive: True
+        end_inclusive: True

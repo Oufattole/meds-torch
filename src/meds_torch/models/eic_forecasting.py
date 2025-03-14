@@ -2,6 +2,7 @@ import numpy as np
 import polars as pl
 import torch
 import torch.nn.functional as F
+import torch.utils
 from loguru import logger
 from mixins import TimeableMixin
 from omegaconf import DictConfig
@@ -12,7 +13,14 @@ from x_transformers.autoregressive_wrapper import eval_decorator
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.input_encoder.eic_encoder import EicEncoder
-from meds_torch.models import BACKBONE_TOKENS_KEY, GENERATE_PREFIX, MODEL_LOSS_KEY
+from meds_torch.models import (
+    BACKBONE_TOKENS_KEY,
+    GENERATE_PREFIX,
+    MODEL_BATCH_LOSS_KEY,
+    MODEL_LOGITS_SEQUENCE_KEY,
+    MODEL_LOSS_KEY,
+    MODEL_TOKENS_KEY,
+)
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.components import AUTOREGRESSIVE_MODELS
 
@@ -200,10 +208,10 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
         # Code Loss
         code_loss = F.cross_entropy(
-            masked_code_logits.view(-1, masked_code_logits.size(-1)),
-            masked_code_target.view(-1).to(dtype=torch.long),
-            reduction="mean",
-        )
+            masked_code_logits.transpose(1, 2),
+            masked_code_target.to(dtype=torch.long),
+            reduction="none",
+        ).mean(dim=-1)
 
         assert not torch.isnan(code_loss).any(), "code_loss is NaN"
 
@@ -223,16 +231,19 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         batch = self.input_encoder(batch)
         model_output = self.model(batch)
 
+        batch[MODEL_TOKENS_KEY] = model_output[BACKBONE_TOKENS_KEY]
         forecast = self.get_forecast_logits(model_output)
         batch[CODE_LOGITS] = forecast[CODE_LOGITS]
+        batch[MODEL_LOGITS_SEQUENCE_KEY] = forecast[CODE_LOGITS]
 
         code_loss = self.get_loss(batch)
         batch[MODEL_LOSS_KEY] = code_loss
+        batch[MODEL_BATCH_LOSS_KEY] = code_loss.mean()
         batch = self._generate(batch)
         return batch
 
     def _log(self, batch, split):
-        self.log(split + "/loss", batch[MODEL_LOSS_KEY])
+        self.log(split + "/loss", batch[MODEL_BATCH_LOSS_KEY])
 
     def _generate(self, batch):
         if self.cfg.num_samples > 0:
@@ -242,10 +253,10 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
     def training_step(self, batch):
         batch = self(batch)
-        assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
+        assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "train")
         self.train_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
-        return batch[MODEL_LOSS_KEY]
+        return batch[MODEL_BATCH_LOSS_KEY]
 
     def on_train_epoch_end(self):
         next_token_results = self.train_next_token_metric.compute()
@@ -255,10 +266,10 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
     def validation_step(self, batch):
         batch = self(batch)
-        assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
+        assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "val")
         self.val_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
-        return batch[MODEL_LOSS_KEY]
+        return batch[MODEL_BATCH_LOSS_KEY]
 
     def on_validation_epoch_end(self):
         next_token_results = self.val_next_token_metric.compute()
@@ -268,9 +279,9 @@ class EicForecastingModule(BaseModule, TimeableMixin):
 
     def test_step(self, batch):
         batch = self(batch)
-        assert not torch.isnan(batch[MODEL_LOSS_KEY]), "Loss is NaN"
+        assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "test")
-        loss = batch[MODEL_LOSS_KEY]
+        loss = batch[MODEL_BATCH_LOSS_KEY]
         self.test_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
         return loss
 
@@ -279,6 +290,196 @@ class EicForecastingModule(BaseModule, TimeableMixin):
         for metric_name, value in next_token_results.items():
             self.log(f"test/NEXT_TOKEN/{metric_name.upper()}", value, on_epoch=True)
         self.test_next_token_metric.reset()
+
+    @staticmethod
+    def get_code_to_time_map(metadata_df) -> dict:
+        """Convert the metadata DataFrame to a dictionary mapping code to time.
+
+        Args:
+            metadata_df: Polars DataFrame containing code metadata
+                (includes 'code' and 'code/vocab_index' columns)
+
+        Returns:
+            dict: Mapping code to time in years
+
+        Example:
+        >>> metadata_df = pl.DataFrame({
+        ...     "code": ["A", "B", "C", "TIME//DELTA//TOKEN//_Q_17"],
+        ...     "code/vocab_index": [0, 1, 2, 3]
+        ... })
+        >>> # Note that the code "TIME//DELTA//TOKEN//_Q_17" maps to 1 year
+        >>> EicForecastingModule.get_code_to_time_map(metadata_df)
+        tensor([0., 0., 0., 1., 0.])
+        """
+        assert metadata_df["code/vocab_index"].is_sorted()
+        code_to_time_map = torch.tensor(
+            [
+                TIME_QUANTILE_VALUES[TIME_QUANTILE_NAMES.index(code)]
+                if code in set(TIME_QUANTILE_NAMES)
+                else 0
+                for code in metadata_df["code"]
+            ]
+        )
+        code_to_time_map = torch.cat([code_to_time_map, torch.zeros(1)])
+        return code_to_time_map
+
+    @staticmethod
+    def get_code_to_numeric_value_map(metadata_df, get_raw_values=False) -> dict:
+        """Convert the metadata DataFrame to a dictionary mapping code to numeric value.
+
+        Args:
+            metadata_df: Polars DataFrame containing code metadata
+                (includes 'code' and 'code/vocab_index' columns)
+
+        Returns:
+            dict: Mapping code to time in years
+
+        Example:
+        >>> metadata_df = pl.DataFrame({
+        ...     "code": ["A", "A//_Q_1", "A//_Q_2", "A//_Q_3", "A//_Q_4", "B"],
+        ...     "code/vocab_index": [0, 1, 2, 3, 4, 5],
+        ...     'values/min': [0, 0, 0, 0, 0, None],
+        ...     'values/max': [4, 4, 4, 4, 4, None],
+        ...     "values/quantiles": [
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': None, 'values/quantile/0.5': None,
+        ...          'values/quantile/0.75': None},
+        ...     ],
+        ... })
+        >>> EicForecastingModule.get_code_to_numeric_value_map(metadata_df, get_raw_values=True).tolist()
+        [nan, 0.5, 1.5, 2.5, 3.5, nan, nan]
+        >>> EicForecastingModule.get_code_to_numeric_value_map(metadata_df, get_raw_values=False).tolist()
+        [nan, 0.125, 0.375, 0.625, 0.875, nan, nan]
+        """
+        # First, verify the input DataFrame is sorted by vocab_index
+        assert metadata_df["code/vocab_index"].is_sorted()
+
+        # Get the maximum vocab index to determine tensor size
+        max_vocab_idx = metadata_df["code/vocab_index"].max()
+
+        # Create a tensor filled with NaN values
+        result = torch.full((max_vocab_idx + 1,), float("nan"))
+        ordered_quantiles = [field.name for field in metadata_df.schema["values/quantiles"].fields]
+        percentiles = [0, *[float(q.split("/")[-1]) for q in ordered_quantiles], 1]
+
+        # Process each row in the DataFrame
+        for row in metadata_df.iter_rows(named=True):
+            vocab_idx = row["code/vocab_index"]
+            code = row["code"]
+            min_value = row["values/min"]
+            max_value = row["values/max"]
+            raw_quantiles = [row["values/quantiles"][each] for each in ordered_quantiles]
+            raw_quantiles = [min_value, *raw_quantiles, max_value]
+
+            # Check if this is a quarterly code (contains "//_Q_")
+            if code and "//_Q_" in code and not code.startswith("TIME//DELTA//TOKEN"):
+                # Extract the number of quantiles the value is greater than, 0 for Q_1, 1 for Q_2, etc.
+                rank = int(code.split("//_Q_")[1]) - 1
+                # We estimate the numeric value is the average of the bordering quantiles it is between
+                if get_raw_values:
+                    result[vocab_idx] = sum([raw_quantiles[rank], raw_quantiles[rank + 1]]) / 2
+                else:
+                    result[vocab_idx] = sum([percentiles[rank], percentiles[rank + 1]]) / 2
+
+            # For non-quarterly codes, leave as NaN
+            # This handles both the base code (e.g., "A") and any other non-quarterly codes
+        return torch.cat([result, torch.Tensor([np.nan])])  # postpend a zero in case EOS token is postpended
+
+    @classmethod
+    def to_meds(cls, code_tensors: list[torch.Tensor], metadata_df: pl.DataFrame) -> pl.DataFrame:
+        """Convert the model output to MEDS format.
+
+        Args:
+            code_tensors: List of torch tensors containing generated code sequences
+            metadata_df: Polars DataFrame containing code metadata (includes 'code' column)
+
+        Returns:
+            pl.DataFrame: MEDS format DataFrame with columns:
+                - time_index: Time in years starting from 0
+                - code: The medical code
+                - value: Always 1.0 (presence indicator)
+                - sample_id: ID of the generated sample
+
+        Time will start from 0, and is measured in years.
+
+        Example:
+        >>> from datetime import datetime
+        >>> metadata_df = pl.DataFrame({
+        ...     "code": ["A", "A//_Q_1", "A//_Q_2", "A//_Q_3", "A//_Q_4", "TIME//DELTA//TOKEN//_Q_17"],
+        ...     "code/vocab_index": [0, 1, 2, 3, 4, 5],
+        ...     'values/min': [0, 0, 0, 0, 0, None],
+        ...     'values/max': [4, 4, 4, 4, 4, None],
+        ...     "values/quantiles": [
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': 1, 'values/quantile/0.5': 2, 'values/quantile/0.75': 3},
+        ...         {'values/quantile/0.25': None, 'values/quantile/0.5': None,
+        ...          'values/quantile/0.75': None},
+        ...     ],
+        ... })
+        >>> code_tensors = [
+        ...     {'code': torch.tensor([[0, 2, 5, 5]]), 'subject_id': ['1'],
+        ...      'mask': torch.tensor([[1, 1, 1, 1]]), 'prediction_time': [datetime(1997, 1, 1)],},
+        ...     {'code': torch.tensor([[2, 3, 4, 5], [5, 5, 0, 1]]),
+        ...      'mask': torch.tensor([[1, 1, 1, 0], [1, 1, 1, 0]]),
+        ...      'prediction_time': [datetime(1998, 1, 1), datetime(1999, 1, 1)],
+        ...      'subject_id': ['2','3']},
+        ... ]
+        >>> EicForecastingModule.to_meds(code_tensors, metadata_df)
+        shape: (10, 5)
+        ┌─────────────────┬──────┬───────────────┬────────────┬─────────────────────┐
+        │ time_delta_days ┆ code ┆ numeric_value ┆ subject_id ┆ prediction_time     │
+        │ ---             ┆ ---  ┆ ---           ┆ ---        ┆ ---                 │
+        │ f32             ┆ i64  ┆ f32           ┆ i64        ┆ datetime[μs]        │
+        ╞═════════════════╪══════╪═══════════════╪════════════╪═════════════════════╡
+        │ 0.0             ┆ 0    ┆ NaN           ┆ 1          ┆ 1997-01-01 00:00:00 │
+        │ 0.0             ┆ 2    ┆ 0.375         ┆ 1          ┆ 1997-01-01 00:00:00 │
+        │ 0.002738        ┆ 5    ┆ NaN           ┆ 1          ┆ 1997-01-01 00:00:00 │
+        │ 0.005476        ┆ 5    ┆ NaN           ┆ 1          ┆ 1997-01-01 00:00:00 │
+        │ 0.0             ┆ 2    ┆ 0.375         ┆ 2          ┆ 1998-01-01 00:00:00 │
+        │ 0.0             ┆ 3    ┆ 0.625         ┆ 2          ┆ 1998-01-01 00:00:00 │
+        │ 0.0             ┆ 4    ┆ 0.875         ┆ 2          ┆ 1998-01-01 00:00:00 │
+        │ 0.002738        ┆ 5    ┆ NaN           ┆ 3          ┆ 1999-01-01 00:00:00 │
+        │ 0.005476        ┆ 5    ┆ NaN           ┆ 3          ┆ 1999-01-01 00:00:00 │
+        │ 0.005476        ┆ 0    ┆ NaN           ┆ 3          ┆ 1999-01-01 00:00:00 │
+        └─────────────────┴──────┴───────────────┴────────────┴─────────────────────┘
+        """
+        code_to_time_map = cls.get_code_to_time_map(metadata_df)
+        code_to_numeric_value_map = cls.get_code_to_numeric_value_map(metadata_df)
+        # Initialize lists to store the DataFrame rows
+        dfs = []
+        for item in code_tensors:
+            time = torch.cumsum(code_to_time_map[item["code"]], dim=1)
+            numeric_values = code_to_numeric_value_map[item["code"]]
+            subject_id = item["subject_id"]
+            if isinstance(subject_id, torch.Tensor):
+                subject_id = subject_id.numpy()
+            df = pl.from_dict(
+                dict(
+                    time=time.numpy(),
+                    code=item["code"].numpy(),
+                    numeric_value=numeric_values.numpy(),
+                    subject_id=subject_id,
+                    mask=item["mask"].numpy(),
+                    prediction_time=item["prediction_time"],
+                )
+            )
+            df = (
+                df.explode("time", "code", "numeric_value", "mask")
+                .filter(pl.col("mask").cast(pl.Boolean))
+                .with_columns(pl.col("subject_id").cast(pl.Int64))
+                .with_columns(pl.col("time") / 365.2422)  # convert time from years to days
+                .rename({"time": "time_delta_days"})
+                .drop("mask")
+            )
+            dfs.append(df)
+        return pl.concat(dfs)
 
     @torch.no_grad()
     @eval_decorator

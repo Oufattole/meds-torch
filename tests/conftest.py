@@ -51,18 +51,19 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml", supervised=F
         cfg = compose(config_name=config_name, return_hydra_config=True, overrides=overrides)
 
         with open_dict(cfg):
-            if "data.collate_type=eic" in overrides:
-                cfg.paths.data_dir = str(meds_dir / "eic_tensors")
-            else:
-                cfg.paths.data_dir = str(meds_dir / "triplet_tensors")
+            if not any("data_dir" in override for override in overrides):
+                if "data.collate_type=eic" in overrides:
+                    cfg.paths.data_dir = str(meds_dir / "eic_tensors")
+                else:
+                    cfg.paths.data_dir = str(meds_dir / "triplet_tensors")
             if supervised:
                 cfg.data.task_name = SUPERVISED_TASK_NAME
                 cfg.data.task_root_dir = str(meds_dir / "tasks")
             cfg.paths.meds_cohort_dir = str(meds_dir / "MEDS_cohort")
             cfg.trainer.max_epochs = 1
             cfg.trainer.limit_train_batches = 0.1
-            cfg.trainer.limit_val_batches = 0.25
-            cfg.trainer.limit_test_batches = 0.25
+            cfg.trainer.limit_val_batches = 0.5
+            cfg.trainer.limit_test_batches = 0.5
             cfg.trainer.accelerator = "cpu"
             cfg.trainer.devices = 1
             cfg.data.num_workers = 0
@@ -75,7 +76,7 @@ def create_cfg(overrides, meds_dir: Path, config_name="train.yaml", supervised=F
 
             # Additional settings for specific fixtures
             if "data=multiwindow_pytorch_dataset" in overrides:
-                cfg.data.raw_windows_fp = str(meds_dir / "windows" / "raw_windows.parquet")
+                cfg.data.raw_windows_fp = str(meds_dir / "windows" / "raw" / "random_windows.parquet")
                 cfg.model.pre_window_name = "pre"
                 cfg.model.post_window_name = "post"
                 cfg.model.input_window_name = "pre"

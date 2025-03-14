@@ -12,6 +12,9 @@ import torch
 from omegaconf import open_dict
 from torch.utils.data import DataLoader
 
+from meds_torch.data.components.multimodal_pytorch_dataset import (
+    MultiModalPytorchDataset,
+)
 from meds_torch.data.components.multiwindow_pytorch_dataset import (
     MultiWindowPytorchDataset,
 )
@@ -71,6 +74,51 @@ def test_pytorch_dataset(meds_dir, collate_type):
         raise NotImplementedError(f"{collate_type} not implemented")
 
 
+@pytest.mark.parametrize(
+    "modality",
+    [
+        "text",
+        "ecg",
+    ],
+)
+def test_multimodal_pytorch_dataset(meds_dir, modality):
+    if modality == "ecg":
+        modality_dir = meds_dir / "ecg_triplet_tensors"
+    elif modality == "text":
+        modality_dir = meds_dir / "multimodal_triplet_tensors"
+    overrides = [
+        f"paths.data_dir={modality_dir}",
+        "data=multimodal_pytorch_dataset",
+    ]
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir, supervised=True)
+    cfg.data.collate_type = "triplet"
+    cfg.data.tokenizer = "emilyalsentzer/Bio_ClinicalBERT"
+    pyd = MultiModalPytorchDataset(cfg.data, split="train")
+    assert pyd.has_task, "Only supports supervised models at the moment"
+    item = pyd[0]
+    assert item.keys() == {
+        "static_indices",
+        "static_values",
+        "dynamic",
+        "modality",
+        "modality_sequence_idx",
+        "boolean_value",
+    }
+    batch = pyd.collate([pyd[i] for i in range(2)])
+    assert batch.keys() == {
+        "mask",
+        "static_mask",
+        "code",
+        "numeric_value",
+        "time_delta_days",
+        "numeric_value_mask",
+        "modality_batch_idx",
+        "modality_sequence_idx",
+        "modality",
+        "boolean_value",
+    }
+
+
 @pytest.mark.parametrize("collate_type", ["triplet", "triplet_prompt", "eic"])
 def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
     cfg = create_cfg(overrides=[], meds_dir=meds_dir, supervised=True)
@@ -109,6 +157,8 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
         )
         assert subject_data[SUPERVISED_TASK_NAME] == pyd.labels[index]
         # Check the supervised task matches the target indices
+        # The task is a deterministic function of the codes in this case
+        # so we can check the codes themeselves are loaded correctly via this check.
         data_label = bool(
             functools.reduce(
                 operator.or_, [subject_data["dynamic"].tensors["dim0/code"] == t for t in target_indices]
@@ -155,33 +205,43 @@ def test_pytorch_dataset_with_supervised_task(meds_dir, collate_type):
         raise NotImplementedError(f"{collate_type} not implemented")
 
 
-@pytest.mark.parametrize("subject_level_sampling", [False, True])
+@pytest.mark.parametrize("do_early_fuse_windows", [False, True])
 @pytest.mark.parametrize("collate_type", ["triplet"])
-def test_contrastive_windows(meds_dir, subject_level_sampling, collate_type):
-    cfg = create_cfg(overrides=["data=multiwindow_pytorch_dataset"], meds_dir=meds_dir)
+@pytest.mark.parametrize("subject_level_sampling", [False, True])
+def test_contrastive_windows(meds_dir, subject_level_sampling, collate_type, do_early_fuse_windows):
+    overrides = [
+        "data=multiwindow_pytorch_dataset",
+        "data.do_include_subject_id=true",
+    ]
+    if do_early_fuse_windows:
+        overrides.append("data.early_fusion_windows=[pre,post]")
+    cfg = create_cfg(overrides=overrides, meds_dir=meds_dir)
     cfg.data.collate_type = collate_type
     cfg.data.subject_level_sampling = subject_level_sampling
+    expected_item_keys = {"pre", "post", "subject_id"}
 
     assert cfg.data.cache_dir
     assert Path(cfg.data.raw_windows_fp).exists()
 
     pyd = MultiWindowPytorchDataset(cfg.data, split="train")
     item = pyd[0]
-    assert item.keys() == {"pre", "post"}
+    assert item.keys() == expected_item_keys
     assert item["pre"].keys() == {"static_indices", "static_values", "dynamic"}
     assert item["post"].keys() == {"static_indices", "static_values", "dynamic"}
 
+    expected_batch_keys = expected_item_keys | ({"FUSED"} if do_early_fuse_windows else set())
     batch = pyd.collate([pyd[i] for i in range(2)])
-    assert batch.keys() == {"pre", "post"}
-    for window in ["pre", "post"]:
-        assert batch[window].keys() == {
-            "mask",
-            "static_mask",
-            "code",
-            "numeric_value",
-            "time_delta_days",
-            "numeric_value_mask",
-        }
+    assert batch.keys() == expected_batch_keys
+    expected_window_keys = {
+        "mask",
+        "static_mask",
+        "code",
+        "numeric_value",
+        "time_delta_days",
+        "numeric_value_mask",
+    }
+    for window in expected_batch_keys - {"subject_id"}:
+        assert batch[window].keys() & expected_window_keys == expected_window_keys
 
 
 def test_full_datamodule(meds_dir):

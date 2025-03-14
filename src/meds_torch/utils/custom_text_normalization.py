@@ -4,10 +4,9 @@
 
 import hydra
 import polars as pl
-from omegaconf import DictConfig
-
 from MEDS_transforms import PREPROCESS_CONFIG_YAML
 from MEDS_transforms.mapreduce.mapper import map_over
+from omegaconf import DictConfig
 
 
 def normalize(
@@ -192,24 +191,27 @@ def normalize(
         idx_col = f"_{idx_col}"
 
     return (
-    df.with_row_index(idx_col)
-    .join(
-        code_metadata.lazy().select(cols_to_select),
-        on=["code"] + code_modifiers,
-        how="inner",
-        join_nulls=True,
+        df.with_row_index(idx_col)
+        .join(
+            code_metadata.lazy().select(cols_to_select),
+            on=["code"] + code_modifiers,
+            how="inner",
+            join_nulls=True,
+        )
+        .select(
+            idx_col,  # Keep row index to ensure proper sorting later
+            "subject_id",  # Include subject identifier
+            "time",  # Include the time column
+            pl.col("code/vocab_index").alias("code"),  # Normalized code column
+            ((pl.col("numeric_value") - pl.col("values/mean")) / pl.col("values/std")).alias(
+                "numeric_value"
+            ),  # Normalized numeric_value
+            "text_value",  # Keep the text_value column intact (this was previously dropped)
+        )
+        .sort(idx_col)  # Sort by the index column
+        .drop(idx_col)  # Drop the temporary index column
     )
-    .select(
-        idx_col,  # Keep row index to ensure proper sorting later
-        "subject_id",  # Include subject identifier
-        "time",  # Include the time column
-        pl.col("code/vocab_index").alias("code"),  # Normalized code column
-        ((pl.col("numeric_value") - pl.col("values/mean")) / pl.col("values/std")).alias("numeric_value"),  # Normalized numeric_value
-        "text_value"  # Keep the text_value column intact (this was previously dropped)
-    )
-    .sort(idx_col)  # Sort by the index column
-    .drop(idx_col)  # Drop the temporary index column
-)
+
 
 @hydra.main(
     version_base=None, config_path=str(PREPROCESS_CONFIG_YAML.parent), config_name=PREPROCESS_CONFIG_YAML.stem

@@ -1,4 +1,5 @@
 import dataclasses
+
 import torch
 import torch.nn.functional as F
 import torchmetrics
@@ -9,6 +10,7 @@ from torch import nn
 from meds_torch.models.base_model import BaseModule
 from meds_torch.models.utils import OutputBase
 
+
 @dataclasses.dataclass
 class SupervisedOutput(OutputBase):
     embeddings: torch.Tensor
@@ -16,10 +18,12 @@ class SupervisedOutput(OutputBase):
     loss: torch.Tensor
     contrastive_loss: torch.Tensor = None  # Add contrastive loss to the output
 
+
 class ContrastiveLossWithCLIP(nn.Module):
     """Contrastive loss similar to the one used in CLIP, with cross-entropy over cosine similarities."""
+
     def __init__(self, temperature=0.07):
-        super(ContrastiveLossWithCLIP, self).__init__()
+        super().__init__()
         self.temperature = temperature
 
     def forward(self, text_embeddings, triplet_embeddings):
@@ -43,8 +47,10 @@ class ContrastiveLossWithCLIP(nn.Module):
         loss = (loss_text_to_triplet + loss_triplet_to_text) / 2
         return loss
 
+
 class ContrastiveSupervisedModule(BaseModule):
     """Supervised model with contrastive loss to align embeddings across two modalities."""
+
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
         self.task_name = cfg.task_name
@@ -84,7 +90,7 @@ class ContrastiveSupervisedModule(BaseModule):
 
         # Apply projection for supervised task
         logits = self.projection(combined_embedding)
-        
+
         if self.cfg.get_representations:
             supervised_loss = None
         else:
@@ -107,10 +113,12 @@ class ContrastiveSupervisedModule(BaseModule):
         self.train_acc.update(output.logits.squeeze(), batch[self.task_name].float())
         self.train_auc.update(output.logits.squeeze(), batch[self.task_name].float())
         self.train_apr.update(output.logits.squeeze(), batch[self.task_name].int())
-        
+
         # Log losses
         self.log("train/step_loss", output.loss, on_step=True, batch_size=self.cfg.batch_size)
-        self.log("train/contrastive_loss", output.contrastive_loss, on_step=True, batch_size=self.cfg.batch_size)
+        self.log(
+            "train/contrastive_loss", output.contrastive_loss, on_step=True, batch_size=self.cfg.batch_size
+        )
 
         assert not torch.isnan(output.loss), "Loss is NaN"
         return output.loss
@@ -144,7 +152,9 @@ class ContrastiveSupervisedModule(BaseModule):
         self.val_apr.update(output.logits.squeeze(), batch[self.task_name].int())
 
         self.log("val/loss", output.loss, on_epoch=True, batch_size=self.cfg.batch_size)
-        self.log("val/contrastive_loss", output.contrastive_loss, on_epoch=True, batch_size=self.cfg.batch_size)
+        self.log(
+            "val/contrastive_loss", output.contrastive_loss, on_epoch=True, batch_size=self.cfg.batch_size
+        )
         return output.loss
 
     def on_validation_epoch_end(self):

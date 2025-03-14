@@ -1,0 +1,6 @@
+defaults:
+  - pytorch_dataset
+  - _self_
+name: multimodal_pytorch_dataset
+
+modality_files_root: ${paths.data_dir}/tokenization/modalities

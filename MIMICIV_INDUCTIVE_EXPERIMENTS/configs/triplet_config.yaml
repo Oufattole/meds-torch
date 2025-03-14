@@ -35,3 +35,5 @@ stage_configs:
       - code/n_subjects
       - name: values/quantiles
         quantiles: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  tokenization:
+    _script: "python -m meds_torch.utils.custom_tokenization"
