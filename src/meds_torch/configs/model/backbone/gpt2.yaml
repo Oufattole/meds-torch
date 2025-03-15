@@ -1,0 +1,17 @@
+defaults:
+  - default
+  - _self_
+
+_target_: meds_torch.models.components.gpt2.GPT2Wrapper.initialize
+
+model:
+  _target_: meds_torch.models.components.gpt2.GPTLanguageModel.initialize
+  gpt_config_kwargs:
+    vocab_size: ${model.backbone.vocab_size}
+    n_positions: ${model.backbone.max_seq_len}
+    n_layer: ${model.backbone.n_layers}
+    n_head: ${model.backbone.nheads}
+    n_embd: ${model.backbone.token_dim}
+  is_use_rope: false
+
+model_type: "gpt2"

@@ -117,6 +117,7 @@ class TrajectoryBatch:
             "numeric_value": pl.Float32,
             "subject_id": pl.Int32,
             "prediction_time": pl.Datetime,
+            "batch_indices": pl.Int32,
         }
 
         # Pre-filter masked data using torch operations for efficiency
@@ -154,6 +155,7 @@ class TrajectoryBatch:
             ),
             "subject_id": subject_ids,
             "prediction_time": pred_times,
+            "batch_indices": batch_indices,
         }
 
         # Create DataFrame directly from the efficient dictionary
@@ -167,7 +169,15 @@ class TrajectoryBatch:
             right_on="code/vocab_index",
         ).rename({"code_right": "code", "code": "code/vocab_index"})
 
-        return df["subject_id", "prediction_time", "time", "code", "code/vocab_index", "numeric_value"]
+        return df[
+            "subject_id",
+            "prediction_time",
+            "time",
+            "code",
+            "code/vocab_index",
+            "numeric_value",
+            "batch_indices",
+        ]
 
 
 def get_time_days_delta(
