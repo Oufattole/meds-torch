@@ -37,6 +37,7 @@ class GPTLanguageModel(torch.nn.Module, Module):
             assert hasattr(model_config, key), f"Config for HF model gpt-neox does not have attribute {key}"
             setattr(model_config, key, val)
         model_config.intermediate_size = 4 * model_config.hidden_size
+        model_config.max_position_embeddings += self.config.token_bin_size + 1
 
         self.model = AutoModelForCausalLM.from_config(model_config, **kwargs)
 
@@ -50,12 +51,17 @@ class GPT2Wrapper(torch.nn.Module, Module):
     def forward(self, batch, do_get_last_token=None):
         input_data, mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
         gpt2_model: GPTNeoXForCausalLM = self.model.model
-        output = gpt2_model(input_ids=input_data, attention_mask=mask.float(), return_dict=True)
+        output = gpt2_model(
+            inputs_embeds=input_data, attention_mask=mask.float(), return_dict=True, output_hidden_states=True
+        )
+        last_hidden_state = output.hidden_states[-1]
         logits = output.logits
         if do_get_last_token is None and self.cfg.get_last_token:
-            embeddings = get_last_token(logits, ~(mask.to(torch.bool)))
+            embeddings = get_last_token(last_hidden_state, ~(mask.to(torch.bool)))
         elif do_get_last_token:
-            embeddings = get_last_token(logits, ~(mask.to(torch.bool)))
+            embeddings = get_last_token(last_hidden_state, ~(mask.to(torch.bool)))
+        else:
+            embeddings = last_hidden_state
         batch[BACKBONE_TOKENS_KEY] = logits
         batch[BACKBONE_EMBEDDINGS_KEY] = embeddings
         return batch

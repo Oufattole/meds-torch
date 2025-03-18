@@ -1,3 +1,4 @@
+import copy
 from typing import Any
 
 from hydra.utils import get_class
@@ -5,12 +6,23 @@ from lightning import LightningDataModule
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, Dataset
 
+from meds_torch.utils import RankedLogger
 from meds_torch.utils.module_class import Module
+
+log = RankedLogger(__name__, rank_zero_only=True)
 
 
 def get_dataset(cfg: DictConfig, split):
     dataset_cls = get_class(cfg.dataset_cls)
-    return dataset_cls(cfg, split)
+    if hasattr(cfg, "subsampler") and cfg.subsampler is not None:
+        # initialize dataset with infinite max sequence length and subsample chunks with subsampler
+        cfg_copy = copy.deepcopy(cfg)
+        cfg_copy.max_seq_len = 1_000_000
+        dataset = dataset_cls(cfg_copy, split)
+        dataset = cfg.subsampler(dataset)
+    else:
+        dataset = dataset_cls(cfg, split)
+    return dataset
 
 
 class MEDSDataModule(LightningDataModule, Module):
@@ -113,7 +125,7 @@ class MEDSDataModule(LightningDataModule, Module):
         """
         return DataLoader(
             dataset=self.data_train,
-            shuffle=True,
+            shuffle=((not hasattr(self.cfg, "subsampler")) or self.cfg.subsampler is None),
             collate_fn=self.data_train.collate,
             drop_last=True,
             **self.cfg.dataloader,

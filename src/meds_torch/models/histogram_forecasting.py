@@ -1112,10 +1112,10 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
     @TimeableMixin.TimeAs
     def get_forecast_logits(self, model_output):
         if isinstance(model_output, torch.Tensor):
-            all_token_embeddings = model_output
+            code_logits = model_output
         else:
-            all_token_embeddings = model_output[BACKBONE_TOKENS_KEY]
-        code_logits = self.code_head(all_token_embeddings)
+            code_logits = model_output[BACKBONE_TOKENS_KEY]
+        # code_logits = self.code_head(all_token_embeddings)
         # histogram_mask = model_output["histogram"] > 0
         # code_logits[~histogram_mask] = -float("inf")
 

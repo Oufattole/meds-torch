@@ -2,15 +2,16 @@ defaults:
   - default
   - _self_
 
-_target_: meds_torch.models.components.gpt2.GPT2Wrapper.initialize
+_target_: meds_torch.models.components.histogram_gpt.GPT2Wrapper.initialize
 
 model:
-  _target_: meds_torch.models.components.gpt2.GPTLanguageModel.initialize
+  _target_: meds_torch.models.components.histogram_gpt.GPTLanguageModel.initialize
   gpt_config_kwargs:
     vocab_size: ${model.backbone.vocab_size}
     max_position_embeddings: ${model.backbone.max_seq_len}
     num_hidden_layers: ${model.backbone.n_layers}
     num_attention_heads: ${model.backbone.nheads}
     hidden_size: ${model.backbone.token_dim}
+  token_bin_size: ${data.token_bin_size}
 
-model_type: "gpt2"
+model_type: "histogram_gptneo"

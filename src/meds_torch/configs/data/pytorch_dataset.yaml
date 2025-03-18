@@ -1,3 +1,7 @@
+defaults:
+  - _self_
+  - subsampler: null
+
 _target_: meds_torch.data.datamodule.MEDSDataModule.initialize
 dataset_cls: meds_torch.data.components.pytorch_dataset.PytorchDataset
 

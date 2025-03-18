@@ -36,6 +36,14 @@ from meds_torch.models.components.utils import (
 )
 from meds_torch.utils import TIME_DELTA_TOKEN
 
+MODEL_LOSS_KEYS = [
+    "MODEL//code_loss",
+    "MODEL//vae_loss",
+    "MODEL//vae_rec_loss",
+    "MODEL//vae_kl_loss",
+    "MODEL//diffusion_loss",
+]
+
 
 class DummyTrajectoryLabeler:
     def __init__(self, B):
@@ -700,13 +708,26 @@ class EicForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
         return batch
 
     def _log(self, batch, split):
-        self.log(split + "/loss", batch[MODEL_BATCH_LOSS_KEY])
+        on_step = split == "train"
+        for loss_key in MODEL_LOSS_KEYS + [MODEL_LOSS_KEY]:
+            if loss_key in batch:
+                loss_name = "/" + loss_key.split("/")[-1].lower()
+                self.log(
+                    split + loss_name,
+                    batch[loss_key],
+                    on_step=on_step,
+                    on_epoch=True,
+                    prog_bar=True,
+                    logger=True,
+                )
         if split == "train":
             self.train_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
         elif split == "val":
             self.val_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
         elif split == "test":
             self.test_next_token_metric.update(batch[CODE_LOGITS], batch["code"], batch["mask"])
+        else:
+            raise ValueError(f"Invalid split: {split}")
 
     def _generate(self, batch):
         if self.cfg.generate_id is not None:

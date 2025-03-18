@@ -1005,7 +1005,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
             dict: A dictionary containing the collated batch data.
         """
 
-        data = JointNestedRaggedTensorDict.vstack([item["dynamic"] for item in batch]).to_dense()
+        data = JointNestedRaggedTensorDict.vstack([item["dynamic"] for item in batch]).to_dense(
+            padding_side=self.config.seq_padding_side
+        )
         tensorized = {k: torch.as_tensor(v) for k, v in data.items()}
         tensorized["code"] = tensorized["code"].long()
         tensorized["mask"] = tensorized.pop("dim1/mask")

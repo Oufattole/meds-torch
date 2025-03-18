@@ -1,0 +1,5 @@
+_target_: meds_torch.data.components.subsampler.OverlapSkippingSlidingWindowDataset
+_partial_: true
+context_length: ${data.max_seq_len}
+overlap: 512
+observation_lag: 1
