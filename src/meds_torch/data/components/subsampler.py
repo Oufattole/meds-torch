@@ -33,16 +33,22 @@ def collate_fn(batch_list):
 
     input_ids_padded = pad_sequence(input_ids_list, batch_first=True, padding_value=0)
     mask_padded = pad_sequence(mask_list, batch_first=True, padding_value=False)
+
     # Note: for bool Tensors, `padding_value=True` => skip by default
     # in any positions beyond the original window length
 
-    return {
+    data = {
         "code": input_ids_padded,
         "mask": mask_padded,
         # "subject_id": subject_id_list,
         # "prediction_time": prediction_time_list,
         # "end_time": end_time_list,
     }
+    if "histogram" in batch_list[0]:
+        histogram_list = [x["histogram"].squeeze(0) for x in batch_list]
+        histogram_padded = pad_sequence(histogram_list, batch_first=True, padding_value=0)
+        data["histogram"] = histogram_padded
+    return data
 
 
 class OverlapSkippingSlidingWindowDataset(IterableDataset):
@@ -90,7 +96,7 @@ class OverlapSkippingSlidingWindowDataset(IterableDataset):
             per_worker = int(math.ceil(len(self.dataset) / float(num_workers)))
             start = worker_id * per_worker
             end = min(start + per_worker, len(self.dataset))
-        log.info(f"Worker {worker_id} iterating from {start} to {end}")
+            log.info(f"Worker {worker_id} iterating from {start} to {end}")
         for i in range(start, end):
             # 1) Get the full token sequence from the underlying dataset
             sample = self.dataset.collate([self.dataset[i]])
@@ -116,11 +122,14 @@ class OverlapSkippingSlidingWindowDataset(IterableDataset):
                     # We overlapped `overlap` tokens, so skip them in metric evaluation
                     skip_mask[: self.overlap] = True
 
-                yield {
+                data = {
                     "code": input_ids,
                     "mask": torch.ones_like(input_ids, dtype=torch.bool),
                     **{key: sample[key] for key in self.carry_forward_keys if key in sample},
                 }
+                if "histogram" in sample:
+                    data["histogram"] = sample["histogram"][:, idx:window_end]
+                yield data
 
                 # Move forward by stride
                 idx += self.stride

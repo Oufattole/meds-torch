@@ -1,7 +1,6 @@
 defaults:
   - pytorch_dataset
   - _self_
-  - subsampler: null
 
 
 dataset_cls: meds_torch.data.components.histogram_pytorch_dataset.HistogramPytorchDataset
