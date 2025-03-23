@@ -20,6 +20,7 @@ from rich.progress import (
 )
 from torch import nn
 from torchvision.ops import MLP
+from transformers import GPTNeoXForCausalLM
 from x_transformers import Decoder, TransformerWrapper
 from x_transformers.autoregressive_wrapper import (
     FILTER_LOGITS_FN,
@@ -2011,3 +2012,102 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         next_token_logits[~histogram_based_logit_mask] = -float("inf")
 
         return next_token_logits, next_histogram, latent_next_histogram_posterior, counts, last_embeddings
+
+    def hf_get_sample(self, output, prev_histogram):
+        """Get next token logits and histogram prediction for a single step.
+
+        Args:
+            last_logits: Logits for the last token [batch_size, vocab_size]
+            last_embedding: Embedding for the last token [batch_size, embedding_size]
+
+        Returns:
+            tuple: (next_token_logits, next_histogram)
+                - next_token_logits: Logits for next token prediction [batch_size, vocab_size]
+                - next_histogram: Predicted histogram [batch_size, vocab_size]
+        """
+
+        logits = output.logits[:, -1]
+        histogram_based_logit_mask = self.subvocab_mapper.from_subvocab_histogram(prev_histogram > 0)
+        logits[~histogram_based_logit_mask] = -float("inf")
+
+        # TODO optimize this to operate on only the H tokens
+        mask = torch.ones_like(logits, dtype=torch.bool)
+        mask[..., self.h_token] = False
+        mask[..., self.ntp_token] = False
+
+        logits_finite = logits.isfinite()
+        has_h_token = logits_finite[:, self.h_token]
+        has_o_token = logits_finite[:, self.ntp_token]
+        num_finite_logits = logits_finite.sum(dim=-1)
+        is_histogram_only_h_o_tokens = num_finite_logits <= 2
+
+        mask[is_histogram_only_h_o_tokens.squeeze(-1) & has_h_token, self.h_token] = True
+        can_sample_o = is_histogram_only_h_o_tokens & ~has_h_token & has_o_token
+        mask[can_sample_o.squeeze(-1), self.ntp_token] = True
+
+        # Always allow censored token sampling
+        mask[~is_histogram_only_h_o_tokens, self.EOS_TOKEN_ID] = True
+
+        logits = logits.masked_fill(~mask, float("-inf"))
+        probs = F.softmax(logits / self.cfg.temperature, dim=-1)
+        sample = torch.multinomial(probs, 1)
+        return sample
+
+    def hf_update_histogram(self, output, sample, prev_histogram, prev_sample):
+        last_embeddings = output.hidden_states[-1][:, -1]
+        subvocab_sample = self.subvocab_mapper.to_subvocab(sample)
+        one_hot_sample = torch.zeros_like(prev_histogram).scatter_(1, subvocab_sample, 1)
+        next_decrement_histogram = prev_histogram - one_hot_sample
+
+        if self.cfg.use_diffusion:
+            next_ae_histogram, count = self.histogram_normalizer.reverse_transform(
+                self.diffusion.sample(last_embeddings, temperature=self.cfg.temperature)
+            )
+        else:
+            next_histogram_posterior = self.autoencoder.encode(last_embeddings)
+            next_ae_histogram_binary = self.autoencoder.decode(next_histogram_posterior.sample())
+            next_ae_histogram, count = self.histogram_normalizer.reverse_transform(next_ae_histogram_binary)
+
+        h_token_histogram_mask = (
+            (prev_sample == self.h_token).reshape(-1, 1).repeat(1, next_ae_histogram.shape[1])
+        )
+        next_histogram = torch.where(h_token_histogram_mask, next_ae_histogram, next_decrement_histogram)
+        if (next_histogram == 0).all():
+            raise ValueError("All histogram counts are zero somehow, this should not happen.")
+
+        return next_histogram
+
+    @torch.no_grad()
+    def hf_generate(self, batch):
+        batch = self.input_encoder(batch)
+        gpt_model: GPTNeoXForCausalLM = self.model.model.model
+        samples = batch["code"]
+        input_data, input_mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
+        input_mask = batch["mask"].float()
+        remaining_tokens = self.cfg.max_seq_len - batch["code"].shape[1]
+        kv_cache = None
+        prev_histogram = batch["histogram"][:, -1]
+        from tqdm.auto import trange
+
+        for _ in trange(remaining_tokens):
+            output = gpt_model.forward(
+                inputs_embeds=input_data,
+                attention_mask=input_mask,
+                return_dict=True,
+                output_hidden_states=True,
+                past_key_values=kv_cache,
+                use_cache=True,
+            )
+            kv_cache = output.past_key_values
+            sample = self.hf_get_sample(output, prev_histogram)
+            prev_sample = batch["code"][:, -1]
+            prev_histogram = self.hf_update_histogram(output, sample, prev_histogram, prev_sample)
+
+            # Append new tokens
+            samples = torch.cat((samples, sample), dim=-1)
+            next_sample_embedding = self.input_encoder.process_sample(sample, prev_histogram.unsqueeze(1))
+            input_data = next_sample_embedding
+            input_mask = (
+                torch.ones(input_mask.shape[0]).to(input_mask.device, dtype=torch.float32).unsqueeze(-1)
+            )
+        return samples

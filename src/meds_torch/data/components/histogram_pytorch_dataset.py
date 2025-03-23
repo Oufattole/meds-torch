@@ -661,9 +661,15 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
         masks = [torch.ones_like(code, dtype=torch.bool) for code in codes]
         histograms = [torch.as_tensor(item["cum_sum"]["histogram"], dtype=torch.float32) for item in batch]
         tensorized = {}
-        tensorized["code"] = torch.nn.utils.rnn.pad_sequence(codes, batch_first=True)
-        tensorized["mask"] = torch.nn.utils.rnn.pad_sequence(masks, batch_first=True)
-        tensorized["histogram"] = torch.nn.utils.rnn.pad_sequence(histograms, batch_first=True)
+        tensorized["code"] = torch.nn.utils.rnn.pad_sequence(
+            codes, batch_first=True, padding_side=self.config.seq_padding_side
+        )
+        tensorized["mask"] = torch.nn.utils.rnn.pad_sequence(
+            masks, batch_first=True, padding_side=self.config.seq_padding_side
+        )
+        tensorized["histogram"] = torch.nn.utils.rnn.pad_sequence(
+            histograms, batch_first=True, padding_side=self.config.seq_padding_side
+        )
 
         if "subject_id" in batch[0].keys():
             tensorized["subject_id"] = torch.LongTensor([item["subject_id"] for item in batch])
