@@ -51,8 +51,14 @@ class GPT2Wrapper(torch.nn.Module, Module):
     def forward(self, batch, do_get_last_token=None):
         input_data, mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
         gpt2_model: GPTNeoXForCausalLM = self.model.model
+        if len(input_data.shape) == 2:
+            kwargs = dict(input_ids=input_data)
+        elif len(input_data.shape) == 3:
+            kwargs = dict(inputs_embeds=input_data)
+        else:
+            raise ValueError(f"Invalid input_data shape: {input_data.shape}")
         output = gpt2_model(
-            inputs_embeds=input_data, attention_mask=mask.float(), return_dict=True, output_hidden_states=True
+            **kwargs, attention_mask=mask.float(), return_dict=True, output_hidden_states=True
         )
         last_hidden_state = output.hidden_states[-1]
         logits = output.logits

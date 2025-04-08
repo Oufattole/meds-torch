@@ -1,0 +1,9 @@
+instantiate:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  _partial_: true
+  T_max: ${trainer.min_epochs}  # number of epochs before restarting
+  eta_min: 1e-6     # minimum lr for cosine annealing
+
+extra_kwargs:
+  monitor: val/loss
+  interval: step

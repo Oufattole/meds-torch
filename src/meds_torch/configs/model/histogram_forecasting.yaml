@@ -56,7 +56,12 @@ use_diffusion: false
 diffusion_noise_schedule: linear
 warmup_steps: 0
 annealing_steps: 0
+deterministic: false
 
-
+use_linear_encoder: true
 encoder_dims: [768, 768, 768, 768]
 decoder_dims: [768, 768, 768, 768]
+autoencoder_type: "vae"
+autoencoder_mi_num_layers: 3
+autoencoder_mi_mask_prob: 0.8
+autoencoder_mi_num_iters: 1

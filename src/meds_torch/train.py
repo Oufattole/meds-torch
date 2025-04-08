@@ -1,5 +1,6 @@
 import shutil
 from importlib.resources import files
+from pathlib import Path
 from typing import Any
 
 import hydra
@@ -149,7 +150,8 @@ def main(cfg: DictConfig) -> float | None:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     if not cfg.trainer.get("fast_dev_run"):
-        shutil.copy(best_model_path, checkpoint_dir / "best_model.ckpt")
+        if Path(best_model_path).exists():
+            shutil.copy(best_model_path, checkpoint_dir / "best_model.ckpt")
 
     # return optimized metric
     return metric_value

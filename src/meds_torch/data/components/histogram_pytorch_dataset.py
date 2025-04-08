@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import torch
+from MEDS_transforms.mapreduce.utils import rwlock_wrap
 from mixins import SeedableMixin, TimeableMixin
 from omegaconf import DictConfig, OmegaConf, open_dict
 
@@ -95,6 +96,45 @@ class SubvocabMapper:
 
         if squeeze_out:
             # Remove the added batch dimension to return to (L, S)
+            vocab_hist = vocab_hist.squeeze(0)
+
+        return vocab_hist
+
+    def from_subvocab_histogram_counts(self, sub_hist: torch.Tensor) -> torch.Tensor:
+        """
+        Expands a histogram count tensor from sub-vocabulary to full vocabulary space.
+
+        Supports input of shape (L, S') or (B, L, S') where S' is the sub-vocabulary size.
+
+        Args:
+            sub_hist (torch.Tensor): A count tensor of shape (L, S') or (B, L, S').
+
+        Returns:
+            torch.Tensor: A tensor of shape (L, S) if input was (L, S') or (B, L, S)
+                if input was (B, L, S'), where S is the vocabulary size.
+        """
+        if sub_hist.device != self.vocab_to_subvocab.device:
+            self.vocab_to_subvocab = self.vocab_to_subvocab.to(sub_hist.device)
+
+        # Determine if we have a batch dimension.
+        if sub_hist.ndim == 2:
+            # Shape is (L, S'), add a batch dimension.
+            sub_hist = sub_hist.unsqueeze(0)  # Now (1, L, S')
+            squeeze_out = True
+        elif sub_hist.ndim == 3:
+            squeeze_out = False
+        else:
+            raise ValueError(f"Expected input tensor with 2 or 3 dimensions, got shape {sub_hist.shape}")
+
+        B, L, _ = sub_hist.shape
+
+        # Create an index tensor of shape (1, 1, vocab_size) then expand it to (B, L, vocab_size).
+        index = self.vocab_to_subvocab.view(1, 1, -1).expand(B, L, self.vocab_size)
+        # Gather along dimension 2 (the sub-vocab dimension) to get the corresponding full-vocab counts.
+        vocab_hist = torch.gather(sub_hist, dim=2, index=index)
+
+        if squeeze_out:
+            # Remove the added batch dimension to return to (L, S).
             vocab_hist = vocab_hist.squeeze(0)
 
         return vocab_hist
@@ -602,7 +642,24 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
                 schema=augmented_metadata_df_schema,
             )
             metadata_df = pl.concat((metadata_df, augmented_metadata_df), how="diagonal")
-            metadata_df.write_parquet(self.cfg.augmented_code_metadata_fp, use_pyarrow=True)
+
+            def read_fn(_):
+                return metadata_df
+
+            def compute_fn(df):
+                return df
+
+            def write_fn(df, out_fp):
+                df.write_parquet(out_fp, use_pyarrow=True)
+
+            rwlock_wrap(
+                Path(self.cfg.code_metadata_fp),
+                Path(self.cfg.augmented_code_metadata_fp),
+                read_fn,
+                write_fn,
+                compute_fn,
+                do_overwrite=False,
+            )
         metadata_df = pl.read_parquet(self.cfg.augmented_code_metadata_fp)
         self.subvocab_mapper = SubvocabMapper(metadata_df)
         self.h_token = metadata_df.filter(pl.col("code") == "[H]")["code/vocab_index"][-1]

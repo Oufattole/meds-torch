@@ -1,6 +1,9 @@
 from collections.abc import Callable
 from contextlib import nullcontext
+from typing import Optional, Union
+from collections.abc import Sequence
 
+import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 import torch
@@ -19,6 +22,8 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 from torch import nn
+from torchmetrics import Metric
+from torchmetrics.utilities.plot import _AX_TYPE, _PLOT_OUT_TYPE
 from torchvision.ops import MLP
 from transformers import GPTNeoXForCausalLM
 from x_transformers import Decoder, TransformerWrapper
@@ -57,6 +62,213 @@ MODEL_LOSS_KEYS = [
     "MODEL//vae_kl_loss",
     "MODEL//diffusion_loss",
 ]
+
+
+class HistogramMetric(Metric):
+    """
+    Accumulates histograms (true, mean, sample) and, when computed, produces three plots and
+    returns the summed Mean Absolute Error (MAE) across all categories (using the mean predictions).
+
+    The plot() method follows the torchmetrics v1.0.0 plotting API.
+    """
+
+    # Optional attributes for the internal _plot method (not used here because we need custom plots)
+    plot_lower_bound: float | None = None
+    plot_upper_bound: float | None = None
+
+    def __init__(self, dist_sync_on_step: bool = False):
+        super().__init__(dist_sync_on_step=dist_sync_on_step)
+        self.add_state("true_hist", default=[], dist_reduce_fx=None)
+        self.add_state("mean_hist", default=[], dist_reduce_fx=None)
+        self.add_state("sample_hist", default=[], dist_reduce_fx=None)
+
+    def sync(self, *args, **kwargs):
+        # Disable distributed synchronization on CPU to avoid the error.
+        return
+
+    def update(self, true_hist: torch.Tensor, mean_hist: torch.Tensor, sample_hist: torch.Tensor):
+        """
+        Update the metric state with a batch of histograms.
+        Each input is expected to be a tensor of shape (batch_size, num_categories).
+        """
+        self.true_hist.append(true_hist.detach().cpu())
+        self.mean_hist.append(mean_hist.detach().cpu())
+        self.sample_hist.append(sample_hist.detach().cpu())
+
+    def _aggregate(self):
+        """
+        Aggregates accumulated states and computes all per-category quantities needed for plotting and metrics.
+        Returns a dictionary containing:
+         - x: category indices
+         - mae_mean: per-category MAE for mean histogram predictions
+         - mae_sample: per-category MAE for sample histogram predictions
+         - avg_true: per-category average count from the true histograms
+         - corr_mean: per-category Pearson correlation (true vs. mean predictions)
+         - corr_sample: per-category Pearson correlation (true vs. sample predictions)
+         - true_mean, true_std: per-category mean and std for the true histograms
+         - mean_mean, mean_std: per-category mean and std for the mean histograms
+         - sample_mean, sample_std: per-category mean and std for the sample histograms
+         - mae_sum: summed MAE over all categories (using mean histogram predictions)
+         - num_categories: total number of categories
+        """
+        true_hist = torch.cat(self.true_hist, dim=0)  # shape: [N, C]
+        mean_hist = torch.cat(self.mean_hist, dim=0)
+        sample_hist = torch.cat(self.sample_hist, dim=0)
+
+        num_categories = true_hist.shape[1]
+        x = np.arange(num_categories)
+
+        # Plot 1 data: MAE per category & average true count
+        mae_mean = torch.mean(torch.abs(mean_hist - true_hist), dim=0).numpy()
+        mae_sample = torch.mean(torch.abs(sample_hist - true_hist), dim=0).numpy()
+        avg_true = torch.mean(true_hist, dim=0).numpy()
+
+        # Plot 2 data: Pearson correlation per category
+        true_np = true_hist.numpy()
+        mean_np = mean_hist.numpy()
+        sample_np = sample_hist.numpy()
+        corr_mean = []
+        corr_sample = []
+        for i in range(num_categories):
+            if np.std(true_np[:, i]) > 0 and np.std(mean_np[:, i]) > 0:
+                corr_mean.append(np.corrcoef(mean_np[:, i], true_np[:, i])[0, 1])
+            else:
+                corr_mean.append(np.nan)
+            if np.std(true_np[:, i]) > 0 and np.std(sample_np[:, i]) > 0:
+                corr_sample.append(np.corrcoef(sample_np[:, i], true_np[:, i])[0, 1])
+            else:
+                corr_sample.append(np.nan)
+        corr_mean = np.array(corr_mean)
+        corr_sample = np.array(corr_sample)
+
+        # Plot 3 data: Means and stds per category for each histogram type
+        true_mean_val = torch.mean(true_hist, dim=0).numpy()
+        true_std_val = torch.std(true_hist, dim=0).numpy()
+        mean_mean_val = torch.mean(mean_hist, dim=0).numpy()
+        mean_std_val = torch.std(mean_hist, dim=0).numpy()
+        sample_mean_val = torch.mean(sample_hist, dim=0).numpy()
+        sample_std_val = torch.std(sample_hist, dim=0).numpy()
+
+        # Summed MAE across categories for mean histogram predictions
+        mae_sum = float(mae_mean.sum())
+
+        return {
+            "x": x,
+            "mae_mean": mae_mean,
+            "mae_sample": mae_sample,
+            "avg_true": avg_true,
+            "corr_mean": corr_mean,
+            "corr_sample": corr_sample,
+            "true_mean": true_mean_val,
+            "true_std": true_std_val,
+            "mean_mean": mean_mean_val,
+            "mean_std": mean_std_val,
+            "sample_mean": sample_mean_val,
+            "sample_std": sample_std_val,
+            "mae_sum": mae_sum,
+            "num_categories": num_categories,
+        }
+
+    def compute(self) -> float:
+        """
+        Computes and returns the summed MAE across all categories (using mean histogram predictions).
+        Also clears the internal states if needed.
+        """
+        plot_data = self._aggregate()
+        return plot_data["mae_sum"]
+
+    def plot(
+        self, val: torch.Tensor | Sequence[torch.Tensor] | None = None, ax: _AX_TYPE | None = None
+    ) -> _PLOT_OUT_TYPE:
+        """
+        Creates three plots:
+         1. MAE per category vs. average true count (with twin y-axis).
+         2. Pearson correlation per category for mean vs. sample histogram predictions.
+         3. Grouped bar plot of the per-category mean and std (error bars) for true, mean, and sample histograms.
+
+         Returns:
+            A tuple (fig, axs) where axs is an array of Axes objects.
+        """
+        plot_data = self._aggregate()
+        x = plot_data["x"]
+        num_categories = plot_data["num_categories"]
+        bar_width = 0.35  # width for bar plots
+
+        # Create a figure with three subplots (stacked vertically)
+        fig, axs = plt.subplots(3, 1, figsize=(12, 18))
+
+        # -------------------------------
+        # Plot 1: MAE vs Average True Count
+        # -------------------------------
+        ax1 = axs[0]
+        ax1.bar(x - bar_width / 2, plot_data["mae_mean"], bar_width, label="Mean Histogram MAE")
+        ax1.bar(x + bar_width / 2, plot_data["mae_sample"], bar_width, label="Sample Histogram MAE")
+        ax1.set_xlabel("Category")
+        ax1.set_ylabel("Mean Absolute Error")
+        ax1.set_title("MAE per Category vs. Average True Count")
+        ax1.set_xticks(x)
+        ax1.set_xticklabels([f"Cat {i+1}" for i in x])
+
+        # Twin axis for average true count
+        ax1_twin = ax1.twinx()
+        ax1_twin.plot(
+            x, plot_data["avg_true"], color="black", marker="o", linewidth=2, label="Average True Count"
+        )
+        ax1_twin.set_ylabel("Average True Count")
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines1_twin, labels1_twin = ax1_twin.get_legend_handles_labels()
+        ax1_twin.legend(lines1 + lines1_twin, labels1 + labels1_twin, loc="upper left")
+
+        # -------------------------------
+        # Plot 2: Pearson Correlation per Category
+        # -------------------------------
+        ax2 = axs[1]
+        ax2.bar(x - bar_width / 2, plot_data["corr_mean"], bar_width, label="Mean Histogram Corr")
+        ax2.bar(x + bar_width / 2, plot_data["corr_sample"], bar_width, label="Sample Histogram Corr")
+        ax2.set_xlabel("Category")
+        ax2.set_ylabel("Pearson Correlation Coefficient")
+        ax2.set_title("Correlation per Category: Mean vs. Sample Histogram Predictions")
+        ax2.set_xticks(x)
+        ax2.set_xticklabels([f"Cat {i+1}" for i in x])
+        ax2.legend()
+
+        # -------------------------------
+        # Plot 3: Grouped Bar Plot (Mean and Std for Each Histogram)
+        # -------------------------------
+        ax3 = axs[2]
+        ax3.bar(
+            x - bar_width,
+            plot_data["true_mean"],
+            bar_width,
+            yerr=plot_data["true_std"],
+            capsize=5,
+            label="True Histogram",
+        )
+        ax3.bar(
+            x,
+            plot_data["mean_mean"],
+            bar_width,
+            yerr=plot_data["mean_std"],
+            capsize=5,
+            label="Mean Histogram",
+        )
+        ax3.bar(
+            x + bar_width,
+            plot_data["sample_mean"],
+            bar_width,
+            yerr=plot_data["sample_std"],
+            capsize=5,
+            label="Sample Histogram",
+        )
+        ax3.set_xlabel("Category")
+        ax3.set_ylabel("Count")
+        ax3.set_title("Histogram Mean and Standard Deviation per Category")
+        ax3.set_xticks(x)
+        ax3.set_xticklabels([f"Cat {i+1}" for i in x])
+        ax3.legend()
+
+        fig.tight_layout()
+        return fig, axs
 
 
 def eval_decorator(fn):
@@ -458,6 +670,8 @@ class HistogramNormalizer(torch.nn.Module):
             return self.vocab_size + self.num_bits
         elif self.histogram_head_loss.startswith("multinomial"):
             return self.vocab_size * self.max_count  # TODO consider other sizes
+        elif self.histogram_head_loss.startswith("cont_softmax"):
+            return self.vocab_size
         return self.vocab_size * self.num_bits
 
     def count_to_binary(self, count):
@@ -514,6 +728,9 @@ class HistogramNormalizer(torch.nn.Module):
         if self.histogram_head_loss.startswith("softmax"):
             count = x.sum(dim=-1) + 2  # Add H and NTP token
             data = torch.hstack([x / count.unsqueeze(-1), self.count_to_binary(count)])
+        elif self.histogram_head_loss.startswith("cont_softmax"):
+            count = x.sum(dim=-1) + 2  # Add H and NTP token
+            data = x / count.unsqueeze(-1)
         else:
             # Convert counts to binary representation
             data = self.count_to_binary(x.reshape(-1)).reshape(b, -1).to(torch.float32)
@@ -534,6 +751,10 @@ class HistogramNormalizer(torch.nn.Module):
                 torch.sigmoid(x[:, -self.num_bits :]).round(),
             )
             count = self.binary_to_count(count).reshape(x.shape[0], -1)
+            x = (x * count).round()
+        elif self.histogram_head_loss.startswith("cont_softmax"):
+            x = torch.softmax(x, dim=-1)
+            count = 64
             x = (x * count).round()
         else:
             if self.use_diffusion:
@@ -642,6 +863,8 @@ class DiagonalGaussianDistribution:
             self.var = self.std = torch.zeros_like(self.mean).to(device=self.parameters.device)
 
     def sample(self):
+        if self.deterministic:
+            return self.mean
         x = self.mean + self.std * torch.randn(self.mean.shape).to(device=self.parameters.device)
         return x
 
@@ -677,6 +900,679 @@ class DiagonalGaussianDistribution:
         return self.mean
 
 
+import random
+
+import torch.nn as nn
+
+
+class MultinomialAutoregressiveDecoder(nn.Module):
+    def __init__(
+        self, latent_dim, hidden_dim, num_categories, max_count, num_layers=3, teacher_forcing_ratio=0.5
+    ):
+        """
+        Args:
+            latent_dim (int): Dimensionality of the latent vector.
+            hidden_dim (int): Hidden state size of the LSTM.
+            num_categories (int): Number of histogram categories (bins) to decode.
+            max_count (int): Maximum count value for each category.
+            num_layers (int): Number of LSTM layers.
+            teacher_forcing_ratio (float): Ratio for teacher forcing during training.
+        """
+        super().__init__()
+        self.num_categories = num_categories
+        self.teacher_forcing_ratio = teacher_forcing_ratio
+
+        # Map latent vector to an initial hidden state.
+        self.latent_to_hidden = nn.Linear(latent_dim, hidden_dim)
+        # Embedding for input tokens. We reserve index 0 for a start token.
+        self.embedding = nn.Embedding(max_count + 1, hidden_dim)
+        self.lstm = nn.LSTM(hidden_dim, hidden_dim, num_layers, batch_first=True)
+        # Output projection: for each time step, output logits over possible count values [0, max_count]
+        self.out_proj = nn.Linear(hidden_dim, max_count + 1)
+
+    def forward(self, z, target_seq=None):
+        """
+        Args:
+            z (Tensor): Latent vectors of shape (batch, latent_dim).
+            target_seq (Tensor or None): Ground truth histogram count indices for each category with shape (batch, num_categories)
+                                         for teacher forcing during training.
+        Returns:
+            Tensor: Logits for each category with shape (batch, num_categories, max_count+1).
+                    (Each time step outputs a probability distribution over possible count values.)
+        """
+        batch_size = z.size(0)
+        # Initialize hidden and cell states from the latent vector.
+        num_layers = self.lstm.num_layers  # e.g., 3
+        hidden = self.latent_to_hidden(z).unsqueeze(0).repeat(num_layers, 1, 1)
+        cell = torch.zeros_like(hidden)
+
+        # Start token: assume index 0 is reserved for <start>.
+        input_token = torch.zeros(batch_size, dtype=torch.long, device=z.device)
+        outputs = []
+
+        for t in range(self.num_categories):
+            # Embed the current input token.
+            input_embed = self.embedding(input_token).unsqueeze(1)  # shape: (batch, 1, hidden_dim)
+            # Run one step of the LSTM.
+            output, (hidden, cell) = self.lstm(input_embed, (hidden, cell))
+            # Project LSTM output to logits over possible count values.
+            logits = self.out_proj(output.squeeze(1))  # shape: (batch, max_count+1)
+            outputs.append(logits)
+
+            # Determine the next input token.
+            if self.training and target_seq is not None and random.random() < self.teacher_forcing_ratio:
+                # Use the ground truth token (teacher forcing)
+                input_token = target_seq[:, t]
+            else:
+                # Use the model's prediction.
+                input_token = logits.argmax(dim=-1)
+
+        # Stack outputs along the time dimension.
+        outputs = torch.stack(outputs, dim=1)  # shape: (batch, num_categories, max_count+1)
+        return outputs
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class TransformerAutoregressiveDecoder(nn.Module):
+    def __init__(
+        self,
+        latent_dim,
+        hidden_dim,
+        num_categories,
+        max_count,
+        num_layers=3,
+    ):
+        """
+        Args:
+            latent_dim (int): Dimension of the latent code.
+            hidden_dim (int): Dimension of the transformer embeddings.
+            num_categories (int): Number of histogram bins to decode.
+            max_count (int): Maximum count value (decoding vocabulary is 0...max_count).
+            num_layers (int): Number of transformer layers.
+        """
+        super().__init__()
+        self.num_categories = num_categories
+        self.max_count = max_count
+
+        # Token embedding for count values (0...max_count).
+        self.token_embedding = nn.Embedding(max_count + 1, hidden_dim)
+        # Positional embeddings for positions in the full sequence (latent token + num_categories tokens)
+        self.pos_embedding = nn.Embedding(num_categories + 1, hidden_dim)
+        # Instead of a separate decoder memory we now use a full transformer stack that takes the latent as the first token.
+        encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=8)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        # Map latent vector to an embedding that will be the first token input.
+        self.latent_to_context = nn.Linear(latent_dim, hidden_dim)
+        # Output projection: from hidden_dim to logits over count tokens.
+        self.out_proj = nn.Linear(hidden_dim, max_count + 1)
+
+    def teacher_forced_forward(self, z, target_seq, log=False):
+        """
+        Args:
+            z (Tensor): Latent vectors of shape (batch, latent_dim)
+            target_seq (Tensor): Ground-truth tokens, shape (batch, num_categories)
+        Returns:
+            logits_seq (Tensor): Logits with shape (batch, num_categories, max_count+1)
+              corresponding to predictions for each token in target_seq.
+        """
+        batch_size = z.size(0)
+        device = z.device
+
+        # --- Build input sequence ---
+        # 1. Convert z into a latent token and add positional encoding for position 0.
+        latent_token = self.latent_to_context(z).unsqueeze(1)  # (batch, 1, hidden_dim)
+        latent_token = latent_token + self.pos_embedding(
+            torch.zeros(batch_size, 1, dtype=torch.long, device=device)
+        )
+
+        # 2. Embed the target sequence tokens and add positional encodings for positions 1,...,num_categories.
+        token_embeds = self.token_embedding(target_seq)  # (batch, num_categories, hidden_dim)
+        positions = torch.arange(1, target_seq.size(1) + 1, device=device).unsqueeze(0).expand(batch_size, -1)
+        token_embeds = token_embeds + self.pos_embedding(positions)
+
+        # 3. Concatenate the latent token with the token embeddings.
+        #    The full sequence now has length num_categories+1.
+        full_seq = torch.cat([latent_token, token_embeds], dim=1)  # (batch, num_categories+1, hidden_dim)
+
+        # --- Transformer ---
+        # Transformer expects input shape (sequence_length, batch, hidden_dim)
+        full_seq = full_seq.transpose(0, 1)
+        # Create a causal mask so that each token only attends to earlier tokens.
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(full_seq.size(0)).to(device)
+        output = self.transformer(full_seq, mask=tgt_mask)
+
+        # --- Output Projection ---
+        # We want to predict each target token given all tokens before it.
+        # Since the first token is the latent token (conditioning) and not a target, we use outputs from positions 1:.
+        logits = self.out_proj(output[1:])  # (num_categories, batch, max_count+1)
+        logits_seq = logits.transpose(0, 1)  # (batch, num_categories, max_count+1)
+        return logits_seq
+
+    def inference_forward(self, z, target_seq, use_teacher_forcing=False, log=False):
+        """
+        Inference: autoregressively decode token by token.
+        Args:
+            z (Tensor): Latent vectors, shape (batch, latent_dim)
+            target_seq (Tensor): Ground-truth tokens (only used for teacher forcing),
+                                 shape (batch, num_categories)
+            use_teacher_forcing (bool): Flag to determine whether to use target tokens.
+        Returns:
+            logits_seq (Tensor): Logits for each decoding step,
+                                 shape (batch, num_categories, max_count+1)
+        """
+        batch_size = z.size(0)
+        device = z.device
+
+        # Compute the latent token (with positional encoding at position 0).
+        latent_token = self.latent_to_context(z).unsqueeze(1)  # (batch, 1, hidden_dim)
+        latent_token = latent_token + self.pos_embedding(
+            torch.zeros(batch_size, 1, dtype=torch.long, device=device)
+        )
+        # Start the decoding sequence with the latent token only.
+        decoder_input = latent_token  # (batch, 1, hidden_dim)
+        outputs = []
+        for t in range(self.num_categories):
+            # Transformer expects (seq_len, batch, hidden_dim)
+            input_seq = decoder_input.transpose(0, 1)
+            tgt_mask = nn.Transformer.generate_square_subsequent_mask(input_seq.size(0)).to(device)
+            transformer_out = self.transformer(input_seq, mask=tgt_mask)
+            # Get the output from the last position (the most recent token).
+            last_hidden = transformer_out[-1]  # (batch, hidden_dim)
+            logits = self.out_proj(last_hidden)  # (batch, max_count+1)
+            outputs.append(logits)
+
+            # Decide next token.
+            if use_teacher_forcing:
+                next_token = target_seq[:, t].unsqueeze(1)  # (batch, 1)
+            else:
+                probs = F.softmax(logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)  # (batch, 1)
+            # Determine the positional index for the new token:
+            # Since decoder_input already has the latent token at pos0, the next token gets position = current sequence length.
+            pos = torch.full((batch_size, 1), decoder_input.size(1), dtype=torch.long, device=device)
+            # Embed the next token and add its positional encoding.
+            next_embed = self.token_embedding(next_token) + self.pos_embedding(pos)
+            # Append to the decoding sequence.
+            decoder_input = torch.cat([decoder_input, next_embed], dim=1)
+
+        # Stack the logits from each decoding step into a sequence.
+        logits_seq = torch.stack(outputs, dim=1)  # (batch, num_categories, max_count+1)
+        return logits_seq
+
+    def forward(self, z, target_seq=None, log=False):
+        """
+        Args:
+            z (Tensor): Latent vectors, shape (batch, latent_dim)
+            target_seq (Tensor or None): If provided (and if self.training), a tensor of shape
+                (batch, num_categories) containing ground-truth tokens.
+        Returns:
+            logits_seq (Tensor): Output logits of shape (batch, num_categories, max_count+1)
+        """
+        if log:
+            print(self.teacher_forced_forward(z, target_seq, log=log).argmax(dim=-1)[0])
+            print(self.inference_forward(z, target_seq, log=log, use_teacher_forcing=False).argmax(dim=-1)[0])
+            print(self.inference_forward(z, target_seq, log=log, use_teacher_forcing=True).argmax(dim=-1)[0])
+
+        # When training, use teacher forcing.
+        if target_seq is not None:
+            return self.teacher_forced_forward(z, target_seq, log=log)
+        else:
+            return self.inference_forward(z, target_seq, log=log)
+
+
+class AutoencoderKL_Autoregressive(nn.Module):
+    def __init__(self, embed_dim, input_dim, num_categories, encoder_hidden_dims, beta, max_count, **kwargs):
+        super().__init__()
+        # Initialize the encoder as before.
+        self._encoder = nn.Linear(input_dim, embed_dim)
+        self.embed_dim = embed_dim
+
+        # Choose the autoregressive decoder.
+        # self.auto_reg_decoder = MultinomialAutoregressiveDecoder(
+        #     latent_dim=embed_dim,
+        #     hidden_dim=embed_dim,
+        #     num_categories=num_categories,
+        #     max_count=max_count,
+        #     teacher_forcing_ratio=1.0,
+        # )
+        self.auto_reg_decoder = TransformerAutoregressiveDecoder(
+            latent_dim=embed_dim,
+            hidden_dim=embed_dim,
+            num_categories=num_categories,
+            max_count=max_count,
+        )
+
+        self.use_variational = True
+        self.beta = beta
+
+    def encode(self, x):
+        mu = self._encoder(x)
+        log_var = torch.full_like(mu, 1e-6)
+        moments = torch.cat((mu, log_var), dim=1)
+        posterior = DiagonalGaussianDistribution(moments, deterministic=True)
+        return posterior
+
+    def decode(self, z, outputs=None, log=False):
+        # Autoregressively decode histogram counts from latent z.
+        if outputs is not None:
+            outputs = outputs.long()
+        dec = self.auto_reg_decoder(z, target_seq=outputs, log=log)
+        return dec
+
+    def forward(self, inputs, outputs=None, disable=True):
+        posterior = self.encode(inputs)
+        if disable:
+            z = posterior.mean
+        else:
+            z = posterior.sample()
+        dec = self.decode(z, outputs=outputs)
+
+        # Compute loss (e.g., using cross-entropy per time step)
+        # Here, assume target_seq is of shape (batch, num_categories) containing indices.
+        rec_loss = F.cross_entropy(dec.transpose(1, 2), outputs.long(), reduction="mean")
+
+        # if rec_loss.item() < 0.5:
+        #     self.decode(z, outputs=outputs, log=True)
+        # else:
+        #     print(rec_loss.item())
+
+        # KL divergence loss.
+
+        loss = rec_loss
+
+        return {
+            "vae_loss": loss,
+            "vae_rec_loss": rec_loss,
+            "vae_kl_loss": 0,
+            "vae_reconstruction": dec,
+        }
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# (Assume DiagonalGaussianDistribution is defined elsewhere.)
+# For example:
+# class DiagonalGaussianDistribution:
+#     def __init__(self, moments, deterministic=False):
+#         self._mean, self._log_var = torch.chunk(moments, 2, dim=1)
+#         self.deterministic = deterministic
+#     @property
+#     def mean(self):
+#         return self._mean
+#     def sample(self):
+#         if self.deterministic:
+#             return self._mean
+#         std = torch.exp(0.5 * self._log_var)
+#         return self._mean + std * torch.randn_like(std)
+
+
+class TransformerMaskedImputationDecoder(nn.Module):
+    def __init__(
+        self,
+        latent_dim,
+        hidden_dim,
+        num_categories,
+        max_count,
+        num_layers=3,
+        mask_prob=0.8,  # If float, fraction of count tokens to mask; if None, randomize per forward.
+        num_iters=1,  # Number of iterative refinement iterations during inference.
+    ):
+        """
+        In this version the input sequence starts with a latent token (derived from z)
+        at index 0 and tokens 1...num_categories correspond to the count categories.
+        This allows the transformer encoder to attend to the latent representation
+        when predicting each count.
+
+        Args:
+            latent_dim (int): Dimension of the latent code.
+            hidden_dim (int): Dimension of the transformer embeddings.
+            num_categories (int): Number of count tokens to predict.
+            max_count (int): Maximum count value (vocabulary: 0...max_count).
+            num_layers (int): Number of transformer encoder layers.
+            mask_prob (float or None): If a float, the fraction of count tokens to mask during training.
+                                       If set to None, a random masking probability is used for each forward pass.
+            num_iters (int): Number of iterative refinement iterations during inference.
+        """
+        super().__init__()
+        self.num_categories = num_categories
+        # Total tokens now includes the latent token.
+        self.total_tokens = num_categories + 1
+        self.max_count = max_count
+        self.mask_prob = mask_prob
+        self.num_iters = num_iters
+        self.latent_dim = latent_dim
+        self.hidden_dim = hidden_dim
+
+        # Token embedding for valid count tokens (indices 0 ... max_count).
+        self.token_embedding = nn.Embedding(max_count + 1, hidden_dim)
+        # Learned mask embedding for positions that are masked.
+        self.mask_embedding = nn.Parameter(torch.randn(hidden_dim))
+        # Positional embeddings for each position in the sequence (total_tokens positions).
+        self.pos_embedding = nn.Embedding(self.total_tokens, hidden_dim)
+        # Standard transformer encoder layers.
+        encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=8)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        # Project the latent vector z to an embedding used as the first token.
+        self.latent_to_context = nn.Linear(latent_dim, hidden_dim)
+        # Output projection: from hidden_dim to logits over count tokens (0...max_count).
+        self.out_proj = nn.Linear(hidden_dim, max_count + 1)
+
+    def teacher_forced_forward(self, z, target_seq, log=False):
+        """
+        Training-time forward pass using masked imputation.
+
+        The full input sequence has length num_categories+1. The 0th token is derived directly
+        from z; tokens 1..N are obtained from the target sequence but are randomly masked.
+        If self.mask_prob is None, a random fraction for masking is sampled for this forward.
+
+        Args:
+            z (Tensor): Latent vectors of shape (batch, latent_dim)
+            target_seq (Tensor): Ground-truth tokens for counts, shape (batch, num_categories)
+            log (bool): If True, print debug information.
+
+        Returns:
+            cat_logits (Tensor): Logits for count tokens, shape (batch, num_categories, max_count+1).
+            mask (BoolTensor): Mask indicator for count tokens, shape (batch, num_categories),
+                               where True indicates that the token was masked.
+        """
+        batch_size = z.size(0)
+        device = z.device
+
+        # Compute the latent token (position 0) from z.
+        latent_token_embed = self.latent_to_context(z)  # (batch, hidden_dim)
+
+        # Determine which tokens to mask for positions 1..num_categories.
+        # If mask_prob is None, sample a random masking probability for this forward pass.
+        if self.mask_prob is None:
+            random_mask_prob = torch.rand(1, device=device).item()
+            mask = torch.rand(target_seq.shape, device=device) < random_mask_prob
+        else:
+            mask = torch.rand(target_seq.shape, device=device) < self.mask_prob
+
+        # Look up embeddings for target tokens.
+        token_embeds = self.token_embedding(target_seq)  # (batch, num_categories, hidden_dim)
+        # Expand the learned mask embedding.
+        mask_embed_expanded = self.mask_embedding.unsqueeze(0).unsqueeze(0).expand_as(token_embeds)
+        # For each count token: if masked, use the mask embedding; otherwise, use the token embedding.
+        cat_embeds = torch.where(
+            mask.unsqueeze(-1), mask_embed_expanded, token_embeds
+        )  # (batch, num_categories, hidden_dim)
+
+        # Construct the full sequence embeddings:
+        # Position 0 is the latent token; positions 1..end are the (possibly masked) count tokens.
+        full_seq_embeds = torch.cat(
+            [latent_token_embed.unsqueeze(1), cat_embeds], dim=1
+        )  # (batch, total_tokens, hidden_dim)
+
+        # Add positional embeddings (positions 0 to total_tokens-1).
+        positions = torch.arange(self.total_tokens, device=device).unsqueeze(0).expand(batch_size, -1)
+        pos_embeds = self.pos_embedding(positions)
+        input_embeds = full_seq_embeds + pos_embeds
+
+        # Pass the sequence through the transformer encoder.
+        x = input_embeds.transpose(0, 1)  # (total_tokens, batch, hidden_dim)
+        encoded = self.transformer_encoder(x)  # (total_tokens, batch, hidden_dim)
+        logits = self.out_proj(encoded)  # (total_tokens, batch, max_count+1)
+        logits_seq = logits.transpose(0, 1)  # (batch, total_tokens, max_count+1)
+        # We only care about the outputs corresponding to the count tokens (positions 1...end).
+        cat_logits = logits_seq[:, 1:, :]  # (batch, num_categories, max_count+1)
+
+        if log:
+            print("Teacher forced logits sample:", cat_logits[0].argmax(dim=-1))
+        return cat_logits, mask
+
+    def inference_forward(self, z, target_seq=None, log=False, temperature=0.3, confidence_threshold=0.95):
+        """
+        Inference-time forward pass using iterative refinement with selective re-masking.
+
+        The input sequence is initialized with:
+        - Position 0: the latent token computed from z.
+        - Positions 1...end: initially masked.
+        For each iteration, the model:
+        1. Computes logits for all count tokens.
+        2. Applies temperature scaling and computes a probability distribution.
+        3. Samples tokens only for positions currently masked.
+        4. Measures the confidence (probability) of the newly sampled tokens.
+        5. For masked positions, updates the token only if the confidence exceeds the threshold;
+            otherwise, these positions remain masked.
+        Positions already fixed (from previous iterations) remain unchanged.
+
+        Args:
+            z (Tensor): Latent vectors of shape (batch, latent_dim)
+            target_seq (Tensor or None): Not used in this implementation.
+            use_teacher_forcing (bool): Not used in this implementation.
+            log (bool): If True, prints debug information per iteration.
+            temperature (float): Temperature parameter for scaling the logits when sampling.
+            confidence_threshold (float): Confidence threshold below which tokens are re-masked.
+
+        Returns:
+            cat_logits (Tensor): Final output logits for count tokens,
+                                shape (batch, num_categories, max_count+1).
+        """
+        batch_size = z.size(0)
+        device = z.device
+
+        # Compute the latent token embedding for position 0.
+        latent_token_embed = self.latent_to_context(z)  # (batch, hidden_dim)
+        # Initialize count tokens (positions 1...end) as masked (denoted by -1).
+        cat_tokens = torch.full((batch_size, self.num_categories), -1, dtype=torch.long, device=device)
+
+        for it in range(1):
+            # Prepare embeddings:
+            # For positions that remain masked (== -1), use the learned mask embedding;
+            # For positions that are fixed, use the token embedding.
+            cat_embeds = torch.where(
+                cat_tokens.unsqueeze(-1) == -1,
+                self.mask_embedding.unsqueeze(0)
+                .unsqueeze(0)
+                .expand(batch_size, self.num_categories, self.hidden_dim),
+                self.token_embedding(torch.clamp(cat_tokens, min=0)),
+            )
+            # Construct the full sequence: latent token (position 0) plus count tokens.
+            full_seq_embeds = torch.cat(
+                [latent_token_embed.unsqueeze(1), cat_embeds], dim=1
+            )  # (batch, total_tokens, hidden_dim)
+            # Add positional embeddings.
+            positions = torch.arange(self.total_tokens, device=device).unsqueeze(0).expand(batch_size, -1)
+            pos_embeds = self.pos_embedding(positions)
+            input_embeds = full_seq_embeds + pos_embeds
+
+            # Transformer forward pass.
+            x = input_embeds.transpose(0, 1)  # (total_tokens, batch, hidden_dim)
+            encoded = self.transformer_encoder(x)
+            logits = self.out_proj(encoded)
+            logits_seq = logits.transpose(0, 1)  # (batch, total_tokens, max_count+1)
+            # Extract logits for count tokens (positions 1...end).
+            cat_logits = logits_seq[:, 1:, :]  # (batch, num_categories, max_count+1)
+
+            # Temperature scaling and compute probabilities.
+            probs = F.softmax(cat_logits / temperature, dim=-1)  # (batch, num_categories, max_count+1)
+
+            # Create a copy of current tokens.
+            new_tokens = cat_tokens.clone()
+            # Identify positions that are still masked.
+            mask_positions = cat_tokens == -1
+            if mask_positions.sum() > 0:
+                # Sample new tokens only for masked positions.
+                sampled_new = torch.multinomial(probs[mask_positions], num_samples=1).squeeze(-1)
+                new_tokens[mask_positions] = sampled_new
+
+            # Compute confidence for the newly sampled tokens (or kept tokens).
+            token_confidence = probs.gather(dim=-1, index=new_tokens.unsqueeze(-1)).squeeze(-1)
+            # For positions that were just sampled (masked in previous iteration),
+            # only update if the confidence exceeds the threshold; otherwise, keep them masked.
+            updated_tokens = new_tokens.clone()
+            updated_tokens[mask_positions] = torch.where(
+                token_confidence[mask_positions] >= confidence_threshold,
+                new_tokens[mask_positions],
+                torch.full_like(new_tokens[mask_positions], -1),
+            )
+            # For positions that were already fixed, retain the previous token.
+            cat_tokens = torch.where(cat_tokens != -1, cat_tokens, updated_tokens)
+
+            if log:
+                print(f"Inference iteration {it} tokens:", cat_tokens[0])
+
+        # At the end of iterations, convert the final tokens to a one-hot style logits tensor.
+        # (For tokens that remain masked, we leave their logits as -∞.)
+        final_tokens = new_tokens.clone()
+        # Replace any remaining masked (-1) entries with a dummy token (here 0) so scatter_ works.
+        dummy_tokens = final_tokens.clone()
+        dummy_tokens[dummy_tokens == -1] = 0
+        one_hot_logits = torch.full(cat_logits.shape, -float("inf"), device=device)
+        one_hot_logits.scatter_(2, dummy_tokens.unsqueeze(-1), 0.0)
+        # Optionally, you could reset the logits for positions that remain masked to -∞.
+        cat_logits = one_hot_logits
+
+        return logits_seq[:, 1:, :]  # or try cat_logits
+
+    def forward(self, z, target_seq=None, log=False):
+        """
+        Depending on whether target_seq is provided, this method either runs a
+        teacher-forced (training) pass or an inference (iterative refinement) pass.
+
+        Args:
+            z (Tensor): Latent vectors, shape (batch, latent_dim)
+            target_seq (Tensor or None): Ground-truth count tokens (for training).
+            log (bool): If True, prints debug information.
+
+        Returns:
+            If target_seq is provided: (cat_logits, mask) where cat_logits has shape
+            (batch, num_categories, max_count+1) and mask indicates which count tokens were masked.
+            Otherwise, returns cat_logits from iterative refinement.
+        """
+        if target_seq is not None:
+            return self.teacher_forced_forward(z, target_seq, log=log)
+        else:
+            return self.inference_forward(z, target_seq, log=log)
+
+
+class AutoencoderKL_MI(nn.Module):
+    def __init__(
+        self,
+        embed_dim,
+        input_dim,
+        num_categories,
+        encoder_hidden_dims,
+        beta,
+        max_count,
+        num_layers,
+        mask_prob,
+        num_iters,
+    ):
+        """
+        A VAE with KL divergence, using a transformer encoder for masked imputation as the decoder.
+
+        Args:
+            embed_dim (int): Dimension of the latent code.
+            input_dim (int): Dimension of the input.
+            num_categories (int): Number of tokens to reconstruct.
+            encoder_hidden_dims: (unused in this simplified example; in a full model, used for a deeper encoder)
+            beta (float): Weight for a KL divergence loss (here KL loss is zero since we use a deterministic encoder).
+            max_count (int): Maximum count value (decoding vocabulary is 0...max_count).
+        """
+        super().__init__()
+        # A simple linear encoder.
+        self._encoder = nn.Linear(input_dim, embed_dim)
+        self.embed_dim = embed_dim
+
+        # Use the transformer encoder trained via masked imputation as the decoder.
+        self.mi_decoder = TransformerMaskedImputationDecoder(
+            latent_dim=embed_dim,
+            hidden_dim=embed_dim,
+            num_categories=num_categories,
+            max_count=max_count,
+            num_layers=num_layers,
+            mask_prob=mask_prob,
+            num_iters=num_iters,
+        )
+
+        self.use_variational = True
+        self.beta = beta
+
+    def encode(self, x):
+        # In this simple example the encoder predicts only a mean.
+        mu = self._encoder(x)
+        # A very small constant log variance.
+        log_var = torch.full_like(mu, 1e-6)
+        moments = torch.cat((mu, log_var), dim=1)
+        posterior = DiagonalGaussianDistribution(moments, deterministic=True)
+        return posterior
+
+    def decode(self, z, outputs=None, log=False):
+        """
+        Decodes the latent vector z.
+
+        Args:
+            z (Tensor): Latent vectors of shape (batch, embed_dim).
+            outputs (Tensor or None): Ground-truth tokens (if provided, teacher forcing is used).
+            log (bool): For logging debug information.
+
+        Returns:
+            If outputs is provided, returns (logits, mask) from the teacher-forced pass;
+            otherwise, returns logits from the inference pass.
+        """
+        if outputs is not None:
+            outputs = outputs.long()
+            return self.mi_decoder.teacher_forced_forward(z, outputs, log=log)
+        else:
+            return self.mi_decoder.inference_forward(z, outputs, log=log)
+
+    def forward(self, inputs, outputs=None, disable=True):
+        """
+        Forward pass for the autoencoder.
+
+        Args:
+            inputs (Tensor): Input data, shape (batch, input_dim).
+            outputs (Tensor or None): Ground-truth tokens; if provided, teacher forcing is used.
+            disable (bool): If True, latent z is set to the posterior mean.
+
+        Returns:
+            A dictionary with keys:
+              "vae_loss": Total loss.
+              "vae_rec_loss": Reconstruction loss.
+              "vae_kl_loss": KL divergence loss (here 0).
+              "vae_reconstruction": The decoder’s output logits.
+        """
+        posterior = self.encode(inputs)
+        if disable:
+            z = posterior.mean
+        else:
+            z = posterior.sample()
+
+        dec_out = self.decode(z, outputs=outputs)
+
+        if outputs is not None:
+            # When teacher forcing is used, dec_out is a tuple: (logits, mask).
+            breakpoint()
+            logits, mask = dec_out  # logits shape: (batch, num_categories, max_count+1)
+            # Compute cross-entropy loss per time step and average only over masked positions.
+            loss_per_token = F.cross_entropy(logits.transpose(1, 2), outputs.long(), reduction="none")
+            rec_loss = (loss_per_token * mask.float()).sum() / (mask.float().sum() + 1e-8)
+            reconstruction = logits
+        else:
+            # In inference mode we simply compute cross entropy loss against the argmax prediction (dummy loss).
+            logits = dec_out
+            rec_loss = F.cross_entropy(logits.transpose(1, 2), logits.argmax(dim=-1), reduction="mean")
+            reconstruction = logits
+
+        # Here, for illustration, we set KL loss to zero.
+        loss = rec_loss  # + self.beta * kl_loss (if applicable)
+
+        return {
+            "vae_loss": loss,
+            "vae_rec_loss": rec_loss,
+            "vae_kl_loss": 0,
+            "vae_reconstruction": reconstruction,
+        }
+
+
 class AutoencoderKL(nn.Module):
     def __init__(
         self,
@@ -691,13 +1587,16 @@ class AutoencoderKL(nn.Module):
         warmup_steps=None,
         annealing_steps=None,
         histogram_head_loss="l2",
+        use_linear_encoder=True,
+        deterministic=False,
     ):
         super().__init__()
         assert use_variational
         if output_dim is None:
             output_dim = input_dim
         self.use_variational = use_variational
-        self._encoder = LinearVAEEncoder(
+        VAE_ENCODER = LinearVAEEncoder if use_linear_encoder else VAEEncoder
+        self._encoder = VAE_ENCODER(
             input_dim=input_dim, latent_dim=embed_dim, hidden_dims=encoder_hidden_dims
         )
         self._decoder = VAEDecoder(
@@ -711,18 +1610,19 @@ class AutoencoderKL(nn.Module):
         self.annealing_steps += self.warmup_steps
         self.histogram_head_loss = histogram_head_loss
         self.num_bits = num_bits
+        self.deterministic = deterministic
 
     def encode(self, x):
         mu, log_var = self._encoder(x)
         moments = torch.cat((mu, log_var), 1)
-        posterior = DiagonalGaussianDistribution(moments)
+        posterior = DiagonalGaussianDistribution(moments, deterministic=self.deterministic)
         return posterior
 
     def decode(self, z):
         dec = self._decoder(z)
         return dec
 
-    def forward(self, inputs, outputs=None, disable=False):
+    def forward(self, inputs, outputs=None, disable=True):
         return self.training_step(inputs, outputs, disable)
 
     def training_step(self, inputs, outputs=None, disable=False):
@@ -800,11 +1700,36 @@ class AutoencoderKL(nn.Module):
             rec_loss = torch.nn.functional.mse_loss(torch.sigmoid(pred_count), target_count, reduction="mean")
             pred_histogram = torch.nn.functional.softmax(pred_histogram, dim=-1)
             rec_loss += torch.nn.functional.l1_loss(pred_histogram, target_histogram, reduction="mean")
+        elif self.histogram_head_loss == "cont_softmax_multinomial":
+            pred_histogram = dec
+            target_histogram = outputs
+            log_probs = torch.nn.functional.log_softmax(pred_histogram, dim=-1)
+            rec_loss = -(target_histogram * log_probs).sum(dim=-1).mean()
         elif self.histogram_head_loss == "multinomial":
             dec = dec.reshape(*outputs.shape, -1)
             rec_loss = torch.nn.functional.cross_entropy(
                 dec.transpose(1, 2), outputs.long(), reduction="mean"
             )
+        elif self.histogram_head_loss == "multinomial_earthmover":
+            # Reshape dec to have the same shape as outputs with an extra dimension for bins.
+            dec = dec.reshape(*outputs.shape, -1)  # shape: (batch, ..., num_bins)
+
+            # Convert logits to a probability distribution
+            p = torch.softmax(dec, dim=-1)
+
+            # Compute the cumulative distribution (CDF) of the predicted probabilities
+            cdf_pred = torch.cumsum(p, dim=-1)
+
+            # Create a one-hot encoding of the target outputs.
+            # outputs is assumed to be a tensor of indices with shape matching dec (without the last dim)
+            target_onehot = torch.zeros_like(dec, dtype=torch.int64)
+            target_onehot.scatter_(-1, outputs.unsqueeze(-1).to(torch.int64), 1)
+
+            # Compute the CDF of the true distribution
+            cdf_true = torch.cumsum(target_onehot, dim=-1)
+
+            # Compute the Earth Mover's Distance (L1 norm between the CDFs)
+            rec_loss = torch.mean(torch.abs(cdf_pred - cdf_true))
         else:
             raise ValueError(f"Invalid model.histogram_head_loss of: {self.histogram_head_loss}")
 
@@ -827,7 +1752,7 @@ class AutoencoderKL(nn.Module):
         return {
             "vae_loss": loss,
             "vae_rec_loss": rec_loss,
-            "vae_kl_loss": kl_loss,
+            "vae_kl_loss": kl_loss * self.beta,
             "vae_reconstruction": dec,
         }
 
@@ -890,6 +1815,18 @@ def three_d_align_right(t, lens, pad_id=0):
     aligned = t[batch_arange, prompt_len_arange + offset[..., None], :]
 
     return aligned
+
+
+def get_previous_h_token_embedding(code, ntp_token):
+    # Create a boolean mask where the token matches h_token.
+    mask = code == ntp_token
+    # Reverse the mask along the sequence dimension.
+    reversed_mask = mask.flip(dims=[1])
+    # Get the index of the first occurrence in the reversed mask.
+    last_idx_from_end = reversed_mask.float().argmax(dim=1)
+    # Convert that into the corresponding index in the original tensor.
+    h_token_idx = code.size(1) - 2 - last_idx_from_end
+    return h_token_idx
 
 
 class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel):
@@ -970,6 +1907,10 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             self.cfg.vocab_size, self.cfg.top_k_acc, self.cfg.next_token_auc
         )
 
+        self.train_histogram_metric = HistogramMetric()
+        self.val_histogram_metric = HistogramMetric()
+        self.test_histogram_metric = HistogramMetric()
+
         self.metadata_df = pl.read_parquet(self.cfg.augmented_code_metadata_fp)
         self.trajectory_labeler = self.cfg.get("trajectory_labeler", None)
         self.initialize_weights()
@@ -994,19 +1935,45 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         )
         histogram_dim = self.histogram_normalizer.get_normalized_size()
 
-        self.autoencoder = AutoencoderKL(
-            embed_dim=2,
-            input_dim=self.cfg.token_dim,
-            num_bits=self.cfg.n_bits,
-            output_dim=histogram_dim,
-            encoder_hidden_dims=self.cfg.encoder_dims,
-            decoder_hidden_dims=self.cfg.decoder_dims,
-            use_variational=True,
-            beta=self.cfg.beta,
-            warmup_steps=self.cfg.warmup_steps,
-            annealing_steps=self.cfg.annealing_steps,
-            histogram_head_loss=self.cfg.histogram_head_loss,
-        )
+        if self.cfg.autoencoder_type == "autoregressive":
+            self.autoencoder = AutoencoderKL_Autoregressive(
+                self.cfg.encoder_dims[-1],
+                self.cfg.token_dim,
+                self.cfg.subvocab_size,
+                self.cfg.encoder_dims,
+                self.cfg.beta,
+                self.cfg.max_count,
+            )
+        elif self.cfg.autoencoder_type == "vae":
+            self.autoencoder = AutoencoderKL(
+                use_linear_encoder=self.cfg.use_linear_encoder,
+                embed_dim=self.cfg.encoder_dims[-1],
+                input_dim=self.cfg.token_dim,
+                num_bits=self.cfg.n_bits,
+                output_dim=histogram_dim,
+                encoder_hidden_dims=self.cfg.encoder_dims,
+                decoder_hidden_dims=self.cfg.decoder_dims,
+                use_variational=True,
+                beta=self.cfg.beta,
+                warmup_steps=self.cfg.warmup_steps,
+                annealing_steps=self.cfg.annealing_steps,
+                histogram_head_loss=self.cfg.histogram_head_loss,
+                deterministic=self.cfg.deterministic,
+            )
+        elif self.cfg.autoencoder_type == "masked_imputation":
+            self.autoencoder = AutoencoderKL_MI(
+                embed_dim=self.cfg.encoder_dims[-1],
+                input_dim=self.cfg.token_dim,
+                num_categories=self.cfg.subvocab_size,
+                encoder_hidden_dims=self.cfg.encoder_dims,
+                beta=self.cfg.beta,
+                max_count=self.cfg.max_count,
+                num_layers=self.cfg.autoencoder_mi_num_layers,
+                mask_prob=self.cfg.autoencoder_mi_mask_prob,
+                num_iters=self.cfg.autoencoder_mi_num_iters,
+            )
+        else:
+            raise ValueError(f"Unknown autoencoder type: {self.cfg.autoencoder_type}")
         self.subvocab_mapper = SubvocabMapper(metadata_df=self.metadata_df)
 
         from meds_torch.models.diffusion_utils.diffloss import DiffLoss
@@ -1126,6 +2093,13 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
 
     @TimeableMixin.TimeAs
     def get_histogram_loss(self, prompts, histogram, embeddings, mask):
+        # Simpler and identical processing:
+        # ntp_mask = (prompts == self.ntp_token)
+        # valid_h_mask = ntp_mask[: 1:]
+        # patch_embeddings = embeddings[:, :-1][valid_h_mask]
+        # num_histogram_samples = ntp_mask.sum()
+        # target = histogram[ntp_mask, :]
+
         # All inputs except the last we can evaluate
         prompts = prompts[:, :-1]  # ignore last h token
         embeddings = embeddings[:, :-1]  # ignore last h token
@@ -1142,23 +2116,20 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         target = histogram[h_mask, :]
 
         with torch.no_grad():
-            normalized_gt_histogram = self.histogram_normalizer.transform(target)
-        if self.cfg.use_diffusion:
-            loss = self.diffusion(
-                normalized_gt_histogram.detach().repeat(self.cfg.histogram_batch_mul, 1),
-                z=patch_embeddings.reshape(num_histogram_samples, -1).repeat(self.cfg.histogram_batch_mul, 1),
-            )
-            loss_dict = {"diffusion_loss": loss}
-        else:
-            # Forward pass and loss computation
-            repeated_histograms = normalized_gt_histogram.detach().repeat(self.cfg.histogram_batch_mul, 1)
-            loss_dict = self.autoencoder.forward(
-                inputs=patch_embeddings.reshape(num_histogram_samples, -1).repeat(
-                    self.cfg.histogram_batch_mul, 1
-                ),
-                outputs=repeated_histograms,
-            )
-            loss = loss_dict["vae_loss"]
+            normalized_gt_histogram = self.histogram_normalizer.transform(target.detach().clone())
+        # Forward pass and loss computation
+        repeated_histograms = normalized_gt_histogram.detach().repeat(self.cfg.histogram_batch_mul, 1)
+        loss_dict = self.autoencoder.forward(
+            inputs=patch_embeddings.reshape(num_histogram_samples, -1).repeat(
+                self.cfg.histogram_batch_mul, 1
+            ),
+            outputs=repeated_histograms,
+        )
+        # self.histogram_normalizer.reverse_transform(self.autoencoder.decode(self.autoencoder.encode(patch_embeddings).mean))[0][0]
+        # normalized_gt_histogram[0]
+        # breakpoint()
+        # Why is the reverse transform incorrect, oh for the gt data it expects logits I think.
+        loss = loss_dict["vae_loss"]
         loss_dict = {"MODEL//" + k: v for k, v in loss_dict.items() if k != "vae_reconstruction"}
         assert not torch.isnan(loss).any(), "histogram loss is NaN"
         return loss, loss_dict
@@ -1237,6 +2208,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "train")
         del batch[CODE_LOGITS]
+        self.train_histogram_metric(*self.get_eval_histograms(batch))
         return batch[MODEL_BATCH_LOSS_KEY]
 
     def on_train_epoch_end(self):
@@ -1245,18 +2217,48 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             self.log(f"test/NEXT_TOKEN/{metric_name.upper()}", value, on_epoch=True)
         self.train_next_token_metric.reset()
 
+    def get_eval_histograms(self, batch):
+        histogram_idx = get_previous_h_token_embedding(batch["code"], self.ntp_token)
+        embedding = batch["MODEL//EMBEDDINGS"][torch.arange(batch["code"].shape[0]), histogram_idx, :]
+        next_histogram_posterior = self.autoencoder.encode(embedding)
+        mean_pred_histogram, _ = self.histogram_normalizer.reverse_transform(
+            self.autoencoder.decode(next_histogram_posterior.mean)
+        )
+        sample_pred_histogram, _ = self.histogram_normalizer.reverse_transform(
+            self.autoencoder.decode(next_histogram_posterior.sample())
+        )
+        true_histogram = batch["histogram"][torch.arange(batch["code"].shape[0]), histogram_idx + 1, :]
+        return true_histogram.float(), mean_pred_histogram.float(), sample_pred_histogram.float()
+
     def validation_step(self, batch):
         batch = self(batch, True)
         assert not torch.isnan(batch[MODEL_BATCH_LOSS_KEY]), "Loss is NaN"
         self._log(batch, "val")
         del batch[CODE_LOGITS]
+        self.val_histogram_metric(*self.get_eval_histograms(batch))
         return batch[MODEL_BATCH_LOSS_KEY]
 
     def on_validation_epoch_end(self):
         next_token_results = self.val_next_token_metric.compute()
         for metric_name, value in next_token_results.items():
-            self.log(f"test/NEXT_TOKEN/{metric_name.upper()}", value, on_epoch=True)
+            self.log(f"val/NEXT_TOKEN/{metric_name.upper()}", value, on_epoch=True)
         self.val_next_token_metric.reset()
+
+        try:
+            # Compute and log the histogram metric's summed MAE
+            histogram_mae = self.val_histogram_metric.compute()
+            self.log("val/HISTOGRAM_MAE", histogram_mae, on_epoch=True)
+            # Generate the custom histogram plots
+            fig, axs = self.val_histogram_metric.plot()
+            # Log the plot to wandb
+            import wandb
+
+            # self.logger.experiment is the wandb run object if using WandbLogger
+            self.logger.experiment.log({"val/HISTOGRAM_PLOT": wandb.Image(fig)}, commit=False)
+        except:
+            pass
+        # Reset histogram metric state for the next epoch
+        self.val_histogram_metric.reset()
 
     def test_step(self, batch):
         batch = self(batch, True)
@@ -1264,6 +2266,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         self._log(batch, "test")
         del batch[CODE_LOGITS]
         loss = batch[MODEL_BATCH_LOSS_KEY]
+        self.test_histogram_metric(*self.get_eval_histograms(batch))
         return loss
 
     def on_test_epoch_end(self):
@@ -2013,48 +3016,78 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
 
         return next_token_logits, next_histogram, latent_next_histogram_posterior, counts, last_embeddings
 
-    def hf_get_sample(self, output, prev_histogram):
-        """Get next token logits and histogram prediction for a single step.
+    def hf_get_sample(
+        self,
+        logits,
+        prev_histogram,
+        use_histogram_multiplier: bool = False,
+        ignore_histogram_for_eos: bool = False,
+    ):
+        """
+        Get next token probabilities and sample one token.
 
         Args:
-            last_logits: Logits for the last token [batch_size, vocab_size]
-            last_embedding: Embedding for the last token [batch_size, embedding_size]
+            logits: Logits for the current token [batch_size, seq_len, vocab_size]
+            prev_histogram: Previous token histogram (either counts or binary) used to compute a mask/multiplier.
+            use_histogram_multiplier: If true, multiply the probabilities by the count in the histogram.
+                                Otherwise, use a binary mask (nonzero entries become 1).
 
         Returns:
-            tuple: (next_token_logits, next_histogram)
-                - next_token_logits: Logits for next token prediction [batch_size, vocab_size]
-                - next_histogram: Predicted histogram [batch_size, vocab_size]
+            sample: Sampled next token [batch_size, 1]
         """
+        # Use the logits for the last token only.
+        logits = logits[:, -1]
 
-        logits = output.logits[:, -1]
-        histogram_based_logit_mask = self.subvocab_mapper.from_subvocab_histogram(prev_histogram > 0)
-        logits[~histogram_based_logit_mask] = -float("inf")
+        # Compute the base probability distribution with temperature scaling.
+        base_probs = F.softmax(logits / self.cfg.temperature, dim=-1)
 
-        # TODO optimize this to operate on only the H tokens
+        # Get the histogram-based multiplier:
+        # Either a count tensor (if use_histogram_multiplier is true) or a boolean mask.
+        if use_histogram_multiplier:
+            # Multiply probabilities by the actual count values.
+            hist_multiplier = self.subvocab_mapper.from_subvocab_histogram_counts(prev_histogram)
+            # Ensure the counts are float-compatible.
+            hist_multiplier = hist_multiplier.to(base_probs.dtype)
+        else:
+            # Use a boolean mask indicating where counts are nonzero.
+            hist_mask = self.subvocab_mapper.from_subvocab_histogram(prev_histogram > 0)
+            hist_multiplier = hist_mask.to(base_probs.dtype)
+
+        if ignore_histogram_for_eos:
+            for eos_token in self.cfg.eos_tokens:
+                hist_multiplier[:, eos_token] = 1.0
+
+        # Apply the histogram multiplier to the base probabilities.
+        adjusted_probs = base_probs * hist_multiplier
+
+        # Create a custom mask that initially disables the special tokens.
         mask = torch.ones_like(logits, dtype=torch.bool)
         mask[..., self.h_token] = False
         mask[..., self.ntp_token] = False
 
-        logits_finite = logits.isfinite()
-        has_h_token = logits_finite[:, self.h_token]
-        has_o_token = logits_finite[:, self.ntp_token]
-        num_finite_logits = logits_finite.sum(dim=-1)
-        is_histogram_only_h_o_tokens = num_finite_logits <= 2
+        # Count the number of tokens with nonzero probability in the adjusted distribution.
+        nonzero_probs_count = (adjusted_probs > 0).sum(dim=-1)
+        is_histogram_only_h_o_tokens = nonzero_probs_count <= 2
 
-        mask[is_histogram_only_h_o_tokens.squeeze(-1) & has_h_token, self.h_token] = True
-        can_sample_o = is_histogram_only_h_o_tokens & ~has_h_token & has_o_token
-        mask[can_sample_o.squeeze(-1), self.ntp_token] = True
+        # Check if the special tokens have nonzero probability.
+        has_h_token = adjusted_probs[:, self.h_token] > 0
+        has_o_token = adjusted_probs[:, self.ntp_token] > 0
 
-        # Always allow censored token sampling
-        mask[~is_histogram_only_h_o_tokens, self.EOS_TOKEN_ID] = True
+        # For batches with nearly no allowed tokens, enable the special tokens as needed.
+        mask[is_histogram_only_h_o_tokens & has_h_token, self.h_token] = True
+        mask[is_histogram_only_h_o_tokens & (~has_h_token) & has_o_token, self.ntp_token] = True
 
-        logits = logits.masked_fill(~mask, float("-inf"))
-        probs = F.softmax(logits / self.cfg.temperature, dim=-1)
-        sample = torch.multinomial(probs, 1)
+        # Apply the custom mask to the adjusted probabilities.
+        final_probs = adjusted_probs.masked_fill(~mask, 0).clip(0, None)
+        # Renormalize the probability distribution.
+        final_probs = final_probs / (final_probs.sum(dim=-1, keepdim=True) + 1e-8)
+
+        # Sample from the final probability distribution.
+        sample = torch.multinomial(final_probs.clip(0, 1), 1)
         return sample
 
-    def hf_update_histogram(self, output, sample, prev_histogram, prev_sample):
-        last_embeddings = output.hidden_states[-1][:, -1]
+    def hf_update_histogram(self, embeddings: torch.Tensor, sample, prev_histogram, prev_sample):
+        last_embeddings = embeddings[:, -1]
         subvocab_sample = self.subvocab_mapper.to_subvocab(sample)
         one_hot_sample = torch.zeros_like(prev_histogram).scatter_(1, subvocab_sample, 1)
         next_decrement_histogram = prev_histogram - one_hot_sample
@@ -2072,13 +3105,20 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             (prev_sample == self.h_token).reshape(-1, 1).repeat(1, next_ae_histogram.shape[1])
         )
         next_histogram = torch.where(h_token_histogram_mask, next_ae_histogram, next_decrement_histogram)
+
         if (next_histogram == 0).all():
             raise ValueError("All histogram counts are zero somehow, this should not happen.")
 
-        return next_histogram
+        return next_histogram, next_histogram_posterior
 
     @torch.no_grad()
-    def hf_generate(self, batch):
+    def hf_generate(
+        self,
+        batch,
+        use_guidance: bool = True,
+        use_histogram_multiplier: bool = False,
+        ignore_histogram_for_eos: bool = False,
+    ):
         batch = self.input_encoder(batch)
         gpt_model: GPTNeoXForCausalLM = self.model.model.model
         samples = batch["code"]
@@ -2090,24 +3130,51 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         from tqdm.auto import trange
 
         for _ in trange(remaining_tokens):
+            if len(input_data.shape) == 2:
+                kwargs = dict(input_ids=input_data)
+            elif len(input_data.shape) == 3:
+                kwargs = dict(inputs_embeds=input_data)
+            else:
+                raise ValueError(f"Invalid input_data shape: {input_data.shape}")
             output = gpt_model.forward(
-                inputs_embeds=input_data,
+                **kwargs,
                 attention_mask=input_mask,
                 return_dict=True,
                 output_hidden_states=True,
                 past_key_values=kv_cache,
                 use_cache=True,
             )
+            embeddings = output.hidden_states[-1]
+            logits = output.logits
             kv_cache = output.past_key_values
-            sample = self.hf_get_sample(output, prev_histogram)
-            prev_sample = batch["code"][:, -1]
-            prev_histogram = self.hf_update_histogram(output, sample, prev_histogram, prev_sample)
+            if use_guidance:
+                sample = self.hf_get_sample(
+                    logits, prev_histogram, use_histogram_multiplier, ignore_histogram_for_eos
+                )
+                prev_sample = samples[:, -1]
+                # Bug is here, embeddings need to be updated
+                prev_histogram, _ = self.hf_update_histogram(embeddings, sample, prev_histogram, prev_sample)
 
-            # Append new tokens
-            samples = torch.cat((samples, sample), dim=-1)
-            next_sample_embedding = self.input_encoder.process_sample(sample, prev_histogram.unsqueeze(1))
-            input_data = next_sample_embedding
-            input_mask = (
-                torch.ones(input_mask.shape[0]).to(input_mask.device, dtype=torch.float32).unsqueeze(-1)
-            )
+                # Append new tokens
+                samples = torch.cat((samples, sample), dim=-1)
+                if hasattr(self.input_encoder, "process_sample"):
+                    next_sample_embedding = self.input_encoder.process_sample(
+                        sample, prev_histogram.unsqueeze(1)
+                    )
+                else:
+                    next_sample_embedding = sample
+                input_data = next_sample_embedding
+                input_mask = (
+                    torch.ones(input_mask.shape[0]).to(input_mask.device, dtype=torch.float32).unsqueeze(-1)
+                )
+            else:
+                probs = F.softmax(output.logits[:, -1] / self.cfg.temperature, dim=-1)
+                sample = torch.multinomial(probs, 1)
+
+                # Append new tokens
+                samples = torch.cat((samples, sample), dim=-1)
+                input_data = sample
+                input_mask = (
+                    torch.ones(input_mask.shape[0]).to(input_mask.device, dtype=torch.float32).unsqueeze(-1)
+                )
         return samples
