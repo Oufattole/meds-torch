@@ -1,7 +1,5 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
-from typing import Optional, Union
-from collections.abc import Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -975,6 +973,206 @@ class MultinomialAutoregressiveDecoder(nn.Module):
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import xformers.ops
+
+
+# ------------------------------------------------------------
+# 1.  Transformer layer with xformers attention + KV caching
+# ------------------------------------------------------------
+class CachedXformersTransformerLayer(nn.Module):
+    def __init__(self, hidden_dim: int, nhead: int, dropout: float = 0.1):
+        super().__init__()
+        self.hidden_dim, self.nhead, self.dropout = hidden_dim, nhead, dropout
+
+        self.q_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.k_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.v_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.out_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.ln1 = nn.LayerNorm(hidden_dim)
+
+        self.ffn = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 4),
+            nn.ReLU(),
+            nn.Linear(hidden_dim * 4, hidden_dim),
+            nn.Dropout(dropout),
+        )
+        self.ln2 = nn.LayerNorm(hidden_dim)
+
+    # ---- helper -------------------------------------------------
+    def _reshape(self, t: torch.Tensor, batch: int) -> torch.Tensor:
+        """
+        (seq_len, batch, hidden) -> (batch*nhead, seq_len, head_dim)
+        """
+        seq_len, _, _ = t.size()
+        head_dim = self.hidden_dim // self.nhead
+        t = t.view(seq_len, batch, self.nhead, head_dim)
+        t = t.permute(1, 2, 0, 3).contiguous()
+        return t.view(batch * self.nhead, seq_len, head_dim)
+
+    # ---- forward ------------------------------------------------
+    def forward(self, x: torch.Tensor, cache: dict | None = None):
+        """
+        x : (x_seq_len, batch, hidden_dim)
+        cache : {'k': (cached_len, batch, hidden), 'v': ...}  or None
+        """
+        residual = x
+        x = self.ln1(x)
+
+        Q = self.q_proj(x)
+        new_K = self.k_proj(x)
+        new_V = self.v_proj(x)
+
+        if cache is None:
+            K, V = new_K, new_V
+        else:
+            K = torch.cat([cache["k"], new_K], dim=0)
+            V = torch.cat([cache["v"], new_V], dim=0)
+        new_cache = {"k": K, "v": V}
+
+        x_seq_len, batch, _ = x.size()
+        head_dim = self.hidden_dim // self.nhead
+
+        Qh = self._reshape(Q, batch)  # (B*H, x_seq_len, head_dim)
+        Kh = self._reshape(K, batch)  # (B*H, total_len, head_dim)
+        Vh = self._reshape(V, batch)  # (B*H, total_len, head_dim)
+
+        attn = xformers.ops.memory_efficient_attention(
+            Qh,
+            Kh,
+            Vh,
+            p=self.dropout,
+            attn_bias=xformers.ops.LowerTriangularMask(),
+        )  # (B*H, x_seq_len, head_dim)
+
+        attn = attn.view(batch, self.nhead, x_seq_len, head_dim)
+        attn = attn.permute(2, 0, 1, 3).contiguous().view(x_seq_len, batch, self.hidden_dim)
+        x = residual + self.out_proj(attn)
+
+        # Feed‑forward
+        x = x + self.ffn(self.ln2(x))
+        return x, new_cache
+
+
+# ------------------------------------------------------------
+# 2.  Autoregressive decoder that passes latent as 1st token
+# ------------------------------------------------------------
+class XformersAutoregressiveDecoder(nn.Module):
+    def __init__(
+        self,
+        latent_dim: int,
+        hidden_dim: int,
+        num_categories: int,
+        max_count: int,
+        num_layers: int = 3,
+    ):
+        super().__init__()
+        self.num_categories, self.max_count = num_categories, max_count
+
+        self.token_emb = nn.Embedding(max_count + 1, hidden_dim)
+        self.pos_emb = nn.Embedding(num_categories + 1, hidden_dim)  # pos0 = latent
+        self.latent_proj = nn.Linear(latent_dim, hidden_dim)
+
+        self.layers = nn.ModuleList(
+            [CachedXformersTransformerLayer(hidden_dim, nhead=8) for _ in range(num_layers)]
+        )
+        self.out_proj = nn.Linear(hidden_dim, max_count + 1)
+
+    # ------------------------------------------------------------------
+    #  Teacher forcing  (single pass, shifted RIGHT by one position)
+    # ------------------------------------------------------------------
+    def teacher_forced_forward(self, z: torch.Tensor, target_seq: torch.Tensor):
+        """
+        z           : (B, latent_dim)
+        target_seq  : (B, N)   (ground‑truth tokens to predict)
+        returns logits : (B, N, max_count+1)
+        """
+        B, N = target_seq.shape
+        device = z.device
+
+        # latent token (position 0)
+        latent_tok = self.latent_proj(z).unsqueeze(1)
+        latent_tok = latent_tok + self.pos_emb(torch.zeros(B, 1, dtype=torch.long, device=device))
+
+        # SHIFT the teacher‑forcing tokens right by one:
+        #   input tokens = latent + target_seq[:, :-1]
+        in_tokens = target_seq[:, :-1]  # (B, N-1)   (empty if N==1)
+        if N == 1:
+            in_embeds = torch.zeros(B, 0, latent_tok.size(-1), device=device)
+        else:
+            pos = torch.arange(1, N, device=device).unsqueeze(0).expand(B, -1)
+            in_embeds = self.token_emb(in_tokens) + self.pos_emb(pos)
+
+        x = torch.cat([latent_tok, in_embeds], dim=1)  # (B, N)   length N  (0..N-1)
+        x = x.transpose(0, 1)  # (seq_len=N, B, hidden)
+
+        # transformer stack (no caching needed)
+        for layer in self.layers:
+            x, _ = layer(x, cache=None)
+
+        logits = self.out_proj(x)  # predictions for positions 1..N
+        return logits.transpose(0, 1)  # (B, N, vocab)
+
+    # ------------------------------------------------------------------
+    #  Autoregressive inference  (produce BEFORE inserting new token)
+    # ------------------------------------------------------------------
+    def inference_forward(self, z: torch.Tensor, target_seq=None, use_teacher_forcing=False):
+        """
+        If `use_teacher_forcing` and `target_seq` provided, runs forced decoding;
+        otherwise autoregressively samples / argmaxes.
+        """
+        B, device = z.size(0), z.device
+        caches = [None] * len(self.layers)
+
+        # ----- start with latent token -----
+        x = self.latent_proj(z).unsqueeze(1)
+        x = x + self.pos_emb(torch.zeros(B, 1, dtype=torch.long, device=device))
+        x = x.transpose(0, 1)  # (1, B, hidden)
+        for i, layer in enumerate(self.layers):
+            x, caches[i] = layer(x, cache=None)
+
+        outputs = []
+        for t in range(self.num_categories):  # want N logits
+            # 1) produce logits from CURRENT context (before adding next token)
+            logits_t = self.out_proj(x[-1])  # (B, vocab)
+            outputs.append(logits_t)
+
+            # 2) decide next token
+            if use_teacher_forcing and target_seq is not None:
+                next_tok = target_seq[:, t].unsqueeze(1)  # teacher
+            else:
+                next_tok = torch.multinomial(
+                    logits_t.softmax(dim=-1), num_samples=1
+                )  # sample logits_t.softmax(dim=-1)
+                # next_tok = logits_t.argmax(dim=-1, keepdim=True)   # greedy (or sample)
+
+            # 3) embed & append
+            pos_id = torch.full((B, 1), t + 1, dtype=torch.long, device=device)  # position t+1
+            next_embed = self.token_emb(next_tok) + self.pos_emb(pos_id)
+            x_new = next_embed.transpose(0, 1)  # (1, B, hidden)
+
+            # 4) run only the NEW token through each layer using caches
+            new_caches = []
+            for i, layer in enumerate(self.layers):
+                x_new, new_cache = layer(x_new, cache=caches[i])
+                new_caches.append(new_cache)
+            caches = new_caches
+            x = torch.cat([x, x_new], dim=0)  # extend sequence context
+
+        return torch.stack(outputs, dim=1)  # (B, N, vocab)
+
+    # ------------------------------------------------------------------
+    def forward(self, z, target_seq=None, log=False):
+        if self.training and target_seq is not None:
+            return self.teacher_forced_forward(z, target_seq)
+        if target_seq is None:
+            return self.inference_forward(z)
+        # evaluation w/ teacher forcing
+        return self.inference_forward(z, target_seq, use_teacher_forcing=True)
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 class TransformerAutoregressiveDecoder(nn.Module):
@@ -1048,7 +1246,7 @@ class TransformerAutoregressiveDecoder(nn.Module):
         # --- Output Projection ---
         # We want to predict each target token given all tokens before it.
         # Since the first token is the latent token (conditioning) and not a target, we use outputs from positions 1:.
-        logits = self.out_proj(output[1:])  # (num_categories, batch, max_count+1)
+        logits = self.out_proj(output[:-1])  # (num_categories, batch, max_count+1)
         logits_seq = logits.transpose(0, 1)  # (batch, num_categories, max_count+1)
         return logits_seq
 
@@ -1089,8 +1287,9 @@ class TransformerAutoregressiveDecoder(nn.Module):
             if use_teacher_forcing:
                 next_token = target_seq[:, t].unsqueeze(1)  # (batch, 1)
             else:
-                probs = F.softmax(logits, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1)  # (batch, 1)
+                # probs = F.softmax(logits, dim=-1)
+                # next_token = torch.multinomial(probs, num_samples=1)  # (batch, 1)
+                next_token = logits.argmax(dim=-1, keepdim=True)  # (batch, 1)
             # Determine the positional index for the new token:
             # Since decoder_input already has the latent token at pos0, the next token gets position = current sequence length.
             pos = torch.full((batch_size, 1), decoder_input.size(1), dtype=torch.long, device=device)
@@ -1145,6 +1344,13 @@ class AutoencoderKL_Autoregressive(nn.Module):
             num_categories=num_categories,
             max_count=max_count,
         )
+        # self.auto_reg_decoder = XformersAutoregressiveDecoder(
+        #     latent_dim=embed_dim,
+        #     hidden_dim=embed_dim,
+        #     num_categories=num_categories,
+        #     max_count=max_count,
+        #     num_layers=3,
+        # )
 
         self.use_variational = True
         self.beta = beta
