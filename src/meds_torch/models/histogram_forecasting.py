@@ -976,6 +976,27 @@ import torch.nn.functional as F
 import xformers.ops
 
 
+def tokens_to_inf_logits(tokens: torch.LongTensor, vocab_size: int) -> torch.FloatTensor:
+    """
+    Parameters
+    ----------
+    tokens      : (…, seq_len)  integer token IDs
+    vocab_size  : size of the vocabulary
+
+    Returns
+    -------
+    logits      : (…, seq_len, vocab_size)  where
+                  logits[..., t, token_id[t]] = 0
+                  logits[..., t, other]      = -inf
+    """
+    # create an output tensor full of -inf
+    logits = torch.full((*tokens.shape, vocab_size), float("-inf"), device=tokens.device, dtype=torch.float32)
+
+    # scatter 0.0 at the correct class for every position
+    logits.scatter_(-1, tokens.unsqueeze(-1), 0.0)
+    return logits
+
+
 # ------------------------------------------------------------
 # 1.  Transformer layer with xformers attention + KV caching
 # ------------------------------------------------------------
@@ -1036,12 +1057,17 @@ class CachedXformersTransformerLayer(nn.Module):
         Kh = self._reshape(K, batch)  # (B*H, total_len, head_dim)
         Vh = self._reshape(V, batch)  # (B*H, total_len, head_dim)
 
+        if cache is None:
+            attn_bias = xformers.ops.LowerTriangularMask()  # full sequence
+        else:
+            attn_bias = None  # no future tokens exist, so no mask needed
+
         attn = xformers.ops.memory_efficient_attention(
             Qh,
             Kh,
             Vh,
             p=self.dropout,
-            attn_bias=xformers.ops.LowerTriangularMask(),
+            attn_bias=attn_bias,
         )  # (B*H, x_seq_len, head_dim)
 
         attn = attn.view(batch, self.nhead, x_seq_len, head_dim)
@@ -1051,6 +1077,11 @@ class CachedXformersTransformerLayer(nn.Module):
         # Feed‑forward
         x = x + self.ffn(self.ln2(x))
         return x, new_cache
+
+
+
+import torch
+import torch.nn.functional as F
 
 
 # ------------------------------------------------------------
@@ -1071,9 +1102,10 @@ class XformersAutoregressiveDecoder(nn.Module):
         self.token_emb = nn.Embedding(max_count + 1, hidden_dim)
         self.pos_emb = nn.Embedding(num_categories + 1, hidden_dim)  # pos0 = latent
         self.latent_proj = nn.Linear(latent_dim, hidden_dim)
+        nhead = 12 if hidden_dim >= 144 else 8
 
         self.layers = nn.ModuleList(
-            [CachedXformersTransformerLayer(hidden_dim, nhead=8) for _ in range(num_layers)]
+            [CachedXformersTransformerLayer(hidden_dim, nhead=nhead) for _ in range(num_layers)]
         )
         self.out_proj = nn.Linear(hidden_dim, max_count + 1)
 
@@ -1115,7 +1147,9 @@ class XformersAutoregressiveDecoder(nn.Module):
     # ------------------------------------------------------------------
     #  Autoregressive inference  (produce BEFORE inserting new token)
     # ------------------------------------------------------------------
-    def inference_forward(self, z: torch.Tensor, target_seq=None, use_teacher_forcing=False):
+    def inference_forward(
+        self, z: torch.Tensor, target_seq=None, return_tokens=False, use_teacher_forcing=False
+    ):
         """
         If `use_teacher_forcing` and `target_seq` provided, runs forced decoding;
         otherwise autoregressively samples / argmaxes.
@@ -1131,6 +1165,7 @@ class XformersAutoregressiveDecoder(nn.Module):
             x, caches[i] = layer(x, cache=None)
 
         outputs = []
+        tokens = []
         for t in range(self.num_categories):  # want N logits
             # 1) produce logits from CURRENT context (before adding next token)
             logits_t = self.out_proj(x[-1])  # (B, vocab)
@@ -1140,11 +1175,12 @@ class XformersAutoregressiveDecoder(nn.Module):
             if use_teacher_forcing and target_seq is not None:
                 next_tok = target_seq[:, t].unsqueeze(1)  # teacher
             else:
-                next_tok = torch.multinomial(
-                    logits_t.softmax(dim=-1), num_samples=1
-                )  # sample logits_t.softmax(dim=-1)
-                # next_tok = logits_t.argmax(dim=-1, keepdim=True)   # greedy (or sample)
-
+                # TODO try different sampling strategies
+                # next_tok = torch.multinomial(
+                #     logits_t.softmax(dim=-1), num_samples=1
+                # )
+                next_tok = logits_t.argmax(dim=-1, keepdim=True)  # greedy (or sample)
+            tokens.append(next_tok)
             # 3) embed & append
             pos_id = torch.full((B, 1), t + 1, dtype=torch.long, device=device)  # position t+1
             next_embed = self.token_emb(next_tok) + self.pos_emb(pos_id)
@@ -1157,15 +1193,240 @@ class XformersAutoregressiveDecoder(nn.Module):
                 new_caches.append(new_cache)
             caches = new_caches
             x = torch.cat([x, x_new], dim=0)  # extend sequence context
+        logits = torch.stack(outputs, dim=1)  # (B, N, vocab)
 
-        return torch.stack(outputs, dim=1)  # (B, N, vocab)
+        if return_tokens:
+            best_tokens = torch.stack(tokens, dim=1).argmax(dim=-1)  # (B, N)
+            return logits, best_tokens
+
+        return logits
+
+    @torch.no_grad()
+    def inference_best_of_n(self, z, return_tokens=False, n_samples=16, temperature=1.0):
+        """
+        Draw `n_samples` complete sequences, keep the one with the highest
+        total log‑probability (≈ MAP as n→∞).
+
+        Returns
+        -------
+        best_tokens : (B, num_categories)   the arg‑max sequence
+        best_logits : (B, num_categories, vocab)  logits for that sequence
+        """
+        B, device = z.size(0), z.device
+        # Store best results per batch element
+        best_logp = torch.full((B,), -float("inf"), device=device)
+        best_tokens = torch.empty(B, self.num_categories, dtype=torch.long, device=device)
+        best_logits = torch.empty(B, self.num_categories, self.max_count + 1, device=device, dtype=z.dtype)
+
+        for _ in range(n_samples):
+            # ---- run one trajectory exactly like your current inference ----
+            caches = [None] * len(self.layers)
+            x = self.latent_proj(z).unsqueeze(1)
+            x = x + self.pos_emb(torch.zeros(B, 1, dtype=torch.long, device=device))
+            x = x.transpose(0, 1)
+            for i, layer in enumerate(self.layers):
+                x, caches[i] = layer(x, cache=None)
+
+            traj_tokens = []
+            traj_logits = []
+            traj_logp = torch.zeros(B, device=device)
+
+            for t in range(self.num_categories):
+                logits_t = self.out_proj(x[-1]) / temperature  # (B, vocab)
+                probs_t = logits_t.softmax(-1)
+                next_tok = torch.multinomial(probs_t, 1)  # (B, 1)
+
+                # accumulate log‑probs of the chosen tokens
+                traj_logp += probs_t.gather(1, next_tok).log().squeeze(1)
+                traj_tokens.append(next_tok.squeeze(1))
+                traj_logits.append(logits_t)
+
+                # embed and advance caches
+                pos_id = torch.full((B, 1), t + 1, dtype=torch.long, device=device)
+                next_embed = self.token_emb(next_tok) + self.pos_emb(pos_id)
+                x_new = next_embed.transpose(0, 1)
+                new_caches = []
+                for i, layer in enumerate(self.layers):
+                    x_new, new_cache = layer(x_new, cache=caches[i])
+                    new_caches.append(new_cache)
+                caches = new_caches
+                x = torch.cat([x, x_new], 0)
+
+            # update best
+            better = traj_logp > best_logp
+            if better.any():
+                best_logp[better] = traj_logp[better]
+                best_tokens[better] = torch.stack(traj_tokens, 1)[better]
+                best_logits[better] = torch.stack(traj_logits, 1)[better]
+
+        token_logits = tokens_to_inf_logits(best_tokens, self.max_count + 1)
+        if return_tokens:
+            return token_logits, best_tokens
+
+        return token_logits
+
+    @torch.no_grad()
+    def sequence_log_likelihood(self, z: torch.Tensor, tokens: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        z       : (B, latent_dim)       latent vectors
+        tokens  : (B, num_categories)   ground‑truth token IDs
+
+        Returns
+        -------
+        logp    : (B,)  total log‑likelihood (sum over sequence positions)
+        """
+        # 1) get per‑position logits from the teacher‑forced pass
+        logits = self.teacher_forced_forward(z, tokens)  # (B, N, vocab)
+
+        # 2) convert to log‑probs
+        log_probs = F.log_softmax(logits, dim=-1)  # (B, N, vocab)
+
+        # 3) pick the log‑prob assigned to the true token at every position
+        token_logp = log_probs.gather(-1, tokens.unsqueeze(-1))  # (B, N, 1)
+        token_logp = token_logp.squeeze(-1)  # (B, N)
+
+        # 4) sum over the sequence to get the total log‑likelihood
+        return token_logp.sum(dim=-1)
+
+    @torch.no_grad()
+    def inference_beam_search(
+        self,
+        z: torch.Tensor,
+        return_tokens=False,
+        beam_width: int = 4,
+        length_penalty: float = 1.0,
+        temperature: float = 1.0,
+    ):
+        """
+        Incremental beam‑search decoding (width = `beam_width`) that re‑uses the
+        layer‑wise KV caches produced by `CachedXformersTransformerLayer`.
+
+        Parameters
+        ----------
+        z : Tensor, shape (B, latent_dim)
+        beam_width : int
+            Number of hypotheses kept per batch element.
+        length_penalty : float
+            Score is divided by (sequence_length ** length_penalty) before ranking
+            the final hypotheses (BERT/GPT‑style).  1.0 = no penalty.
+        temperature : float
+            Divide logits by this value *before* softmax; <1.0 = sharper, >1.0 = flatter.
+
+        Returns
+        -------
+        best_tokens : Tensor, shape (B, num_categories)
+            Highest‑scoring sequence for every batch element.
+        best_scores : Tensor, shape (B,)
+            Length‑penalised log‑probability of that sequence.
+        """
+
+        B, device = z.size(0), z.device
+        N = self.num_categories  # sequence length to generate
+        V = self.max_count + 1  # vocab size
+
+        # ---------- 1. embed the latent token (pos 0) ----------
+        x0 = self.latent_proj(z).unsqueeze(1)  # (B, 1, hidden)
+        x0 = x0 + self.pos_emb(torch.zeros(B, 1, dtype=torch.long, device=device))
+        x0 = x0.transpose(0, 1)  # (1, B, hidden)
+
+        # pass through transformer once to obtain initial caches
+        init_caches, x0_out = [], x0
+        for layer in self.layers:
+            x0_out, cache = layer(x0_out, cache=None)  # cache: {'k','v'}
+            init_caches.append(cache)
+
+        # ---------- 2. build the initial beam list (per batch) ----------
+        beams = []
+        for b in range(B):
+            # slice context & caches down to a single example (batch dim = 1)
+            x_b = x0_out[:, b : b + 1, :].clone()  # (1, 1, hidden)
+            caches_b = [
+                {
+                    "k": c["k"][:, b : b + 1, :].clone(),  # (seq_len, 1, head_dim)
+                    "v": c["v"][:, b : b + 1, :].clone(),
+                }
+                for c in init_caches
+            ]
+            beams.append([dict(tokens=[], logp=0.0, x=x_b, caches=caches_b)])
+
+        # ---------- 3. autoregressive generation ----------
+        for t in range(N):
+            for b in range(B):
+                candidates = []
+
+                # expand every hypothesis in the current beam
+                for hyp in beams[b]:
+                    logits_t = self.out_proj(hyp["x"][-1]) / temperature  # (1, V)
+                    log_probs = F.log_softmax(logits_t, dim=-1).squeeze(0)  # (V,)
+
+                    topk_logp, topk_tok = torch.topk(log_probs, beam_width)  # (beam_width,)
+                    for lp, tok in zip(topk_logp, topk_tok):
+                        candidates.append(
+                            (
+                                hyp["logp"] + lp.item(),  # cumulative log‑prob (float)
+                                int(tok.item()),  # token id (int)
+                                hyp,  # parent pointer
+                            )
+                        )
+
+                # keep the best `beam_width` candidates
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                candidates = candidates[:beam_width]
+
+                # build the next‑step beam
+                new_beam = []
+                for cum_logp, tok, parent in candidates:
+                    # ---- embed the chosen token and advance one step ----
+                    pos_id = torch.tensor([[t + 1]], dtype=torch.long, device=device)
+                    next_embed = self.token_emb(torch.tensor([[tok]], device=device)) + self.pos_emb(pos_id)
+                    x_new = next_embed.transpose(0, 1)  # (1, 1, hidden)
+
+                    # copy caches & run one‑token forward pass
+                    caches = [{"k": c["k"].clone(), "v": c["v"].clone()} for c in parent["caches"]]
+                    for i, layer in enumerate(self.layers):
+                        x_new, caches[i] = layer(x_new, cache=caches[i])
+
+                    new_beam.append(
+                        dict(
+                            tokens=parent["tokens"] + [tok],
+                            logp=cum_logp,
+                            x=torch.cat([parent["x"], x_new], dim=0),  # extend context
+                            caches=caches,
+                        )
+                    )
+
+                beams[b] = new_beam
+
+        # ---------- 4. select best hypothesis per batch ----------
+        best_tokens = torch.empty(B, N, dtype=torch.long, device=device)
+        best_scores = torch.empty(B, device=device)
+
+        for b in range(B):
+            scored = [(h["logp"] / (len(h["tokens"]) ** length_penalty), h) for h in beams[b]]
+            scored.sort(key=lambda x: x[0], reverse=True)
+            best_scores[b] = scored[0][0]
+            best_tokens[b] = torch.tensor(scored[0][1]["tokens"], device=device)
+
+        logits = tokens_to_inf_logits(best_tokens, self.max_count + 1)
+        if return_tokens:
+            return logits, best_tokens
+        return logits
 
     # ------------------------------------------------------------------
-    def forward(self, z, target_seq=None, log=False):
+    def forward(self, z, target_seq=None, log=False, return_tokens=False, inference_method="forward"):
         if self.training and target_seq is not None:
             return self.teacher_forced_forward(z, target_seq)
         if target_seq is None:
-            return self.inference_forward(z)
+            if inference_method == "best_of_n":
+                return self.inference_best_of_n(z, return_tokens=return_tokens)
+            elif inference_method == "beam_search":
+                return self.inference_beam_search(z, return_tokens=return_tokens)
+            elif inference_method == "forward":
+                return self.inference_forward(z, return_tokens=return_tokens)
+            else:
+                raise ValueError(f"Unknown inference method: {inference_method}")
         # evaluation w/ teacher forcing
         return self.inference_forward(z, target_seq, use_teacher_forcing=True)
 
@@ -1323,8 +1584,70 @@ class TransformerAutoregressiveDecoder(nn.Module):
             return self.inference_forward(z, target_seq, log=log)
 
 
+# ------------------------------------------------------------
+#  three auxiliary‑loss helpers
+# ------------------------------------------------------------
+def distance_kernel_loss(logits, target, sigma=2.0, laplace=True):
+    """
+    logits : (B,N,V)   raw decoder logits
+    target : (B,N)     integer counts
+    returns scalar loss  (mean over B,N)
+    """
+    B, N, V = logits.shape
+    device = logits.device
+
+    # build distance‑based target distribution
+    k = torch.arange(V, device=device).view(1, 1, V)  # (1,1,V)
+    tgt = target.unsqueeze(-1)  # (B,N,1)
+    dist = (k - tgt).abs().float()
+    if laplace:
+        log_w = -dist / sigma
+    else:  # Gaussian
+        log_w = -(dist**2) / (2 * sigma**2)
+    smooth = log_w.exp()
+    smooth = smooth / smooth.sum(-1, keepdim=True)  # (B,N,V)
+
+    log_probs = F.log_softmax(logits, -1)
+    loss = -(smooth * log_probs).sum(-1).mean()
+    return loss
+
+
+def expectation_mse_loss(logits, target):
+    """
+    MSE between model expected count  E[k]  and target
+    """
+    probs = logits.softmax(-1)  # (B,N,V)
+    V = logits.size(-1)
+    k = torch.arange(V, device=logits.device).view(1, 1, V)
+    exp = (probs * k).sum(-1)  # (B,N)
+    return F.mse_loss(exp, target.float())
+
+
+def crps_loss(logits, target):
+    """
+    CRPS / discrete Earth‑Mover distance between predicted CDF and target CDF
+    """
+    probs = logits.softmax(-1)  # (B,N,V)
+    cdf_pred = probs.cumsum(-1)  # (B,N,V)
+    V = logits.size(-1)
+    one_hot = F.one_hot(target, V).float()
+    cdf_true = one_hot.cumsum(-1)
+    return (cdf_pred - cdf_true).abs().mean()
+
+
 class AutoencoderKL_Autoregressive(nn.Module):
-    def __init__(self, embed_dim, input_dim, num_categories, encoder_hidden_dims, beta, max_count, **kwargs):
+    def __init__(
+        self,
+        embed_dim,
+        input_dim,
+        num_categories,
+        encoder_hidden_dims,
+        beta,
+        max_count,
+        aux_loss: str | None = None,  # 'distance', 'expectation', 'crps', or None
+        aux_lambda: float = 0.0,  # weight of the auxiliary term
+        **kwargs,
+    ):
         super().__init__()
         # Initialize the encoder as before.
         self._encoder = nn.Linear(input_dim, embed_dim)
@@ -1338,22 +1661,24 @@ class AutoencoderKL_Autoregressive(nn.Module):
         #     max_count=max_count,
         #     teacher_forcing_ratio=1.0,
         # )
-        self.auto_reg_decoder = TransformerAutoregressiveDecoder(
-            latent_dim=embed_dim,
-            hidden_dim=embed_dim,
-            num_categories=num_categories,
-            max_count=max_count,
-        )
-        # self.auto_reg_decoder = XformersAutoregressiveDecoder(
+        # self.auto_reg_decoder = TransformerAutoregressiveDecoder(
         #     latent_dim=embed_dim,
         #     hidden_dim=embed_dim,
         #     num_categories=num_categories,
         #     max_count=max_count,
-        #     num_layers=3,
         # )
+        self.auto_reg_decoder = XformersAutoregressiveDecoder(
+            latent_dim=embed_dim,
+            hidden_dim=embed_dim,
+            num_categories=num_categories,
+            max_count=max_count,
+            num_layers=3,
+        )
 
         self.use_variational = True
         self.beta = beta
+        self.aux_loss = aux_loss
+        self.aux_lambda = aux_lambda
 
     def encode(self, x):
         mu = self._encoder(x)
@@ -1362,38 +1687,52 @@ class AutoencoderKL_Autoregressive(nn.Module):
         posterior = DiagonalGaussianDistribution(moments, deterministic=True)
         return posterior
 
-    def decode(self, z, outputs=None, log=False):
+    def decode(self, z, outputs=None, **kwargs):
         # Autoregressively decode histogram counts from latent z.
         if outputs is not None:
             outputs = outputs.long()
-        dec = self.auto_reg_decoder(z, target_seq=outputs, log=log)
+        dec = self.auto_reg_decoder(z, target_seq=outputs, **kwargs)
         return dec
 
-    def forward(self, inputs, outputs=None, disable=True):
+    def forward(
+        self,
+        inputs,
+        outputs=None,
+        disable=True,
+    ):
+        """
+        aux_loss   : choose which auxiliary loss to add (or None)
+        aux_lambda : weight applied to that auxiliary term
+        """
         posterior = self.encode(inputs)
-        if disable:
-            z = posterior.mean
-        else:
-            z = posterior.sample()
-        dec = self.decode(z, outputs=outputs)
+        z = posterior.mean if disable else posterior.sample()
 
-        # Compute loss (e.g., using cross-entropy per time step)
-        # Here, assume target_seq is of shape (batch, num_categories) containing indices.
-        rec_loss = F.cross_entropy(dec.transpose(1, 2), outputs.long(), reduction="mean")
+        dec = self.decode(z, outputs=outputs)  # (B,N,V)
 
-        # if rec_loss.item() < 0.5:
-        #     self.decode(z, outputs=outputs, log=True)
-        # else:
-        #     print(rec_loss.item())
+        # --- primary reconstruction loss (token‑level CE) -------------
+        rec_loss = F.cross_entropy(
+            dec.transpose(1, 2),  # (B,V,N)
+            outputs.long(),
+            reduction="mean",
+        )
 
-        # KL divergence loss.
+        # --- optional auxiliary loss ----------------------------------
+        aux_val = torch.tensor(0.0, device=dec.device)
 
-        loss = rec_loss
+        if self.aux_loss == "distance":
+            aux_val = distance_kernel_loss(dec, outputs)
+        elif self.aux_loss == "expectation":
+            aux_val = expectation_mse_loss(dec, outputs)
+        elif self.aux_loss == "crps":
+            aux_val = crps_loss(dec, outputs)
+
+        loss = rec_loss + self.aux_lambda * self.aux_val
 
         return {
             "vae_loss": loss,
             "vae_rec_loss": rec_loss,
-            "vae_kl_loss": 0,
+            "vae_aux_loss": aux_val,
+            "vae_kl_loss": torch.tensor(0.0, device=dec.device),
             "vae_reconstruction": dec,
         }
 
@@ -2149,6 +2488,8 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 self.cfg.encoder_dims,
                 self.cfg.beta,
                 self.cfg.max_count,
+                aux_loss=self.cfg.aux_loss,
+                aux_lambda=self.cfg.aux_lambda,
             )
         elif self.cfg.autoencoder_type == "vae":
             self.autoencoder = AutoencoderKL(

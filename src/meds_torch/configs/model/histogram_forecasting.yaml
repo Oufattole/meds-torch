@@ -65,3 +65,5 @@ autoencoder_type: "vae"
 autoencoder_mi_num_layers: 3
 autoencoder_mi_mask_prob: 0.8
 autoencoder_mi_num_iters: 1
+aux_loss: null
+aux_lambda: 0.0
