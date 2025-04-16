@@ -62,7 +62,7 @@ def evaluate(cfg: DictConfig, datamodule=None) -> tuple[dict[str, Any], dict[str
         log_hyperparameters(object_dict)
 
     log.info("Starting testing!")
-    trainer.test(model=model, datamodule=datamodule)
+    # trainer.test(model=model, datamodule=datamodule)
 
     # for predictions use trainer.predict(...)
     # predictions = trainer.predict(model=model, dataloaders=dataloaders, ckpt_path=cfg.ckpt_path)
