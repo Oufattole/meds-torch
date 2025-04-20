@@ -47,6 +47,7 @@ token_insertion_strategy: ${data.token_insertion_strategy}
 token_bin_size: ${data.token_bin_size}
 n_bits: 8
 max_count: 8
+normalize_histogram: true
 scale: 1.0
 histogram_batch_mul: 1
 beta: 1e-3
@@ -67,3 +68,4 @@ autoencoder_mi_mask_prob: 0.8
 autoencoder_mi_num_iters: 1
 aux_loss: null
 aux_lambda: 0.0
+inference_method: null

@@ -320,7 +320,7 @@ def compute_cumulative_count(codes: np.ndarray, vocab_size: int) -> np.ndarray:
     return np.cumsum(one_hot, axis=0)
 
 
-def insert_h_o_tokens(codes: np.ndarray, token_bin_size: float, h_token: int, o_token: int) -> np.ndarray:
+def insert_h_o_tokens(codes: np.ndarray, token_bin_size: float, h_token: int, o_token: int, skip_first: bool = True) -> np.ndarray:
     """Insert H and O tokens into a sequence to mark bin boundaries.
 
     Args:
@@ -328,6 +328,7 @@ def insert_h_o_tokens(codes: np.ndarray, token_bin_size: float, h_token: int, o_
         token_bin_size (float): The size of the time bin to use for inserting H and O tokens.
         h_token (int): The token to insert for H.
         o_token (int): The token to insert for O.
+        skip_first (bool, optional): Whether to skip the first histogram. If False skip last.
 
     Returns:
         np.ndarray: Shape [L + num_prepended_h_o_tokens + 1] array of codes with H and O tokens inserted.
@@ -338,28 +339,65 @@ def insert_h_o_tokens(codes: np.ndarray, token_bin_size: float, h_token: int, o_
         >>> O_TOKEN = 4
         >>> # Test case 1: Multiple tokens
         >>> codes = [1,2,1,1,1]
-        >>> result = insert_h_o_tokens(codes, 2, H_TOKEN, O_TOKEN)
+        >>> result = insert_h_o_tokens(codes, 2, H_TOKEN, O_TOKEN, skip_first=False)
         >>> expected = [3,4,1,2,3,4,1,1,3,4,1,3]
+        >>> np.array_equal(result, expected)
+        True
+        >>> H_TOKEN = 3
+        >>> O_TOKEN = 4
+        >>> # Test case 1: Multiple tokens
+        >>> codes = [1,2,1,1,1]
+        >>> result = insert_h_o_tokens(codes, 2, H_TOKEN, O_TOKEN, skip_first=True)
+        >>> expected = [1,3,4,2,1,3,4,1,1,3]
         >>> np.array_equal(result, expected)
         True
 
         >>> # Test case 2: Single token
         >>> codes = [1]
-        >>> result = insert_h_o_tokens(codes, 2, H_TOKEN, O_TOKEN)
+        >>> result = insert_h_o_tokens(codes, 2, H_TOKEN, O_TOKEN, skip_first=False)
         >>> expected = [3,4,1,3]
+        >>> np.array_equal(result, expected)
+        True
+        >>> codes = [1]
+        >>> result = insert_h_o_tokens(codes, 2, H_TOKEN, O_TOKEN, skip_first=True)
+        >>> expected = [1,3]
+        >>> np.array_equal(result, expected)
+        True
+        
+        >>> # Test case 3: Single token
+        >>> H_TOKEN = 5
+        >>> O_TOKEN = 6
+        >>> codes = [0,1,2,3,4]
+        >>> result = insert_h_o_tokens(codes, 4, H_TOKEN, O_TOKEN, skip_first=False)
+        >>> expected = [5,6,0,1,2,3,5,6,4,5]
+        >>> np.array_equal(result, expected)
+        True
+
+        >>> codes = [0,1,2,3,4]
+        >>> result = insert_h_o_tokens(codes, 4, H_TOKEN, O_TOKEN, skip_first=True)
+        >>> expected = [0,5,6,1,2,3,4,5]
         >>> np.array_equal(result, expected)
         True
     """
     codes = np.array(codes, dtype=np.int64)
     # Calculate output length based on token_bin_size
-    num_prepended_h_o_tokens = ((len(codes) + token_bin_size - 1) // token_bin_size) * 2
+    num_prepended_h_o_tokens = (((len(codes) + token_bin_size - 1) // token_bin_size) - int(skip_first)) * 2
     output_length = len(codes) + num_prepended_h_o_tokens + 1  # +1 for the last h_token
 
     # Create output array with zeros
     result = np.zeros(output_length, dtype=codes.dtype)
 
     # Calculate positions for H and O tokens
-    token_positions = np.arange(0, output_length - 1, token_bin_size + 2)
+    step = token_bin_size + 2
+    if skip_first:
+        # build positions from the right, then reverse them
+        raw = np.arange(output_length - 1, 0, -step)
+        # reverse the order so we start with the smallest index, and skip the last token
+        token_positions = raw[::-1][:-1]
+    else:
+        # build positions from the left
+        token_positions = np.arange(0, output_length - 1, step)
+
     h_positions = np.hstack([token_positions, output_length - 1])
     o_positions = token_positions + 1
 
@@ -534,6 +572,8 @@ def fill_dummy_config(cfg: DummyConfig):
     cfg = OmegaConf.structured(cfg)
     with open_dict(cfg):
         cfg.vocab_size = 5
+        cfg.subvocab_size = 7
+        cfg.seq_padding_side = "right"
         cfg.augmented_vocab_size = 7
         cfg.token_bin_size = 2
         cfg.token_insertion_strategy = "token_count"
@@ -577,8 +617,8 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
         static_values
         subject_id
         >>> batch = dataset.collate([sample, dataset[1]])
-        >>> print(list(batch.keys()))
-        ['code', 'mask', 'histogram', 'start_idx', 'end_idx', 'start_time', 'end_time', 'subject_id']
+        >>> print(sorted(list(batch.keys())))
+        ['code', 'end_idx', 'end_time', 'histogram', 'mask', 'start_idx', 'start_time', 'subject_id']
         >>> print(batch['code'].shape)
         torch.Size([2, 21])
         >>> print(batch['mask'].shape)
@@ -680,7 +720,7 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
         codes = out["dynamic"].tensors["dim0/code"]
         time_deltas = out["dynamic"].tensors["dim0/time_delta_days"]
         if self.cfg.token_insertion_strategy == TokenInsertionStrategy.TOKEN_COUNT:
-            inserted_codes = insert_h_o_tokens(codes, self.cfg.token_bin_size, self.h_token, self.ntp_token)
+            inserted_codes = insert_h_o_tokens(codes, self.cfg.token_bin_size, self.h_token, self.ntp_token, skip_first=self.cfg.skip_first_h_token)
         elif self.cfg.token_insertion_strategy == TokenInsertionStrategy.TIME_BINS:
             inserted_codes = insert_h_o_tokens_with_time_bins(
                 codes, time_deltas, self.cfg.time_bin_size, self.h_token, self.ntp_token
@@ -690,7 +730,7 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
                 f"Invalid token insertion strategy: {self.cfg.token_insertion_strategy}, "
                 f"should be one of {TokenInsertionStrategy}"
             )
-        subvocab_codes = self.subvocab_mapper.to_subvocab(inserted_codes)
+        subvocab_codes = self.subvocab_mapper.to_subvocab(torch.tensor(inserted_codes, dtype=torch.int64))
         histogram = compute_count_histogram(subvocab_codes, self.cfg.subvocab_size, self.subvocab_ntp_token)
 
         out["cum_sum"] = dict(
