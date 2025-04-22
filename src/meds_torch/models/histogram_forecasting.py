@@ -1,6 +1,7 @@
 from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 
+import faiss
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
@@ -32,7 +33,7 @@ from x_transformers.autoregressive_wrapper import (
     identity,
     join,
 )
-import faiss
+
 from meds_torch.data.components.histogram_pytorch_dataset import SubvocabMapper
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.models import (
@@ -668,7 +669,7 @@ class HistogramNormalizer(torch.nn.Module):
         self.max_count = max_count
         self.scale = scale
         self.use_diffusion = use_diffusion
-        self.normalize=normalize
+        self.normalize = normalize
         # Create powers of 2 as a buffer to avoid recomputing
         self.register_buffer("powers", torch.pow(2, torch.arange(num_bits - 1, -1, -1).float()))
 
@@ -722,7 +723,11 @@ class HistogramNormalizer(torch.nn.Module):
         counts = self.multinomial_to_count(x).squeeze(-1)
         backup = counts.clone()
         if self.normalize:
-            counts = (counts / backup.sum(dim=-1, keepdim=True).clip(min=1) * (self.max_count - 1)).round().to(torch.int64)
+            counts = (
+                (counts / backup.sum(dim=-1, keepdim=True).clip(min=1) * (self.max_count - 1))
+                .round()
+                .to(torch.int64)
+            )
         # # TODO: REMOVE
 
         # Restore special tokens to count 1.
@@ -1096,7 +1101,6 @@ class CachedXformersTransformerLayer(nn.Module):
         return x, new_cache
 
 
-
 import torch
 import torch.nn.functional as F
 
@@ -1165,7 +1169,12 @@ class XformersAutoregressiveDecoder(nn.Module):
     #  Autoregressive inference  (produce BEFORE inserting new token)
     # ------------------------------------------------------------------
     def inference_forward(
-        self, z: torch.Tensor, target_seq=None, return_tokens=False, use_teacher_forcing=False, temperature=1.0,
+        self,
+        z: torch.Tensor,
+        target_seq=None,
+        return_tokens=False,
+        use_teacher_forcing=False,
+        temperature=1.0,
     ):
         """
         If `use_teacher_forcing` and `target_seq` provided, runs forced decoding;
@@ -1193,9 +1202,7 @@ class XformersAutoregressiveDecoder(nn.Module):
                 next_tok = target_seq[:, t].unsqueeze(1)  # teacher
             else:
                 # TODO try different sampling strategies
-                next_tok = torch.multinomial(
-                    (logits_t / temperature).softmax(dim=-1), num_samples=1
-                )
+                next_tok = torch.multinomial((logits_t / temperature).softmax(dim=-1), num_samples=1)
                 # next_tok = logits_t.argmax(dim=-1, keepdim=True)  # greedy (or sample)
             tokens.append(next_tok)
             # 3) embed & append
@@ -1221,7 +1228,7 @@ class XformersAutoregressiveDecoder(nn.Module):
     @torch.no_grad()
     def inference_best_of_n(
         self,
-        z: torch.Tensor,                       # (B, latent_dim)
+        z: torch.Tensor,  # (B, latent_dim)
         *,
         n_samples: int = 16,
         temperature: float = 1.0,
@@ -1243,22 +1250,21 @@ class XformersAutoregressiveDecoder(nn.Module):
         # ------------------------------------------------------------
         # 1.  Tile the latent so we have (B*n_samples, latent_dim)
         # ------------------------------------------------------------
-        z_rep = z.unsqueeze(1).expand(-1, n_samples, -1)        # (B, n, D)
-        z_rep = z_rep.reshape(B * n_samples, -1)                # (B*n, D)
+        z_rep = z.unsqueeze(1).expand(-1, n_samples, -1)  # (B, n, D)
+        z_rep = z_rep.reshape(B * n_samples, -1)  # (B*n, D)
 
         # ------------------------------------------------------------
         # 2.  Initialise transformer with the latent token
         # ------------------------------------------------------------
         caches = [None] * len(self.layers)
-        x = self.latent_proj(z_rep).unsqueeze(1)                # (B*n, 1, H)
-        x = x + self.pos_emb(torch.zeros(B * n_samples, 1, dtype=torch.long,
-                                        device=device))
-        x = x.transpose(0, 1)                                   # (1, B*n, H)
+        x = self.latent_proj(z_rep).unsqueeze(1)  # (B*n, 1, H)
+        x = x + self.pos_emb(torch.zeros(B * n_samples, 1, dtype=torch.long, device=device))
+        x = x.transpose(0, 1)  # (1, B*n, H)
         for i, layer in enumerate(self.layers):
             x, caches[i] = layer(x, cache=None)
 
         # storage
-        seq_logp   = torch.zeros(B * n_samples, device=device)
+        seq_logp = torch.zeros(B * n_samples, device=device)
         seq_tokens = torch.empty(B * n_samples, N, dtype=torch.long, device=device)
         seq_logits = torch.empty(B * n_samples, N, V, dtype=z.dtype, device=device)
 
@@ -1266,20 +1272,19 @@ class XformersAutoregressiveDecoder(nn.Module):
         # 3.  Autoregressive loop (still parallel over B*n trajectories)
         # ------------------------------------------------------------
         for t in range(N):
-            logits_t = self.out_proj(x[-1]) / temperature       # (B*n, V)
-            probs_t  = logits_t.softmax(-1)
+            logits_t = self.out_proj(x[-1]) / temperature  # (B*n, V)
+            probs_t = logits_t.softmax(-1)
 
-            next_tok = torch.multinomial(probs_t, 1)            # (B*n, 1)
+            next_tok = torch.multinomial(probs_t, 1)  # (B*n, 1)
 
-            seq_logp  += probs_t.gather(1, next_tok).log().squeeze(1)
+            seq_logp += probs_t.gather(1, next_tok).log().squeeze(1)
             seq_tokens[:, t] = next_tok.squeeze(1)
             seq_logits[:, t] = logits_t
 
             # advance
-            pos_id = torch.full((B * n_samples, 1), t + 1, dtype=torch.long,
-                                device=device)
+            pos_id = torch.full((B * n_samples, 1), t + 1, dtype=torch.long, device=device)
             next_embed = self.token_emb(next_tok) + self.pos_emb(pos_id)
-            x_new = next_embed.transpose(0, 1)                  # (1, B*n, H)
+            x_new = next_embed.transpose(0, 1)  # (1, B*n, H)
 
             new_caches = []
             for i, layer in enumerate(self.layers):
@@ -1291,15 +1296,15 @@ class XformersAutoregressiveDecoder(nn.Module):
         # ------------------------------------------------------------
         # 4.  Pick the best of the n_samples for every original batch item
         # ------------------------------------------------------------
-        seq_logp   = seq_logp.view(B, n_samples)                        # (B,n)
-        seq_tokens = seq_tokens.view(B, n_samples, N)                   # (B,n,N)
-        seq_logits = seq_logits.view(B, n_samples, N, V)                # (B,n,N,V)
+        seq_logp = seq_logp.view(B, n_samples)  # (B,n)
+        seq_tokens = seq_tokens.view(B, n_samples, N)  # (B,n,N)
+        seq_logits = seq_logits.view(B, n_samples, N, V)  # (B,n,N,V)
 
-        best_idx   = seq_logp.argmax(dim=1)                             # (B,)
-        batch_idx  = torch.arange(B, device=device)
+        best_idx = seq_logp.argmax(dim=1)  # (B,)
+        batch_idx = torch.arange(B, device=device)
 
-        best_tokens = seq_tokens[batch_idx, best_idx]                   # (B,N)
-        best_logits = seq_logits[batch_idx, best_idx]                   # (B,N,V)
+        best_tokens = seq_tokens[batch_idx, best_idx]  # (B,N)
+        best_logits = seq_logits[batch_idx, best_idx]  # (B,N,V)
 
         # (optional) convert tokens back to the “inference logits” format you use
         token_logits = tokens_to_inf_logits(best_tokens, V)
@@ -1308,15 +1313,14 @@ class XformersAutoregressiveDecoder(nn.Module):
             return token_logits, best_tokens
         return token_logits
 
-    
     @torch.no_grad()
     def inference_avg_of_n(
         self,
-        z: torch.Tensor,                       # (B, latent_dim)
+        z: torch.Tensor,  # (B, latent_dim)
         *,
         n_samples: int = 16,
         temperature: float = 1.0,
-        weight_by_prob: bool = False,          # True → weight samples by exp(log‑prob)
+        weight_by_prob: bool = False,  # True → weight samples by exp(log‑prob)
         return_tokens: bool = False,
     ):
         """
@@ -1349,31 +1353,27 @@ class XformersAutoregressiveDecoder(nn.Module):
         # 2.  Run the autoregressive decoder for all B*n trajectories
         # ------------------------------------------------------------
         caches = [None] * len(self.layers)
-        x = self.latent_proj(z_rep).unsqueeze(1)                # (B*n,1,H)
-        x = x + self.pos_emb(torch.zeros(B * n_samples, 1, dtype=torch.long,
-                                        device=device))
-        x = x.transpose(0, 1)                                   # (1,B*n,H)
+        x = self.latent_proj(z_rep).unsqueeze(1)  # (B*n,1,H)
+        x = x + self.pos_emb(torch.zeros(B * n_samples, 1, dtype=torch.long, device=device))
+        x = x.transpose(0, 1)  # (1,B*n,H)
         for i, layer in enumerate(self.layers):
             x, caches[i] = layer(x, cache=None)
 
-        seq_logits = torch.empty(B * n_samples, N, V,
-                                dtype=z.dtype, device=device)
-        seq_tokens = torch.empty(B * n_samples, N,
-                                dtype=torch.long, device=device)
-        seq_logp   = torch.zeros(B * n_samples, device=device)
+        seq_logits = torch.empty(B * n_samples, N, V, dtype=z.dtype, device=device)
+        seq_tokens = torch.empty(B * n_samples, N, dtype=torch.long, device=device)
+        seq_logp = torch.zeros(B * n_samples, device=device)
 
         for t in range(N):
-            logits_t = self.out_proj(x[-1]) / temperature       # (B*n,V)
-            probs_t  = logits_t.softmax(-1)
-            next_tok = torch.multinomial(probs_t, 1)            # (B*n,1)
+            logits_t = self.out_proj(x[-1]) / temperature  # (B*n,V)
+            probs_t = logits_t.softmax(-1)
+            next_tok = torch.multinomial(probs_t, 1)  # (B*n,1)
 
             seq_logits[:, t] = logits_t
             seq_tokens[:, t] = next_tok.squeeze(1)
-            seq_logp        += probs_t.gather(1, next_tok).log().squeeze(1)
+            seq_logp += probs_t.gather(1, next_tok).log().squeeze(1)
 
             # advance
-            pos_id = torch.full((B * n_samples, 1), t + 1, dtype=torch.long,
-                                device=device)
+            pos_id = torch.full((B * n_samples, 1), t + 1, dtype=torch.long, device=device)
             next_embed = self.token_emb(next_tok) + self.pos_emb(pos_id)
             x_new = next_embed.transpose(0, 1)
 
@@ -1387,36 +1387,36 @@ class XformersAutoregressiveDecoder(nn.Module):
         # ------------------------------------------------------------
         # 3.  Reshape  (B*n, …)  →  (B, n_samples, …)
         # ------------------------------------------------------------
-        seq_logits = seq_logits.view(B, n_samples, N, V)   # (B,n,N,V)
-        seq_tokens = seq_tokens.view(B, n_samples, N)      # (B,n,N)
-        seq_logp   = seq_logp.view(B, n_samples)           # (B,n)
+        seq_logits = seq_logits.view(B, n_samples, N, V)  # (B,n,N,V)
+        seq_tokens = seq_tokens.view(B, n_samples, N)  # (B,n,N)
+        seq_logp = seq_logp.view(B, n_samples)  # (B,n)
 
         # ------------------------------------------------------------
         # 4.  Average across the n_samples dimension
         # ------------------------------------------------------------
         if weight_by_prob:
             w = (seq_logp - seq_logp.max(1, keepdim=True).values).exp()  # stability
-            w = w / w.sum(1, keepdim=True)                               # (B,n)
-            w = w.unsqueeze(-1).unsqueeze(-1)                            # (B,n,1,1)
-            token_logits = (seq_logits * w).sum(1)                       # (B,N,V)
-            avg_tokens = (seq_tokens.float() *
-                        w.squeeze(-1)).sum(1)                      # (B,N)
+            w = w / w.sum(1, keepdim=True)  # (B,n)
+            w = w.unsqueeze(-1).unsqueeze(-1)  # (B,n,1,1)
+            token_logits = (seq_logits * w).sum(1)  # (B,N,V)
+            avg_tokens = (seq_tokens.float() * w.squeeze(-1)).sum(1)  # (B,N)
         else:
-            token_logits = seq_logits.mean(1)                            # (B,N,V)
-            avg_tokens = seq_tokens.float().mean(1)                  # (B,N)
+            token_logits = seq_logits.mean(1)  # (B,N,V)
+            avg_tokens = seq_tokens.float().mean(1)  # (B,N)
 
         if return_tokens:
             return token_logits, avg_tokens
         token_logits = tokens_to_inf_logits(avg_tokens.round().long(), V)
         return token_logits
 
-
         # p = all_logp.exp() / all_logp.exp().sum(dim=0, keepdim=True)
         # token_logits = (all_logits * p.reshape(*p.shape, 1, 1)).sum(dim=0)
         # best_tokens = (all_tokens * p.reshape(*p.shape, 1)).sum(dim=0)
 
     @torch.no_grad()
-    def sequence_log_likelihood(self, z: torch.Tensor, tokens: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
+    def sequence_log_likelihood(
+        self, z: torch.Tensor, tokens: torch.Tensor, temperature: float = 1.0
+    ) -> torch.Tensor:
         """
         Parameters
         ----------
@@ -1565,7 +1565,9 @@ class XformersAutoregressiveDecoder(nn.Module):
         return logits
 
     # ------------------------------------------------------------------
-    def forward(self, z, target_seq=None, log=False, return_tokens=False, inference_method="forward", temperature=1.0):
+    def forward(
+        self, z, target_seq=None, log=False, return_tokens=False, inference_method="forward", temperature=1.0
+    ):
         if self.training and target_seq is not None:
             return self.teacher_forced_forward(z, target_seq)
         if target_seq is None:
@@ -1879,7 +1881,7 @@ class AutoencoderKL_Autoregressive(nn.Module):
             aux_val = crps_loss(dec, outputs)
 
         loss = rec_loss + self.aux_lambda * aux_val
-        
+
         if not self.training:
             with torch.no_grad():
                 _, sample = self.auto_reg_decoder.inference_forward(z, return_tokens=True)
@@ -1888,7 +1890,6 @@ class AutoencoderKL_Autoregressive(nn.Module):
             sample_lp = 0
         with torch.no_grad():
             true_lp = self.auto_reg_decoder.sequence_log_likelihood(z, outputs.long()).mean()
-            
 
         return {
             "vae_loss": loss,
@@ -2324,12 +2325,35 @@ class AutoencoderKL(nn.Module):
         self.deterministic = deterministic
         self.temperature = temperature
         if "balanced" in self.histogram_head_loss:
-            self.balanced_ce_loss = nn.CrossEntropyLoss(weight=torch.tensor(
-                [0.28054136        , 0.0004873 , 0.00046119, 0.001836  , 0.10019334,
-                0.14765334, 0.28054136, 0.02805413, 0.15585631, 0.00337595,
-                0.2550376 , 0.00048764, 0.00046633, 0.00781452, 0.00677636,
-                0.00547932, 0.00547932, 0.28054136, 0, 0, 0], dtype=torch.float32))
-        
+            self.balanced_ce_loss = nn.CrossEntropyLoss(
+                weight=torch.tensor(
+                    [
+                        0.28054136,
+                        0.0004873,
+                        0.00046119,
+                        0.001836,
+                        0.10019334,
+                        0.14765334,
+                        0.28054136,
+                        0.02805413,
+                        0.15585631,
+                        0.00337595,
+                        0.2550376,
+                        0.00048764,
+                        0.00046633,
+                        0.00781452,
+                        0.00677636,
+                        0.00547932,
+                        0.00547932,
+                        0.28054136,
+                        0,
+                        0,
+                        0,
+                    ],
+                    dtype=torch.float32,
+                )
+            )
+
         if "clip" in histogram_head_loss:
             self.clip_projection = nn.Linear(embed_dim, embed_dim)
             self.clip_mlp = nn.Sequential(
@@ -2353,10 +2377,14 @@ class AutoencoderKL(nn.Module):
             assert self.histogram_head_loss == "multinomial_clip"
             history_features = self.clip_projection(z)
             if not hasattr(self, "histogram_bank"):
-                df = pl.read_parquet("/storage/shared/mimic-iv/meds_v0.3.2/analysis/zero_shot/train_histograms/64_gptneox_histogram_inference_sample.parquet")
+                df = pl.read_parquet(
+                    "/storage/shared/mimic-iv/meds_v0.3.2/analysis/zero_shot/train_histograms/64_gptneox_histogram_inference_sample.parquet"
+                )
                 # cpu_clip_mlp = self.clip_mlp.cpu()
                 with torch.no_grad():
-                    self.train_histograms = torch.tensor(np.vstack(df["histogram"].to_numpy()), dtype=torch.float32).to(z.device)
+                    self.train_histograms = torch.tensor(
+                        np.vstack(df["histogram"].to_numpy()), dtype=torch.float32
+                    ).to(z.device)
                     self.histogram_bank = self.clip_mlp(self.train_histograms)
                     bank_np = self.histogram_bank.cpu()
                     d = bank_np.shape[1]
@@ -2365,12 +2393,12 @@ class AutoencoderKL(nn.Module):
                     self.faiss_gpu_res = faiss.StandardGpuResources()
                     self.faiss_gpu_index = faiss.GpuIndexFlatL2(self.faiss_gpu_res, d)
                     self.faiss_gpu_index.add(bank_np)
-            
+
             ### Add code that uses faiss to find the closest vectors in self.histogram_bank for each history_features vector, and then
             ### uses that index to pull the actual histogram from np_histograms, and then loads this onto gpu.
             # hf_np = history_features.detach().cpu().numpy().astype('float32')
             _, I = self.faiss_gpu_index.search(history_features.cpu(), 1)
-            nn_idx = I[:, 0]                              # flatten to (batch_size,)
+            nn_idx = I[:, 0]  # flatten to (batch_size,)
             dec = self.train_histograms[nn_idx]
 
         else:
@@ -2406,7 +2434,7 @@ class AutoencoderKL(nn.Module):
 
         # Decode the latent representation
         dec = self.decode(z)
-        
+
         kwargs = {}
 
         if self.histogram_head_loss == "bce":
@@ -2466,7 +2494,7 @@ class AutoencoderKL(nn.Module):
             pred_histogram = dec
             target_histogram = outputs
             rec_loss = self.balanced_ce_loss(pred_histogram, target_histogram)
-            
+
         elif self.histogram_head_loss == "multinomial":
             dec = dec.reshape(*outputs.shape, -1)
             rec_loss = torch.nn.functional.cross_entropy(
@@ -2476,25 +2504,26 @@ class AutoencoderKL(nn.Module):
             # Reshape dec to have an extra dimension for bins.
             dec = dec.reshape(*outputs.shape, -1)
             # Compute the base multinomial cross-entropy reconstruction loss.
-            rec_loss = torch.nn.functional.cross_entropy(dec.transpose(1, 2).cpu().detach(), outputs.long().cpu().detach(), reduction="mean")
+            rec_loss = torch.nn.functional.cross_entropy(
+                dec.transpose(1, 2).cpu().detach(), outputs.long().cpu().detach(), reduction="mean"
+            )
             if outputs is not None:
-            
                 # Compute the 'history' features from z via a linear transformation.
                 history_features = self.clip_projection(z)  # shape: [n, d_i]
                 # Compute the 'histogram' features from outputs via an MLP.
-                histogram_features = self.clip_mlp(outputs)   # shape: [n, d_t]
-                
+                histogram_features = self.clip_mlp(outputs)  # shape: [n, d_t]
+
                 # Obtain joint embeddings by L2-normalizing these features.
                 history_embedding = torch.nn.functional.normalize(history_features, p=2, dim=1)
                 histogram_embedding = torch.nn.functional.normalize(histogram_features, p=2, dim=1)
-                
+
                 # Compute scaled cosine similarity logits.
                 # (Multiplying by exp(temperature) follows your pseudo-code; typically, temperature might be applied as a division factor.)
                 logits = torch.matmul(history_embedding, histogram_embedding.T) * self.temperature
-                
+
                 # Generate labels: [0, 1, ..., n-1]
                 labels = torch.arange(history_embedding.shape[0], device=logits.device)
-                
+
                 # Compute symmetric cross entropy loss:
                 # loss over rows: each history embedding is matched to the corresponding histogram embedding.
                 loss_history = torch.nn.functional.cross_entropy(logits, labels)
@@ -2505,7 +2534,6 @@ class AutoencoderKL(nn.Module):
                 # Add the clip loss to the base reconstruction loss.
                 rec_loss = rec_loss + clip_loss
                 kwargs = {"vae_clip_loss": clip_loss.item(), "vae_isolated_rec_loss": rec_loss.item()}
-
 
         elif self.histogram_head_loss == "multinomial_earthmover":
             # Reshape dec to have the same shape as outputs with an extra dimension for bins.
@@ -3817,7 +3845,9 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         else:
             latent_next_histogram_posterior = self.autoencoder.encode(last_embeddings)
             next_histogram, counts = self.histogram_normalizer.reverse_transform(
-                self.autoencoder.decode(latent_next_histogram_posterior.sample(), inference_method=self.cfg.inference_method)
+                self.autoencoder.decode(
+                    latent_next_histogram_posterior.sample(), inference_method=self.cfg.inference_method
+                )
             )
 
         # Mask token logits based on histogram
@@ -3909,7 +3939,9 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             )
         else:
             next_histogram_posterior = self.autoencoder.encode(last_embeddings)
-            next_ae_histogram_binary = self.autoencoder.decode(next_histogram_posterior.sample(), inference_method=self.cfg.inference_method)
+            next_ae_histogram_binary = self.autoencoder.decode(
+                next_histogram_posterior.sample(), inference_method=self.cfg.inference_method
+            )
             next_ae_histogram, count = self.histogram_normalizer.reverse_transform(next_ae_histogram_binary)
 
         h_token_histogram_mask = (

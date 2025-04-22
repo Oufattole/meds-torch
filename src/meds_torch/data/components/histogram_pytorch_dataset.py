@@ -320,7 +320,9 @@ def compute_cumulative_count(codes: np.ndarray, vocab_size: int) -> np.ndarray:
     return np.cumsum(one_hot, axis=0)
 
 
-def insert_h_o_tokens(codes: np.ndarray, token_bin_size: float, h_token: int, o_token: int, skip_first: bool = True) -> np.ndarray:
+def insert_h_o_tokens(
+    codes: np.ndarray, token_bin_size: float, h_token: int, o_token: int, skip_first: bool = True
+) -> np.ndarray:
     """Insert H and O tokens into a sequence to mark bin boundaries.
 
     Args:
@@ -363,7 +365,7 @@ def insert_h_o_tokens(codes: np.ndarray, token_bin_size: float, h_token: int, o_
         >>> expected = [1,3]
         >>> np.array_equal(result, expected)
         True
-        
+
         >>> # Test case 3: Single token
         >>> H_TOKEN = 5
         >>> O_TOKEN = 6
@@ -720,7 +722,13 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
         codes = out["dynamic"].tensors["dim0/code"]
         time_deltas = out["dynamic"].tensors["dim0/time_delta_days"]
         if self.cfg.token_insertion_strategy == TokenInsertionStrategy.TOKEN_COUNT:
-            inserted_codes = insert_h_o_tokens(codes, self.cfg.token_bin_size, self.h_token, self.ntp_token, skip_first=self.cfg.skip_first_h_token)
+            inserted_codes = insert_h_o_tokens(
+                codes,
+                self.cfg.token_bin_size,
+                self.h_token,
+                self.ntp_token,
+                skip_first=self.cfg.skip_first_h_token,
+            )
         elif self.cfg.token_insertion_strategy == TokenInsertionStrategy.TIME_BINS:
             inserted_codes = insert_h_o_tokens_with_time_bins(
                 codes, time_deltas, self.cfg.time_bin_size, self.h_token, self.ntp_token

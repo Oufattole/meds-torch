@@ -1,5 +1,4 @@
 import torch
-from omegaconf import DictConfig
 from torch import nn
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
@@ -50,6 +49,7 @@ def get_dummy_batch_and_cfg(num_samples: int = 3):
 # Set the histogram values for both batches
 import torch.nn as nn
 
+
 class HistogramEicEncoder(nn.Module, Module):
     """
     Embeds integer codes and combines them with histogram embeddings using
@@ -64,48 +64,49 @@ class HistogramEicEncoder(nn.Module, Module):
         >>> output[INPUT_ENCODER_MASK_KEY].shape
         torch.Size([batch_size, seq_length])
     """
+
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        
+
         # Embedding for discrete codes
         self.code_embedder = nn.Embedding(cfg.vocab_size, cfg.token_dim)
-        
+
         # MLP embedder for the histogram (two-layer MLP with non-linearity)
         self.histogram_embedder = nn.Sequential(
             nn.Linear(cfg.subvocab_size, cfg.token_dim * 2),
             nn.ReLU(),
-            nn.Linear(cfg.token_dim * 2, cfg.token_dim)
+            nn.Linear(cfg.token_dim * 2, cfg.token_dim),
         )
-        
+
         # Gating mechanism: takes concatenated code and histogram embeddings and outputs a gate per dimension.
         self.gate_layer = nn.Sequential(
             nn.Linear(cfg.token_dim * 2, cfg.token_dim),
-            nn.Sigmoid()  # Produces values in the range (0, 1) for gating.
+            nn.Sigmoid(),  # Produces values in the range (0, 1) for gating.
         )
 
     def forward(self, batch):
         # Assume batch contains "code", "histogram", and "mask" keys.
         batch[INPUT_ENCODER_MASK_KEY] = batch["mask"]
-        
+
         # Code embeddings: shape (batch_size, seq_length, token_dim)
         embedded_codes = self.code_embedder(batch["code"])
-        
-        # Normalize histograms. This normalization assumes that dividing by cfg.max_count 
+
+        # Normalize histograms. This normalization assumes that dividing by cfg.max_count
         # brings the histogram values to a similar scale as the learned embeddings.
         normalized_histogram = batch["histogram"] / self.cfg.max_count
-        
+
         # Histogram embeddings via a non-linear MLP: shape (batch_size, seq_length, token_dim)
         embedded_histograms = self.histogram_embedder(normalized_histogram)
-        
+
         # Compute the gate by concatenating code and histogram embeddings and applying a sigmoid.
         # The gate tensor has the same shape as the embeddings: (batch_size, seq_length, token_dim)
         concatenated_features = torch.cat([embedded_codes, embedded_histograms], dim=-1)
         gate = self.gate_layer(concatenated_features)
-        
+
         # Fuse the signals: histogram information is scaled by the gate then added to code embeddings.
         fused_embeddings = embedded_codes + gate * embedded_histograms
-        
+
         batch[INPUT_ENCODER_TOKENS_KEY] = fused_embeddings
         return batch
 
@@ -118,4 +119,3 @@ class HistogramEicEncoder(nn.Module, Module):
         gate = self.gate_layer(concatenated_features)
         fused_embeddings = embedded_codes + gate * embedded_histograms
         return fused_embeddings
-
