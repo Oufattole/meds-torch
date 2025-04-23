@@ -707,20 +707,8 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
         self.h_token = metadata_df.filter(pl.col("code") == "[H]")["code/vocab_index"][-1]
         self.ntp_token = metadata_df.filter(pl.col("code") == "[NTP]")["code/vocab_index"][-1]
         self.subvocab_ntp_token = metadata_df.filter(pl.col("code") == "[NTP]")["code/subvocab_index"][-1]
-
-    @SeedableMixin.WithSeed
-    def _seeded_getitem(self, idx: int) -> dict:
-        """Get a randomly windowed item from the dataset.
-
-        Args:
-            idx (int): Index of the item to retrieve.
-
-        Returns:
-            dict: A dictionary containing randomly generated windows of the sequence.
-        """
-        out = super()._seeded_getitem(idx)
-        codes = out["dynamic"].tensors["dim0/code"]
-        time_deltas = out["dynamic"].tensors["dim0/time_delta_days"]
+    
+    def update_codes(self, codes, time_deltas=None) -> torch.Tensor:
         if self.cfg.token_insertion_strategy == TokenInsertionStrategy.TOKEN_COUNT:
             inserted_codes = insert_h_o_tokens(
                 codes,
@@ -740,6 +728,24 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
             )
         subvocab_codes = self.subvocab_mapper.to_subvocab(torch.tensor(inserted_codes, dtype=torch.int64))
         histogram = compute_count_histogram(subvocab_codes, self.cfg.subvocab_size, self.subvocab_ntp_token)
+        return inserted_codes, histogram
+        
+        
+
+    @SeedableMixin.WithSeed
+    def _seeded_getitem(self, idx: int) -> dict:
+        """Get a randomly windowed item from the dataset.
+
+        Args:
+            idx (int): Index of the item to retrieve.
+
+        Returns:
+            dict: A dictionary containing randomly generated windows of the sequence.
+        """
+        out = super()._seeded_getitem(idx)
+        codes = out["dynamic"].tensors["dim0/code"]
+        time_deltas = out["dynamic"].tensors["dim0/time_delta_days"]
+        inserted_codes, histogram = self.update_codes(codes, time_deltas)
 
         out["cum_sum"] = dict(
             codes=inserted_codes,
@@ -763,11 +769,15 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
             dict: A dictionary containing the collated batch data.
         """
         codes = [torch.as_tensor(item["cum_sum"]["codes"], dtype=torch.long) for item in batch]
+        og_codes = [torch.as_tensor(item["dynamic"].tensors["dim0/code"], dtype=torch.long) for item in batch]
         masks = [torch.ones_like(code, dtype=torch.bool) for code in codes]
         histograms = [torch.as_tensor(item["cum_sum"]["histogram"], dtype=torch.float32) for item in batch]
         tensorized = {}
         tensorized["code"] = torch.nn.utils.rnn.pad_sequence(
             codes, batch_first=True, padding_side=self.config.seq_padding_side
+        )
+        tensorized["og_code"] = torch.nn.utils.rnn.pad_sequence(
+            og_codes, batch_first=True, padding_side=self.config.seq_padding_side
         )
         tensorized["mask"] = torch.nn.utils.rnn.pad_sequence(
             masks, batch_first=True, padding_side=self.config.seq_padding_side

@@ -1103,6 +1103,16 @@ class CachedXformersTransformerLayer(nn.Module):
 
 import torch
 import torch.nn.functional as F
+from torch.distributions import Categorical
+import math
+from dataclasses import dataclass
+
+@dataclass
+class HistogramSample(nn.Module):
+    logits: torch.Tensor
+    tokens: torch.Tensor
+    entropy: torch.Tensor
+    likelihood: torch.Tensor
 
 
 # ------------------------------------------------------------
@@ -1165,6 +1175,14 @@ class XformersAutoregressiveDecoder(nn.Module):
         logits = self.out_proj(x)  # predictions for positions 1..N
         return logits.transpose(0, 1)  # (B, N, vocab)
 
+    def get_histogram_sample(self, logits, tokens, multiple_logits=False):
+        entropy = Categorical(logits=logits).entropy()
+        likelihood = Categorical(logits=logits).log_prob(tokens)
+        if multiple_logits:
+            entropy = entropy.mean(1)
+            likelihood = torch.logsumexp(likelihood, dim=1) - math.log(likelihood.shape[1])
+        return HistogramSample(logits, tokens, entropy, likelihood)
+
     # ------------------------------------------------------------------
     #  Autoregressive inference  (produce BEFORE inserting new token)
     # ------------------------------------------------------------------
@@ -1219,11 +1237,9 @@ class XformersAutoregressiveDecoder(nn.Module):
             x = torch.cat([x, x_new], dim=0)  # extend sequence context
         logits = torch.stack(outputs, dim=1)  # (B, N, vocab)
 
-        if return_tokens:
-            best_tokens = torch.stack(tokens, dim=1).argmax(dim=-1)  # (B, N)
-            return logits, best_tokens
+        best_tokens = torch.stack(tokens, dim=1).argmax(dim=-1)  # (B, N)
 
-        return logits
+        return self.get_histogram_sample(logits, best_tokens)
 
     @torch.no_grad()
     def inference_best_of_n(
@@ -1307,11 +1323,7 @@ class XformersAutoregressiveDecoder(nn.Module):
         best_logits = seq_logits[batch_idx, best_idx]  # (B,N,V)
 
         # (optional) convert tokens back to the “inference logits” format you use
-        token_logits = tokens_to_inf_logits(best_tokens, V)
-
-        if return_tokens:
-            return token_logits, best_tokens
-        return token_logits
+        return self.get_histogram_sample(best_logits, best_tokens)
 
     @torch.no_grad()
     def inference_avg_of_n(
@@ -1395,23 +1407,17 @@ class XformersAutoregressiveDecoder(nn.Module):
         # 4.  Average across the n_samples dimension
         # ------------------------------------------------------------
         if weight_by_prob:
+            raise NotImplementedError("weight_by_prob not supported anymore, if you want to use it, note that get_histogram_sample might not work with it")
             w = (seq_logp - seq_logp.max(1, keepdim=True).values).exp()  # stability
             w = w / w.sum(1, keepdim=True)  # (B,n)
             w = w.unsqueeze(-1).unsqueeze(-1)  # (B,n,1,1)
             token_logits = (seq_logits * w).sum(1)  # (B,N,V)
             avg_tokens = (seq_tokens.float() * w.squeeze(-1)).sum(1)  # (B,N)
         else:
-            token_logits = seq_logits.mean(1)  # (B,N,V)
-            avg_tokens = seq_tokens.float().mean(1)  # (B,N)
-
-        if return_tokens:
-            return token_logits, avg_tokens
-        token_logits = tokens_to_inf_logits(avg_tokens.round().long(), V)
-        return token_logits
-
-        # p = all_logp.exp() / all_logp.exp().sum(dim=0, keepdim=True)
-        # token_logits = (all_logits * p.reshape(*p.shape, 1, 1)).sum(dim=0)
-        # best_tokens = (all_tokens * p.reshape(*p.shape, 1)).sum(dim=0)
+            token_logits = seq_logits  # (B,N,V)
+            avg_tokens = seq_tokens  # (B,N)
+        
+        return self.get_histogram_sample(token_logits, seq_tokens, multiple_logits=True)
 
     @torch.no_grad()
     def sequence_log_likelihood(
@@ -1439,130 +1445,6 @@ class XformersAutoregressiveDecoder(nn.Module):
 
         # 4) sum over the sequence to get the total log‑likelihood
         return token_logp.sum(dim=-1)
-
-    @torch.no_grad()
-    def inference_beam_search(
-        self,
-        z: torch.Tensor,
-        return_tokens=False,
-        beam_width: int = 4,
-        length_penalty: float = 1.0,
-        temperature: float = 1.0,
-    ):
-        """
-        Incremental beam‑search decoding (width = `beam_width`) that re‑uses the
-        layer‑wise KV caches produced by `CachedXformersTransformerLayer`.
-
-        Parameters
-        ----------
-        z : Tensor, shape (B, latent_dim)
-        beam_width : int
-            Number of hypotheses kept per batch element.
-        length_penalty : float
-            Score is divided by (sequence_length ** length_penalty) before ranking
-            the final hypotheses (BERT/GPT‑style).  1.0 = no penalty.
-        temperature : float
-            Divide logits by this value *before* softmax; <1.0 = sharper, >1.0 = flatter.
-
-        Returns
-        -------
-        best_tokens : Tensor, shape (B, num_categories)
-            Highest‑scoring sequence for every batch element.
-        best_scores : Tensor, shape (B,)
-            Length‑penalised log‑probability of that sequence.
-        """
-
-        B, device = z.size(0), z.device
-        N = self.num_categories  # sequence length to generate
-        V = self.max_count + 1  # vocab size
-
-        # ---------- 1. embed the latent token (pos 0) ----------
-        x0 = self.latent_proj(z).unsqueeze(1)  # (B, 1, hidden)
-        x0 = x0 + self.pos_emb(torch.zeros(B, 1, dtype=torch.long, device=device))
-        x0 = x0.transpose(0, 1)  # (1, B, hidden)
-
-        # pass through transformer once to obtain initial caches
-        init_caches, x0_out = [], x0
-        for layer in self.layers:
-            x0_out, cache = layer(x0_out, cache=None)  # cache: {'k','v'}
-            init_caches.append(cache)
-
-        # ---------- 2. build the initial beam list (per batch) ----------
-        beams = []
-        for b in range(B):
-            # slice context & caches down to a single example (batch dim = 1)
-            x_b = x0_out[:, b : b + 1, :].clone()  # (1, 1, hidden)
-            caches_b = [
-                {
-                    "k": c["k"][:, b : b + 1, :].clone(),  # (seq_len, 1, head_dim)
-                    "v": c["v"][:, b : b + 1, :].clone(),
-                }
-                for c in init_caches
-            ]
-            beams.append([dict(tokens=[], logp=0.0, x=x_b, caches=caches_b)])
-
-        # ---------- 3. autoregressive generation ----------
-        for t in range(N):
-            for b in range(B):
-                candidates = []
-
-                # expand every hypothesis in the current beam
-                for hyp in beams[b]:
-                    logits_t = self.out_proj(hyp["x"][-1]) / temperature  # (1, V)
-                    log_probs = F.log_softmax(logits_t, dim=-1).squeeze(0)  # (V,)
-
-                    topk_logp, topk_tok = torch.topk(log_probs, beam_width)  # (beam_width,)
-                    for lp, tok in zip(topk_logp, topk_tok):
-                        candidates.append(
-                            (
-                                hyp["logp"] + lp.item(),  # cumulative log‑prob (float)
-                                int(tok.item()),  # token id (int)
-                                hyp,  # parent pointer
-                            )
-                        )
-
-                # keep the best `beam_width` candidates
-                candidates.sort(key=lambda x: x[0], reverse=True)
-                candidates = candidates[:beam_width]
-
-                # build the next‑step beam
-                new_beam = []
-                for cum_logp, tok, parent in candidates:
-                    # ---- embed the chosen token and advance one step ----
-                    pos_id = torch.tensor([[t + 1]], dtype=torch.long, device=device)
-                    next_embed = self.token_emb(torch.tensor([[tok]], device=device)) + self.pos_emb(pos_id)
-                    x_new = next_embed.transpose(0, 1)  # (1, 1, hidden)
-
-                    # copy caches & run one‑token forward pass
-                    caches = [{"k": c["k"].clone(), "v": c["v"].clone()} for c in parent["caches"]]
-                    for i, layer in enumerate(self.layers):
-                        x_new, caches[i] = layer(x_new, cache=caches[i])
-
-                    new_beam.append(
-                        dict(
-                            tokens=parent["tokens"] + [tok],
-                            logp=cum_logp,
-                            x=torch.cat([parent["x"], x_new], dim=0),  # extend context
-                            caches=caches,
-                        )
-                    )
-
-                beams[b] = new_beam
-
-        # ---------- 4. select best hypothesis per batch ----------
-        best_tokens = torch.empty(B, N, dtype=torch.long, device=device)
-        best_scores = torch.empty(B, device=device)
-
-        for b in range(B):
-            scored = [(h["logp"] / (len(h["tokens"]) ** length_penalty), h) for h in beams[b]]
-            scored.sort(key=lambda x: x[0], reverse=True)
-            best_scores[b] = scored[0][0]
-            best_tokens[b] = torch.tensor(scored[0][1]["tokens"], device=device)
-
-        logits = tokens_to_inf_logits(best_tokens, self.max_count + 1)
-        if return_tokens:
-            return logits, best_tokens
-        return logits
 
     # ------------------------------------------------------------------
     def forward(
@@ -1808,19 +1690,6 @@ class AutoencoderKL_Autoregressive(nn.Module):
         self.embed_dim = embed_dim
 
         # Choose the autoregressive decoder.
-        # self.auto_reg_decoder = MultinomialAutoregressiveDecoder(
-        #     latent_dim=embed_dim,
-        #     hidden_dim=embed_dim,
-        #     num_categories=num_categories,
-        #     max_count=max_count,
-        #     teacher_forcing_ratio=1.0,
-        # )
-        # self.auto_reg_decoder = TransformerAutoregressiveDecoder(
-        #     latent_dim=embed_dim,
-        #     hidden_dim=embed_dim,
-        #     num_categories=num_categories,
-        #     max_count=max_count,
-        # )
         self.auto_reg_decoder = XformersAutoregressiveDecoder(
             latent_dim=embed_dim,
             hidden_dim=embed_dim,
@@ -3932,27 +3801,48 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         subvocab_sample = self.subvocab_mapper.to_subvocab(sample)
         one_hot_sample = torch.zeros_like(prev_histogram).scatter_(1, subvocab_sample, 1)
         next_decrement_histogram = prev_histogram - one_hot_sample
+        next_histogram = next_decrement_histogram
+        h_token_histogram_mask = (prev_sample == self.h_token)
+        next_histogram_posterior = None
+        entropy_list = [None] * h_token_histogram_mask.shape[0]
+        likelihood_list = entropy_list
+        if h_token_histogram_mask.any():
+            if self.cfg.use_diffusion:
+                next_ae_histogram, count = self.histogram_normalizer.reverse_transform(
+                    self.diffusion.sample(last_embeddings[h_token_histogram_mask], temperature=self.cfg.temperature)
+                )
+            else:
+                next_histogram_posterior = self.autoencoder.encode(last_embeddings[h_token_histogram_mask])
+                autoencoder_output = self.autoencoder.decode(
+                    next_histogram_posterior.sample(), inference_method=self.cfg.inference_method
+                )
+                if isinstance(autoencoder_output, torch.Tensor):
+                    next_ae_histogram_binary = autoencoder_output
+                elif isinstance(autoencoder_output, HistogramSample):
+                    assert isinstance(autoencoder_output, HistogramSample)
+                    next_ae_histogram_binary = autoencoder_output.tokens
+                    entropy_list = autoencoder_output.entropy
+                    likelihood_list = autoencoder_output.likelihood
+                    h_token_histogram_mask.cumsum
+                    
+                    raw_entropy = autoencoder_output.entropy[:5]
+                    raw_likelihood = autoencoder_output.likelihood[:5]
+                    raw_mask = torch.tensor([1, 1, 1, 0, 0, 0, 0, 0, 1, 1], dtype=torch.bool)
+                    
+                    entropy_iter = iter(autoencoder_output.entropy.detach().cpu())
+                    entropy_list = [next(entropy_iter).numpy() if m else None for m in h_token_histogram_mask.detach().cpu()]
+                    ll_iter = iter(autoencoder_output.likelihood.detach().cpu())
+                    likelihood_list = [next(ll_iter).numpy() if m else None for m in h_token_histogram_mask.detach().cpu()]
+                else:
+                    raise ValueError(f"Autoencoder output type {type(autoencoder_output)} not supported.")
+                next_ae_histogram, count = self.histogram_normalizer.reverse_transform(next_ae_histogram_binary)
 
-        if self.cfg.use_diffusion:
-            next_ae_histogram, count = self.histogram_normalizer.reverse_transform(
-                self.diffusion.sample(last_embeddings, temperature=self.cfg.temperature)
-            )
-        else:
-            next_histogram_posterior = self.autoencoder.encode(last_embeddings)
-            next_ae_histogram_binary = self.autoencoder.decode(
-                next_histogram_posterior.sample(), inference_method=self.cfg.inference_method
-            )
-            next_ae_histogram, count = self.histogram_normalizer.reverse_transform(next_ae_histogram_binary)
-
-        h_token_histogram_mask = (
-            (prev_sample == self.h_token).reshape(-1, 1).repeat(1, next_ae_histogram.shape[1])
-        )
-        next_histogram = torch.where(h_token_histogram_mask, next_ae_histogram, next_decrement_histogram)
+            next_histogram[h_token_histogram_mask] = next_ae_histogram.float()
 
         if (next_histogram == 0).all():
             raise ValueError("All histogram counts are zero somehow, this should not happen.")
 
-        return next_histogram, next_histogram_posterior
+        return next_histogram, next_histogram_posterior, entropy_list, likelihood_list
 
     @torch.no_grad()
     def hf_generate(
@@ -3961,13 +3851,14 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         use_guidance: bool = True,
         use_histogram_multiplier: bool = False,
         ignore_histogram_for_eos: bool = False,
+        num_samples: None | int = None,
     ):
         batch = self.input_encoder(batch)
         gpt_model: GPTNeoXForCausalLM = self.model.model.model
         samples = batch["code"]
         input_data, input_mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
         input_mask = batch["mask"].float()
-        remaining_tokens = self.cfg.max_seq_len - batch["code"].shape[1]
+        remaining_tokens = self.cfg.max_seq_len - batch["code"].shape[1] if num_samples is None else num_samples
         kv_cache = None
         prev_histogram = batch["histogram"][:, -1]
         from tqdm.auto import trange
@@ -3990,13 +3881,17 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             embeddings = output.hidden_states[-1]
             logits = output.logits
             kv_cache = output.past_key_values
+            entropy_log = [[] for _ in range(logits.shape[0])]
+            ll_log = [[] for _ in range(logits.shape[0])]
             if use_guidance:
                 sample = self.hf_get_sample(
                     logits, prev_histogram, use_histogram_multiplier, ignore_histogram_for_eos
                 )
                 prev_sample = samples[:, -1]
-                # Bug is here, embeddings need to be updated
-                prev_histogram, _ = self.hf_update_histogram(embeddings, sample, prev_histogram, prev_sample)
+                prev_histogram, _, entropy_list, likelihood_list = self.hf_update_histogram(embeddings, sample, prev_histogram, prev_sample)
+                for i in range(len(entropy_list)):
+                    entropy_log[i].append(entropy_list[i])
+                    ll_log[i].append(likelihood_list[i])
 
                 # Append new tokens
                 samples = torch.cat((samples, sample), dim=-1)
@@ -4026,4 +3921,4 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 input_mask = (
                     torch.ones(input_mask.shape[0]).to(input_mask.device, dtype=torch.float32).unsqueeze(-1)
                 )
-        return samples
+        return samples, entropy_list, likelihood_list
