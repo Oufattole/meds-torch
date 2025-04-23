@@ -3804,7 +3804,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         next_histogram = next_decrement_histogram
         h_token_histogram_mask = (prev_sample == self.h_token)
         next_histogram_posterior = None
-        entropy_list = [None] * h_token_histogram_mask.shape[0]
+        entropy_list = [[]] * h_token_histogram_mask.shape[0]
         likelihood_list = entropy_list
         if h_token_histogram_mask.any():
             if self.cfg.use_diffusion:
@@ -3830,9 +3830,9 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                     raw_mask = torch.tensor([1, 1, 1, 0, 0, 0, 0, 0, 1, 1], dtype=torch.bool)
                     
                     entropy_iter = iter(autoencoder_output.entropy.detach().cpu())
-                    entropy_list = [next(entropy_iter).numpy() if m else None for m in h_token_histogram_mask.detach().cpu()]
+                    entropy_list = [next(entropy_iter).tolist() if m else [] for m in h_token_histogram_mask.detach().cpu()]
                     ll_iter = iter(autoencoder_output.likelihood.detach().cpu())
-                    likelihood_list = [next(ll_iter).numpy() if m else None for m in h_token_histogram_mask.detach().cpu()]
+                    likelihood_list = [next(ll_iter).tolist() if m else [] for m in h_token_histogram_mask.detach().cpu()]
                 else:
                     raise ValueError(f"Autoencoder output type {type(autoencoder_output)} not supported.")
                 next_ae_histogram, count = self.histogram_normalizer.reverse_transform(next_ae_histogram_binary)
@@ -3862,6 +3862,8 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         kv_cache = None
         prev_histogram = batch["histogram"][:, -1]
         from tqdm.auto import trange
+        entropy_log = [[] for _ in range(input_data.shape[0])]
+        ll_log = [[] for _ in range(input_data.shape[0])]
 
         for _ in trange(remaining_tokens):
             if len(input_data.shape) == 2:
@@ -3881,8 +3883,6 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             embeddings = output.hidden_states[-1]
             logits = output.logits
             kv_cache = output.past_key_values
-            entropy_log = [[] for _ in range(logits.shape[0])]
-            ll_log = [[] for _ in range(logits.shape[0])]
             if use_guidance:
                 sample = self.hf_get_sample(
                     logits, prev_histogram, use_histogram_multiplier, ignore_histogram_for_eos
@@ -3921,4 +3921,4 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 input_mask = (
                     torch.ones(input_mask.shape[0]).to(input_mask.device, dtype=torch.float32).unsqueeze(-1)
                 )
-        return samples, entropy_list, likelihood_list
+        return samples, entropy_log, ll_log

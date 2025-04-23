@@ -64,7 +64,7 @@ class TrajectoryBatch:
     metadata_df: pl.DataFrame
     time_scale: str = "Y"
 
-    def to_meds(self, prediction_time: list[datetime], subject_id: list[str | int]) -> pl.DataFrame:
+    def to_meds(self, prediction_time: list[datetime], subject_id: list[str | int], **kwargs) -> pl.DataFrame:
         """Convert the trajectory batch to MEDS format.
 
         Args:
@@ -145,6 +145,10 @@ class TrajectoryBatch:
         # Parallel processing using numpy vectorization
         time_deltas = time_array * np.timedelta64(1, self.time_scale).astype("timedelta64[ns]")
         timestamps = pred_times + time_deltas
+        
+        flattened_kwargs = {}
+        for k, v in kwargs.items():
+            flattened_kwargs[k] = [element for v_batch in v for element in v_batch]
 
         # Create the final dictionary with only valid data
         data_dict = {
@@ -156,10 +160,11 @@ class TrajectoryBatch:
             "subject_id": subject_ids,
             "prediction_time": pred_times,
             "batch_indices": batch_indices,
+            **flattened_kwargs,
         }
 
         # Create DataFrame directly from the efficient dictionary
-        df = pl.from_dict(data_dict, schema=schema)
+        df = pl.from_dict(data_dict, schema_overrides=schema)
 
         # Convert code vocab indexes to strings using the metadata mapping
         df = df.join(
@@ -177,6 +182,7 @@ class TrajectoryBatch:
             "code/vocab_index",
             "numeric_value",
             "batch_indices",
+            *list(kwargs.keys())
         ]
 
 
