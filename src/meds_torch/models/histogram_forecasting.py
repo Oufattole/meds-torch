@@ -715,8 +715,16 @@ class HistogramNormalizer(torch.nn.Module):
             total: a tensor of shape [batch] with the sum of counts per histogram.
         """
         if len(x.shape) == 2:
+            if self.normalize:
+                counts = (
+                    (x / x.sum(dim=-1, keepdim=True).clip(min=1) * (self.max_count - 1))
+                    .round()
+                    .to(torch.int64)
+                )
+
             x[:, self.h_token] = 1
             x[:, self.o_token] = 1
+
             return x, x.sum(dim=-1)
         # Recover each count by taking the argmax over the multinomial dimension.
         x = x.reshape(x.shape[0], self.vocab_size, -1)
@@ -1101,18 +1109,20 @@ class CachedXformersTransformerLayer(nn.Module):
         return x, new_cache
 
 
+import math
+from dataclasses import dataclass
+
 import torch
 import torch.nn.functional as F
 from torch.distributions import Categorical
-import math
-from dataclasses import dataclass
+
 
 @dataclass
 class HistogramSample(nn.Module):
     logits: torch.Tensor
     tokens: torch.Tensor
-    entropy: torch.Tensor
-    likelihood: torch.Tensor
+    entropy: torch.Tensor | None
+    likelihood: torch.Tensor | None
 
 
 # ------------------------------------------------------------
@@ -1175,12 +1185,16 @@ class XformersAutoregressiveDecoder(nn.Module):
         logits = self.out_proj(x)  # predictions for positions 1..N
         return logits.transpose(0, 1)  # (B, N, vocab)
 
-    def get_histogram_sample(self, logits, tokens, multiple_logits=False):
-        entropy = Categorical(logits=logits).entropy()
-        likelihood = Categorical(logits=logits).log_prob(tokens)
-        if multiple_logits:
-            entropy = entropy.mean(1)
-            likelihood = torch.logsumexp(likelihood, dim=1) - math.log(likelihood.shape[1])
+    def get_histogram_sample(self, logits, tokens, multiple_logits=False, get_metadata=False):
+        if get_metadata:
+            entropy = Categorical(logits=logits).entropy()
+            likelihood = Categorical(logits=logits).log_prob(tokens)
+            if multiple_logits:
+                entropy = entropy.mean(1)
+                likelihood = torch.logsumexp(likelihood, dim=1) - math.log(likelihood.shape[1])
+        else:
+            entropy = None
+            likelihood = None
         return HistogramSample(logits, tokens, entropy, likelihood)
 
     # ------------------------------------------------------------------
@@ -1334,6 +1348,7 @@ class XformersAutoregressiveDecoder(nn.Module):
         temperature: float = 1.0,
         weight_by_prob: bool = False,  # True → weight samples by exp(log‑prob)
         return_tokens: bool = False,
+        get_metadata: bool = False,
     ):
         """
         Draw `n_samples` complete sequences **in parallel** and return the
@@ -1407,7 +1422,9 @@ class XformersAutoregressiveDecoder(nn.Module):
         # 4.  Average across the n_samples dimension
         # ------------------------------------------------------------
         if weight_by_prob:
-            raise NotImplementedError("weight_by_prob not supported anymore, if you want to use it, note that get_histogram_sample might not work with it")
+            raise NotImplementedError(
+                "weight_by_prob not supported anymore, if you want to use it, note that get_histogram_sample might not work with it"
+            )
             w = (seq_logp - seq_logp.max(1, keepdim=True).values).exp()  # stability
             w = w / w.sum(1, keepdim=True)  # (B,n)
             w = w.unsqueeze(-1).unsqueeze(-1)  # (B,n,1,1)
@@ -1416,8 +1433,10 @@ class XformersAutoregressiveDecoder(nn.Module):
         else:
             token_logits = seq_logits  # (B,N,V)
             avg_tokens = seq_tokens  # (B,N)
-        
-        return self.get_histogram_sample(token_logits, seq_tokens, multiple_logits=True)
+
+        return self.get_histogram_sample(
+            token_logits, seq_tokens, multiple_logits=True, get_metadata=get_metadata
+        )
 
     @torch.no_grad()
     def sequence_log_likelihood(
@@ -1448,7 +1467,14 @@ class XformersAutoregressiveDecoder(nn.Module):
 
     # ------------------------------------------------------------------
     def forward(
-        self, z, target_seq=None, log=False, return_tokens=False, inference_method="forward", temperature=1.0
+        self,
+        z,
+        target_seq=None,
+        log=False,
+        return_tokens=False,
+        inference_method="forward",
+        temperature=1.0,
+        get_metadata=False,
     ):
         if self.training and target_seq is not None:
             return self.teacher_forced_forward(z, target_seq)
@@ -1460,7 +1486,9 @@ class XformersAutoregressiveDecoder(nn.Module):
             elif inference_method == "forward":
                 return self.inference_forward(z, return_tokens=return_tokens, temperature=temperature)
             elif inference_method == "avg_of_n":
-                return self.inference_avg_of_n(z, return_tokens=return_tokens, temperature=temperature)
+                return self.inference_avg_of_n(
+                    z, return_tokens=return_tokens, temperature=temperature, get_metadata=get_metadata
+                )
             else:
                 raise ValueError(f"Unknown inference method: {inference_method}")
         # evaluation w/ teacher forcing
@@ -1730,9 +1758,11 @@ class AutoencoderKL_Autoregressive(nn.Module):
         posterior = self.encode(inputs)
         z = posterior.mean if disable else posterior.sample()
 
-        dec = self.decode(z, outputs=outputs)  # (B,N,V)
+        histogram_sample = self.decode(z, outputs=outputs)  # (B,N,V)
+        dec = histogram_sample.logits
 
         # --- primary reconstruction loss (token‑level CE) -------------
+
         rec_loss = F.cross_entropy(
             dec.transpose(1, 2),  # (B,V,N)
             outputs.long(),
@@ -1753,7 +1783,8 @@ class AutoencoderKL_Autoregressive(nn.Module):
 
         if not self.training:
             with torch.no_grad():
-                _, sample = self.auto_reg_decoder.inference_forward(z, return_tokens=True)
+                histogram_sample = self.auto_reg_decoder.inference_forward(z)
+                sample = histogram_sample.tokens
                 sample_lp = self.auto_reg_decoder.sequence_log_likelihood(z, sample).mean()
         else:
             sample_lp = 0
@@ -3796,25 +3827,35 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         sample = torch.multinomial(final_probs.clip(0, 1), 1)
         return sample
 
-    def hf_update_histogram(self, embeddings: torch.Tensor, sample, prev_histogram, prev_sample):
+    def hf_update_histogram(
+        self, embeddings: torch.Tensor, sample, prev_histogram, prev_sample, get_metadata: bool = False
+    ):
         last_embeddings = embeddings[:, -1]
         subvocab_sample = self.subvocab_mapper.to_subvocab(sample)
         one_hot_sample = torch.zeros_like(prev_histogram).scatter_(1, subvocab_sample, 1)
         next_decrement_histogram = prev_histogram - one_hot_sample
         next_histogram = next_decrement_histogram
-        h_token_histogram_mask = (prev_sample == self.h_token)
+        h_token_histogram_mask = prev_sample == self.h_token
         next_histogram_posterior = None
-        entropy_list = [[]] * h_token_histogram_mask.shape[0]
-        likelihood_list = entropy_list
+        if get_metadata:
+            entropy_list = [[]] * h_token_histogram_mask.shape[0]
+            likelihood_list = entropy_list
+        else:
+            entropy_list = None
+            likelihood_list = None
         if h_token_histogram_mask.any():
             if self.cfg.use_diffusion:
                 next_ae_histogram, count = self.histogram_normalizer.reverse_transform(
-                    self.diffusion.sample(last_embeddings[h_token_histogram_mask], temperature=self.cfg.temperature)
+                    self.diffusion.sample(
+                        last_embeddings[h_token_histogram_mask], temperature=self.cfg.temperature
+                    )
                 )
             else:
                 next_histogram_posterior = self.autoencoder.encode(last_embeddings[h_token_histogram_mask])
                 autoencoder_output = self.autoencoder.decode(
-                    next_histogram_posterior.sample(), inference_method=self.cfg.inference_method
+                    next_histogram_posterior.sample(),
+                    inference_method=self.cfg.inference_method,
+                    get_metadata=get_metadata,
                 )
                 if isinstance(autoencoder_output, torch.Tensor):
                     next_ae_histogram_binary = autoencoder_output
@@ -3824,18 +3865,22 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                     entropy_list = autoencoder_output.entropy
                     likelihood_list = autoencoder_output.likelihood
                     h_token_histogram_mask.cumsum
-                    
-                    raw_entropy = autoencoder_output.entropy[:5]
-                    raw_likelihood = autoencoder_output.likelihood[:5]
-                    raw_mask = torch.tensor([1, 1, 1, 0, 0, 0, 0, 0, 1, 1], dtype=torch.bool)
-                    
-                    entropy_iter = iter(autoencoder_output.entropy.detach().cpu())
-                    entropy_list = [next(entropy_iter).tolist() if m else [] for m in h_token_histogram_mask.detach().cpu()]
-                    ll_iter = iter(autoencoder_output.likelihood.detach().cpu())
-                    likelihood_list = [next(ll_iter).tolist() if m else [] for m in h_token_histogram_mask.detach().cpu()]
+
+                    if get_metadata:
+                        entropy_iter = iter(autoencoder_output.entropy.detach().cpu())
+                        entropy_list = [
+                            next(entropy_iter).tolist() if m else []
+                            for m in h_token_histogram_mask.detach().cpu()
+                        ]
+                        ll_iter = iter(autoencoder_output.likelihood.detach().cpu())
+                        likelihood_list = [
+                            next(ll_iter).tolist() if m else [] for m in h_token_histogram_mask.detach().cpu()
+                        ]
                 else:
                     raise ValueError(f"Autoencoder output type {type(autoencoder_output)} not supported.")
-                next_ae_histogram, count = self.histogram_normalizer.reverse_transform(next_ae_histogram_binary)
+                next_ae_histogram, count = self.histogram_normalizer.reverse_transform(
+                    next_ae_histogram_binary
+                )
 
             next_histogram[h_token_histogram_mask] = next_ae_histogram.float()
 
@@ -3843,6 +3888,34 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             raise ValueError("All histogram counts are zero somehow, this should not happen.")
 
         return next_histogram, next_histogram_posterior, entropy_list, likelihood_list
+
+    # def hf_update_histogram(self, embeddings: torch.Tensor, sample, prev_histogram, prev_sample, get_metadata: bool = False):
+    #     last_embeddings = embeddings[:, -1]
+    #     subvocab_sample = self.subvocab_mapper.to_subvocab(sample)
+    #     one_hot_sample = torch.zeros_like(prev_histogram).scatter_(1, subvocab_sample, 1)
+    #     next_decrement_histogram = prev_histogram - one_hot_sample
+
+    #     if self.cfg.use_diffusion:
+    #         next_ae_histogram, count = self.histogram_normalizer.reverse_transform(
+    #             self.diffusion.sample(last_embeddings, temperature=self.cfg.temperature)
+    #         )
+    #     else:
+    #         next_histogram_posterior = self.autoencoder.encode(last_embeddings)
+    #         autoencoder_output = self.autoencoder.decode(
+    #             next_histogram_posterior.sample(), inference_method=self.cfg.inference_method
+    #         )
+    #         next_ae_histogram_binary = autoencoder_output.tokens
+    #         next_ae_histogram, count = self.histogram_normalizer.reverse_transform(next_ae_histogram_binary)
+
+    #     h_token_histogram_mask = (
+    #         (prev_sample == self.h_token).reshape(-1, 1).repeat(1, next_ae_histogram.shape[1])
+    #     )
+    #     next_histogram = torch.where(h_token_histogram_mask, next_ae_histogram, next_decrement_histogram)
+
+    #     if (next_histogram == 0).all():
+    #         raise ValueError("All histogram counts are zero somehow, this should not happen.")
+
+    #     return next_histogram, next_histogram_posterior, None, None
 
     @torch.no_grad()
     def hf_generate(
@@ -3852,18 +3925,26 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         use_histogram_multiplier: bool = False,
         ignore_histogram_for_eos: bool = False,
         num_samples: None | int = None,
+        get_metadata: bool = False,
     ):
         batch = self.input_encoder(batch)
         gpt_model: GPTNeoXForCausalLM = self.model.model.model
         samples = batch["code"]
         input_data, input_mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
         input_mask = batch["mask"].float()
-        remaining_tokens = self.cfg.max_seq_len - batch["code"].shape[1] if num_samples is None else num_samples
+        remaining_tokens = (
+            self.cfg.max_seq_len - batch["code"].shape[1] if num_samples is None else num_samples
+        )
         kv_cache = None
         prev_histogram = batch["histogram"][:, -1]
         from tqdm.auto import trange
-        entropy_log = [[] for _ in range(input_data.shape[0])]
-        ll_log = [[] for _ in range(input_data.shape[0])]
+
+        if get_metadata:
+            entropy_log = [[] for _ in range(input_data.shape[0])]
+            ll_log = [[] for _ in range(input_data.shape[0])]
+        else:
+            entropy_log = None
+            ll_log = None
 
         for _ in trange(remaining_tokens):
             if len(input_data.shape) == 2:
@@ -3888,10 +3969,13 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                     logits, prev_histogram, use_histogram_multiplier, ignore_histogram_for_eos
                 )
                 prev_sample = samples[:, -1]
-                prev_histogram, _, entropy_list, likelihood_list = self.hf_update_histogram(embeddings, sample, prev_histogram, prev_sample)
-                for i in range(len(entropy_list)):
-                    entropy_log[i].append(entropy_list[i])
-                    ll_log[i].append(likelihood_list[i])
+                prev_histogram, _, entropy_list, likelihood_list = self.hf_update_histogram(
+                    embeddings, sample, prev_histogram, prev_sample, get_metadata
+                )
+                if get_metadata:
+                    for i in range(len(entropy_list)):
+                        entropy_log[i].append(entropy_list[i])
+                        ll_log[i].append(likelihood_list[i])
 
                 # Append new tokens
                 samples = torch.cat((samples, sample), dim=-1)
