@@ -714,6 +714,8 @@ class HistogramNormalizer(torch.nn.Module):
             counts: a tensor of shape [batch, vocab_size] with the recovered counts.
             total: a tensor of shape [batch] with the sum of counts per histogram.
         """
+        if isinstance(x, HistogramSample):
+            x = x.tokens
         if len(x.shape) == 2:
             if self.normalize:
                 counts = (
@@ -1183,7 +1185,8 @@ class XformersAutoregressiveDecoder(nn.Module):
             x, _ = layer(x, cache=None)
 
         logits = self.out_proj(x)  # predictions for positions 1..N
-        return logits.transpose(0, 1)  # (B, N, vocab)
+        logits = logits.transpose(0, 1)  # (B, N, vocab)
+        return self.get_histogram_sample(logits, tokens=logits.argmax(dim=-1))
 
     def get_histogram_sample(self, logits, tokens, multiple_logits=False, get_metadata=False):
         if get_metadata:
@@ -1453,7 +1456,9 @@ class XformersAutoregressiveDecoder(nn.Module):
         logp    : (B,)  total log‑likelihood (sum over sequence positions)
         """
         # 1) get per‑position logits from the teacher‑forced pass
-        logits = self.teacher_forced_forward(z, tokens) / temperature  # (B, N, vocab)
+        sample = self.teacher_forced_forward(z, tokens)
+
+        logits = sample.logits / temperature  # (B, N, vocab)
 
         # 2) convert to log‑probs
         log_probs = F.log_softmax(logits, dim=-1)  # (B, N, vocab)
@@ -1476,176 +1481,31 @@ class XformersAutoregressiveDecoder(nn.Module):
         temperature=1.0,
         get_metadata=False,
     ):
-        if self.training and target_seq is not None:
-            return self.teacher_forced_forward(z, target_seq)
-        if target_seq is None:
+        if target_seq is not None:
+            if self.training:
+                output = self.teacher_forced_forward(z, target_seq)
+                assert isinstance(output, HistogramSample)
+            else:
+                output = self.inference_forward(z, target_seq, use_teacher_forcing=True)
+                assert isinstance(output, HistogramSample)
+        else:
             if inference_method == "best_of_n":
-                return self.inference_best_of_n(z, return_tokens=return_tokens, temperature=temperature)
+                output = self.inference_best_of_n(z, return_tokens=return_tokens, temperature=temperature)
+                assert isinstance(output, HistogramSample)
             elif inference_method == "beam_search":
-                return self.inference_beam_search(z, return_tokens=return_tokens, temperature=temperature)
+                output = self.inference_beam_search(z, return_tokens=return_tokens, temperature=temperature)
+                assert isinstance(output, HistogramSample)
             elif inference_method == "forward":
-                return self.inference_forward(z, return_tokens=return_tokens, temperature=temperature)
+                output = self.inference_forward(z, return_tokens=return_tokens, temperature=temperature)
+                assert isinstance(output, HistogramSample)
             elif inference_method == "avg_of_n":
-                return self.inference_avg_of_n(
+                output = self.inference_avg_of_n(
                     z, return_tokens=return_tokens, temperature=temperature, get_metadata=get_metadata
                 )
+                assert isinstance(output, HistogramSample)
             else:
                 raise ValueError(f"Unknown inference method: {inference_method}")
-        # evaluation w/ teacher forcing
-        return self.inference_forward(z, target_seq, use_teacher_forcing=True)
-
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-
-class TransformerAutoregressiveDecoder(nn.Module):
-    def __init__(
-        self,
-        latent_dim,
-        hidden_dim,
-        num_categories,
-        max_count,
-        num_layers=3,
-    ):
-        """
-        Args:
-            latent_dim (int): Dimension of the latent code.
-            hidden_dim (int): Dimension of the transformer embeddings.
-            num_categories (int): Number of histogram bins to decode.
-            max_count (int): Maximum count value (decoding vocabulary is 0...max_count).
-            num_layers (int): Number of transformer layers.
-        """
-        super().__init__()
-        self.num_categories = num_categories
-        self.max_count = max_count
-
-        # Token embedding for count values (0...max_count).
-        self.token_embedding = nn.Embedding(max_count + 1, hidden_dim)
-        # Positional embeddings for positions in the full sequence (latent token + num_categories tokens)
-        self.pos_embedding = nn.Embedding(num_categories + 1, hidden_dim)
-        # Instead of a separate decoder memory we now use a full transformer stack that takes the latent as the first token.
-        encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=8)
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        # Map latent vector to an embedding that will be the first token input.
-        self.latent_to_context = nn.Linear(latent_dim, hidden_dim)
-        # Output projection: from hidden_dim to logits over count tokens.
-        self.out_proj = nn.Linear(hidden_dim, max_count + 1)
-
-    def teacher_forced_forward(self, z, target_seq, log=False):
-        """
-        Args:
-            z (Tensor): Latent vectors of shape (batch, latent_dim)
-            target_seq (Tensor): Ground-truth tokens, shape (batch, num_categories)
-        Returns:
-            logits_seq (Tensor): Logits with shape (batch, num_categories, max_count+1)
-              corresponding to predictions for each token in target_seq.
-        """
-        batch_size = z.size(0)
-        device = z.device
-
-        # --- Build input sequence ---
-        # 1. Convert z into a latent token and add positional encoding for position 0.
-        latent_token = self.latent_to_context(z).unsqueeze(1)  # (batch, 1, hidden_dim)
-        latent_token = latent_token + self.pos_embedding(
-            torch.zeros(batch_size, 1, dtype=torch.long, device=device)
-        )
-
-        # 2. Embed the target sequence tokens and add positional encodings for positions 1,...,num_categories.
-        token_embeds = self.token_embedding(target_seq)  # (batch, num_categories, hidden_dim)
-        positions = torch.arange(1, target_seq.size(1) + 1, device=device).unsqueeze(0).expand(batch_size, -1)
-        token_embeds = token_embeds + self.pos_embedding(positions)
-
-        # 3. Concatenate the latent token with the token embeddings.
-        #    The full sequence now has length num_categories+1.
-        full_seq = torch.cat([latent_token, token_embeds], dim=1)  # (batch, num_categories+1, hidden_dim)
-
-        # --- Transformer ---
-        # Transformer expects input shape (sequence_length, batch, hidden_dim)
-        full_seq = full_seq.transpose(0, 1)
-        # Create a causal mask so that each token only attends to earlier tokens.
-        tgt_mask = nn.Transformer.generate_square_subsequent_mask(full_seq.size(0)).to(device)
-        output = self.transformer(full_seq, mask=tgt_mask)
-
-        # --- Output Projection ---
-        # We want to predict each target token given all tokens before it.
-        # Since the first token is the latent token (conditioning) and not a target, we use outputs from positions 1:.
-        logits = self.out_proj(output[:-1])  # (num_categories, batch, max_count+1)
-        logits_seq = logits.transpose(0, 1)  # (batch, num_categories, max_count+1)
-        return logits_seq
-
-    def inference_forward(self, z, target_seq, use_teacher_forcing=False, log=False):
-        """
-        Inference: autoregressively decode token by token.
-        Args:
-            z (Tensor): Latent vectors, shape (batch, latent_dim)
-            target_seq (Tensor): Ground-truth tokens (only used for teacher forcing),
-                                 shape (batch, num_categories)
-            use_teacher_forcing (bool): Flag to determine whether to use target tokens.
-        Returns:
-            logits_seq (Tensor): Logits for each decoding step,
-                                 shape (batch, num_categories, max_count+1)
-        """
-        batch_size = z.size(0)
-        device = z.device
-
-        # Compute the latent token (with positional encoding at position 0).
-        latent_token = self.latent_to_context(z).unsqueeze(1)  # (batch, 1, hidden_dim)
-        latent_token = latent_token + self.pos_embedding(
-            torch.zeros(batch_size, 1, dtype=torch.long, device=device)
-        )
-        # Start the decoding sequence with the latent token only.
-        decoder_input = latent_token  # (batch, 1, hidden_dim)
-        outputs = []
-        for t in range(self.num_categories):
-            # Transformer expects (seq_len, batch, hidden_dim)
-            input_seq = decoder_input.transpose(0, 1)
-            tgt_mask = nn.Transformer.generate_square_subsequent_mask(input_seq.size(0)).to(device)
-            transformer_out = self.transformer(input_seq, mask=tgt_mask)
-            # Get the output from the last position (the most recent token).
-            last_hidden = transformer_out[-1]  # (batch, hidden_dim)
-            logits = self.out_proj(last_hidden)  # (batch, max_count+1)
-            outputs.append(logits)
-
-            # Decide next token.
-            if use_teacher_forcing:
-                next_token = target_seq[:, t].unsqueeze(1)  # (batch, 1)
-            else:
-                # probs = F.softmax(logits, dim=-1)
-                # next_token = torch.multinomial(probs, num_samples=1)  # (batch, 1)
-                next_token = logits.argmax(dim=-1, keepdim=True)  # (batch, 1)
-            # Determine the positional index for the new token:
-            # Since decoder_input already has the latent token at pos0, the next token gets position = current sequence length.
-            pos = torch.full((batch_size, 1), decoder_input.size(1), dtype=torch.long, device=device)
-            # Embed the next token and add its positional encoding.
-            next_embed = self.token_embedding(next_token) + self.pos_embedding(pos)
-            # Append to the decoding sequence.
-            decoder_input = torch.cat([decoder_input, next_embed], dim=1)
-
-        # Stack the logits from each decoding step into a sequence.
-        logits_seq = torch.stack(outputs, dim=1)  # (batch, num_categories, max_count+1)
-        return logits_seq
-
-    def forward(self, z, target_seq=None, log=False):
-        """
-        Args:
-            z (Tensor): Latent vectors, shape (batch, latent_dim)
-            target_seq (Tensor or None): If provided (and if self.training), a tensor of shape
-                (batch, num_categories) containing ground-truth tokens.
-        Returns:
-            logits_seq (Tensor): Output logits of shape (batch, num_categories, max_count+1)
-        """
-        if log:
-            print(self.teacher_forced_forward(z, target_seq, log=log).argmax(dim=-1)[0])
-            print(self.inference_forward(z, target_seq, log=log, use_teacher_forcing=False).argmax(dim=-1)[0])
-            print(self.inference_forward(z, target_seq, log=log, use_teacher_forcing=True).argmax(dim=-1)[0])
-
-        # When training, use teacher forcing.
-        if target_seq is not None:
-            return self.teacher_forced_forward(z, target_seq, log=log)
-        else:
-            return self.inference_forward(z, target_seq, log=log)
+        return output
 
 
 # ------------------------------------------------------------
@@ -1935,7 +1795,8 @@ class TransformerMaskedImputationDecoder(nn.Module):
 
         if log:
             print("Teacher forced logits sample:", cat_logits[0].argmax(dim=-1))
-        return cat_logits, mask
+
+        return self.get_histogram_sample(cat_logits, tokens=cat_logits.argmax(dim=-1))
 
     def inference_forward(self, z, target_seq=None, log=False, temperature=0.3, confidence_threshold=0.95):
         """

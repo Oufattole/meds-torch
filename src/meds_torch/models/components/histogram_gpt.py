@@ -18,6 +18,15 @@ class GPTLanguageModel(torch.nn.Module, Module):
     GPT with a Language Model head.
     """
 
+    PRECISION_TO_MODEL_WEIGHTS_DTYPE = {
+        "32-true": torch.float32,
+        "16-true": torch.float16,
+        "16-mixed": torch.float32,
+        "bf16-true": torch.bfloat16,
+        "bf16-mixed": torch.float32,
+        "transformer-engine": torch.bfloat16,
+    }
+
     def __init__(self, config: DictConfig) -> None:
         super().__init__()
         self.config = config
@@ -26,7 +35,7 @@ class GPTLanguageModel(torch.nn.Module, Module):
         # if torch.cuda.get_device_capability("cuda")[0] >= 8:
         kwargs = {
             "attn_implementation": "flash_attention_2",
-            "torch_dtype": torch.float16,
+            "torch_dtype": self.PRECISION_TO_MODEL_WEIGHTS_DTYPE.get("16-mixed"),
         }
         # else:
         #     kwargs = {}

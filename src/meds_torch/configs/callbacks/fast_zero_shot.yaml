@@ -1,0 +1,2 @@
+fast_zero_shot:
+  _target_: meds_torch.callbacks.fast_zero_shot.FastZeroShot
