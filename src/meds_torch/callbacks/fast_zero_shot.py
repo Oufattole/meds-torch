@@ -1,6 +1,7 @@
 import subprocess
 import tempfile
 from pathlib import Path
+import gc
 
 import polars as pl
 import torch
@@ -48,7 +49,17 @@ def launch_eval(BEST_CHECKPOINT, OUTPUT_DIR):
 
 class FastZeroShot(Callback):
     def on_validation_epoch_end(self, trainer, pl_module):
-        # 1) re-load the best checkpoint (or use pl_module directly)
+        # 1) remember where we were
+        device = pl_module.device
+
+        # 2) move the model off GPU
+        pl_module.cpu()
+
+        # 3) free up PyTorch's cache
+        torch.cuda.empty_cache()
+        gc.collect()   # optionally force a Python GC
+
+        # 5) Compute Zero shot metric
         with tempfile.TemporaryDirectory() as tmp_dir:
             ckpt_fp = Path(tmp_dir) / "model.ckpt"
             torch.save(pl_module, str(ckpt_fp))
@@ -79,3 +90,5 @@ class FastZeroShot(Callback):
                     on_epoch=True,  # emit once per validation run
                     logger=True,  # ensure it goes to your WandBLogger
                 )
+        # 6) (if you plan to continue training) move it back
+        pl_module.to(device)

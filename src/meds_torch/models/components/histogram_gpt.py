@@ -35,7 +35,7 @@ class GPTLanguageModel(torch.nn.Module, Module):
         # if torch.cuda.get_device_capability("cuda")[0] >= 8:
         kwargs = {
             "attn_implementation": "flash_attention_2",
-            "torch_dtype": self.PRECISION_TO_MODEL_WEIGHTS_DTYPE.get("16-mixed"),
+            # "torch_dtype": self.PRECISION_TO_MODEL_WEIGHTS_DTYPE.get("16-mixed"),
         }
         # else:
         #     kwargs = {}
