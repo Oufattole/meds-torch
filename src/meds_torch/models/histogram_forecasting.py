@@ -118,6 +118,10 @@ class HistogramMetric(Metric):
         true_hist = torch.cat(self.true_hist, dim=0)  # shape: [N, C]
         mean_hist = torch.cat(self.mean_hist, dim=0)
         sample_hist = torch.cat(self.sample_hist, dim=0)
+        print("$$$$$$$$$$$$$$$$$$$$$$$$$$$$HISTOGRAM_DEBUG$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+        print(true_hist[0])
+        print(mean_hist[0])
+        print(sample_hist[0])
 
         num_categories = true_hist.shape[1]
         x = np.arange(num_categories)
@@ -126,6 +130,9 @@ class HistogramMetric(Metric):
         mae_mean = torch.mean(torch.abs(mean_hist - true_hist), dim=0).numpy()
         mae_sample = torch.mean(torch.abs(sample_hist - true_hist), dim=0).numpy()
         avg_true = torch.mean(true_hist, dim=0).numpy()
+        print(avg_true)
+        print(mae_mean)
+        print(mae_sample)
 
         # Plot 2 data: Pearson correlation per category
         true_np = true_hist.numpy()
@@ -156,6 +163,8 @@ class HistogramMetric(Metric):
         # Summed MAE across categories for mean histogram predictions
         mae_sum = float(mae_mean.sum())
         mae_sample_sum = float(mae_sample.sum())
+        print(mae_sum)
+        print(mae_sample_sum)
 
         return {
             "x": x,
@@ -1255,7 +1264,7 @@ class XformersAutoregressiveDecoder(nn.Module):
             x = torch.cat([x, x_new], dim=0)  # extend sequence context
         logits = torch.stack(outputs, dim=1)  # (B, N, vocab)
 
-        best_tokens = torch.stack(tokens, dim=1).argmax(dim=-1)  # (B, N)
+        best_tokens = torch.stack(tokens, dim=1).squeeze(-1)  # (B, N)
 
         return self.get_histogram_sample(logits, best_tokens, get_metadata=get_metadata)
 
@@ -1440,7 +1449,10 @@ class XformersAutoregressiveDecoder(nn.Module):
             avg_tokens = seq_tokens  # (B,N)
 
         return self.get_histogram_sample(
-            token_logits, seq_tokens, multiple_logits=True, get_metadata=get_metadata
+            token_logits.mean(dim=1),
+            seq_tokens.float().mean(dim=1).round().long(),
+            multiple_logits=False,
+            get_metadata=get_metadata,
         )
 
     @torch.no_grad()
@@ -1492,13 +1504,17 @@ class XformersAutoregressiveDecoder(nn.Module):
                 assert isinstance(output, HistogramSample)
         else:
             if inference_method == "best_of_n":
-                output = self.inference_best_of_n(z, return_tokens=return_tokens, temperature=temperature, get_metadata=get_metadata)
+                output = self.inference_best_of_n(
+                    z, return_tokens=return_tokens, temperature=temperature, get_metadata=get_metadata
+                )
                 assert isinstance(output, HistogramSample)
             elif inference_method == "beam_search":
                 output = self.inference_beam_search(z, return_tokens=return_tokens, temperature=temperature)
                 assert isinstance(output, HistogramSample)
             elif inference_method == "forward":
-                output = self.inference_forward(z, return_tokens=return_tokens, temperature=temperature, get_metadata=get_metadata)
+                output = self.inference_forward(
+                    z, return_tokens=return_tokens, temperature=temperature, get_metadata=get_metadata
+                )
                 assert isinstance(output, HistogramSample)
             elif inference_method == "avg_of_n":
                 output = self.inference_avg_of_n(
@@ -2816,7 +2832,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         next_histogram_posterior: DiagonalGaussianDistribution = self.autoencoder.encode(embedding)
         if next_histogram_posterior.deterministic:
             mean_pred_histogram, _ = self.histogram_normalizer.reverse_transform(
-                self.autoencoder.decode(next_histogram_posterior.mean, inference_method="avg_of_n")
+                self.autoencoder.decode(next_histogram_posterior.mean, inference_method="best_of_n")
             )
             sample_pred_histogram, _ = self.histogram_normalizer.reverse_transform(
                 self.autoencoder.decode(next_histogram_posterior.mean, inference_method="forward")
@@ -2849,7 +2865,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             # Compute and log the histogram metric's summed MAE
             histogram_mean_mae, histogram_sample_mae = self.val_histogram_metric.compute()
             self.log("val/HISTOGRAM_MEAN_MAE", histogram_mean_mae, on_epoch=True)
-            self.log("val/HISTOGRAM_SAMPLE_MAE", histogram_mean_mae, on_epoch=True)
+            self.log("val/HISTOGRAM_SAMPLE_MAE", histogram_sample_mae, on_epoch=True)
             # Generate the custom histogram plots
             fig, axs = self.val_histogram_metric.plot()
             # Log the plot to wandb
@@ -3758,7 +3774,16 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         if (next_histogram == 0).all():
             raise ValueError("All histogram counts are zero somehow, this should not happen.")
 
-        return next_histogram, next_histogram_posterior, {"entropy": entropy_list, "ll": likelihood_list, "embedding": embedding_list, "sample": sample_list}
+        return (
+            next_histogram,
+            next_histogram_posterior,
+            {
+                "entropy": entropy_list,
+                "ll": likelihood_list,
+                "embedding": embedding_list,
+                "sample": sample_list,
+            },
+        )
 
     # def hf_update_histogram(self, embeddings: torch.Tensor, sample, prev_histogram, prev_sample, get_metadata: bool = False):
     #     last_embeddings = embeddings[:, -1]
@@ -3875,7 +3900,7 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             else:
                 probs = F.softmax(output.logits[:, -1] / self.cfg.temperature, dim=-1)
                 sample = torch.multinomial(probs, 1)
-                
+
                 if get_metadata or hasattr(self.input_encoder, "process_sample"):
                     prev_sample = samples[:, -1]
                     prev_histogram, _, metadata_sample = self.hf_update_histogram(
