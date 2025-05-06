@@ -118,10 +118,10 @@ class HistogramMetric(Metric):
         true_hist = torch.cat(self.true_hist, dim=0)  # shape: [N, C]
         mean_hist = torch.cat(self.mean_hist, dim=0)
         sample_hist = torch.cat(self.sample_hist, dim=0)
-        print("$$$$$$$$$$$$$$$$$$$$$$$$$$$$HISTOGRAM_DEBUG$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
-        print(true_hist[0])
-        print(mean_hist[0])
-        print(sample_hist[0])
+        # print("$$$$$$$$$$$$$$$$$$$$$$$$$$$$HISTOGRAM_DEBUG$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+        # print(true_hist[0])
+        # print(mean_hist[0])
+        # print(sample_hist[0])
 
         num_categories = true_hist.shape[1]
         x = np.arange(num_categories)
@@ -130,9 +130,9 @@ class HistogramMetric(Metric):
         mae_mean = torch.mean(torch.abs(mean_hist - true_hist), dim=0).numpy()
         mae_sample = torch.mean(torch.abs(sample_hist - true_hist), dim=0).numpy()
         avg_true = torch.mean(true_hist, dim=0).numpy()
-        print(avg_true)
-        print(mae_mean)
-        print(mae_sample)
+        # print(avg_true)
+        # print(mae_mean)
+        # print(mae_sample)
 
         # Plot 2 data: Pearson correlation per category
         true_np = true_hist.numpy()
@@ -163,8 +163,8 @@ class HistogramMetric(Metric):
         # Summed MAE across categories for mean histogram predictions
         mae_sum = float(mae_mean.sum())
         mae_sample_sum = float(mae_sample.sum())
-        print(mae_sum)
-        print(mae_sample_sum)
+        # print(mae_sum)
+        # print(mae_sample_sum)
 
         return {
             "x": x,
@@ -3881,9 +3881,6 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 )
                 if get_metadata:
                     self.update_metadata(metadata, metadata_sample)
-                    # for i in range(len(entropy_list)):
-                    #     entropy_log[i].append(entropy_list[i])
-                    #     ll_log[i].append(likelihood_list[i])
 
                 # Append new tokens
                 samples = torch.cat((samples, sample), dim=-1)

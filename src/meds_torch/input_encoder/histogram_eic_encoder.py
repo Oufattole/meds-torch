@@ -1,3 +1,4 @@
+import polars as pl
 import torch
 from torch import nn
 
@@ -79,6 +80,10 @@ class HistogramEicEncoder(nn.Module, Module):
 
         # Embedding for histogram categories. This will be used to compute a weighted average.
         self.category_embedding = nn.Embedding(cfg.subvocab_size, cfg.token_dim)
+        # Get NTP token index from metadata
+        self.ntp_token = pl.read_parquet(cfg.metadata_fp).filter(pl.col("code").eq("[NTP]"))[
+            "code/vocab_index"
+        ][0]
 
     def forward(self, batch):
         # Expecting keys "code", "histogram", and "mask" in the batch.
@@ -100,7 +105,8 @@ class HistogramEicEncoder(nn.Module, Module):
         # then the resulting weighted average has shape (B, S, token_dim)
         embedded_histograms = torch.matmul(normalized_histogram, self.category_embedding.weight)
         # Fuse the code embeddings with the gated histogram embeddings.
-        fused_embeddings = embedded_codes + embedded_histograms
+        ntp_mask = (batch["code"] == self.ntp_token).unsqueeze(-1)
+        fused_embeddings = embedded_codes + ntp_mask * embedded_histograms
 
         batch[INPUT_ENCODER_TOKENS_KEY] = fused_embeddings
         return batch
@@ -114,5 +120,6 @@ class HistogramEicEncoder(nn.Module, Module):
         histogram_sum = histograms.sum(dim=-1, keepdim=True)
         normalized_histogram = histograms / (histogram_sum + 1e-8)
         embedded_histograms = torch.matmul(normalized_histogram, self.category_embedding.weight)
-        fused_embeddings = embedded_codes + embedded_histograms
+        ntp_mask = (codes == self.ntp_token).unsqueeze(-1)
+        fused_embeddings = embedded_codes + ntp_mask * embedded_histograms
         return fused_embeddings

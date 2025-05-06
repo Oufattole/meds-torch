@@ -1,4 +1,4 @@
-_target_: meds_torch.input_encoder.histogram_eic_encoder.HistogramEicEncoder.initialize
+_target_: meds_torch.input_encoder.histogram_eic_encoder_gate.HistogramEicEncoder.initialize
 collate_style: eic
 model_type: ${model.backbone.model_type}
 vocab_size: ${model.vocab_size}
