@@ -4,7 +4,9 @@ from torch import nn
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.utils.module_class import Module
+from meds_torch.utils import RankedLogger
 
+log = RankedLogger(__name__, rank_zero_only=True)
 
 def get_dummy_batch_and_cfg(num_samples: int = 3):
     class DummyConfig:
@@ -119,7 +121,9 @@ class HistogramEicEncoder(nn.Module, Module):
         histograms = histograms.float()
         histogram_sum = histograms.sum(dim=-1, keepdim=True)
         normalized_histogram = histograms / (histogram_sum + 1e-8)
-        embedded_histograms = torch.matmul(normalized_histogram, self.category_embedding.weight)
         ntp_mask = (codes == self.ntp_token).unsqueeze(-1)
-        fused_embeddings = embedded_codes + ntp_mask * embedded_histograms
+        with torch.autocast("cuda", torch.float32):
+            embedded_histograms = torch.matmul(ntp_mask * normalized_histogram.to(torch.float32), self.category_embedding.weight.to(torch.float32))
+        embedded_histograms[~ntp_mask.flatten()] = 0.0
+        fused_embeddings = embedded_codes + (ntp_mask * embedded_histograms)
         return fused_embeddings
