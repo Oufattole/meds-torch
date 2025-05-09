@@ -87,7 +87,7 @@ class OverlapSkippingSlidingWindowDataset(IterableDataset):
 
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
-        if worker_info is None:
+        if worker_info is None or worker_info.num_workers == 1:
             start = 0
             end = len(self.dataset)
         else:
