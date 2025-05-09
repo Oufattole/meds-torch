@@ -1,0 +1,8 @@
+_target_: meds_torch.input_encoder.histogram_eic_encoder_cont.HistogramEicEncoder.initialize
+collate_style: eic
+model_type: ${model.backbone.model_type}
+vocab_size: ${model.vocab_size}
+subvocab_size: ${model.subvocab_size}
+token_dim: ${model.token_dim}
+max_count: ${model.max_count}
+metadata_fp: ${model.augmented_code_metadata_fp}

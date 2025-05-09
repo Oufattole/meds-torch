@@ -85,6 +85,7 @@ class HistogramEicEncoder(nn.Module, Module):
             nn.Linear(cfg.token_dim * 2, cfg.token_dim),
             nn.Sigmoid(),  # Produces values in the range (0, 1) for gating.
         )
+        nn.init.constant_(self.gate_layer[0].bias, 2.0)
         self.ntp_token = pl.read_parquet(cfg.metadata_fp).filter(pl.col("code").eq("[NTP]"))[
             "code/vocab_index"
         ][0]
@@ -110,7 +111,7 @@ class HistogramEicEncoder(nn.Module, Module):
 
         # Fuse the signals: histogram information is scaled by the gate then added to code embeddings.
         ntp_mask = (batch["code"] == self.ntp_token).unsqueeze(-1)
-        fused_embeddings = embedded_codes + gate * ntp_mask * embedded_histograms
+        fused_embeddings = torch.where(ntp_mask, embedded_codes + gate * embedded_histograms, embedded_codes)
 
         batch[INPUT_ENCODER_TOKENS_KEY] = fused_embeddings
         return batch
@@ -123,5 +124,5 @@ class HistogramEicEncoder(nn.Module, Module):
         concatenated_features = torch.cat([embedded_codes, embedded_histograms], dim=-1)
         gate = self.gate_layer(concatenated_features)
         ntp_mask = (codes == self.ntp_token).unsqueeze(-1)
-        fused_embeddings = embedded_codes + gate * ntp_mask * embedded_histograms
+        fused_embeddings = torch.where(ntp_mask, embedded_codes + gate * embedded_histograms, embedded_codes)
         return fused_embeddings

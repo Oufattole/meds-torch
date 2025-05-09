@@ -4,9 +4,7 @@ from torch import nn
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
 from meds_torch.utils.module_class import Module
-from meds_torch.utils import RankedLogger
 
-log = RankedLogger(__name__, rank_zero_only=True)
 
 def get_dummy_batch_and_cfg(num_samples: int = 3):
     class DummyConfig:
@@ -49,21 +47,16 @@ def get_dummy_batch_and_cfg(num_samples: int = 3):
     return data_dict, cfg
 
 
-import torch
+# Set the histogram values for both batches
 import torch.nn as nn
 
 
 class HistogramEicEncoder(nn.Module, Module):
     """
-    Embeds integer codes and combines them with a weighted average of category embeddings
-    using a gating mechanism.
+    Embeds integer codes and combines them with histogram embeddings using
+    an MLP for histogram embedding and a gating mechanism.
 
-    Instead of using an MLP for the histogram embedding, this version computes a
-    weighted average of category embeddings. For example, a histogram [1, 0, 3] is normalized
-    to [0.25, 0, 0.75] and then used as:
-        weighted_embedding = 0.25 * cat0_embed + 0 * cat1_embed + 0.75 * cat2_embed
-
-    Example usage:
+    Example:
         >>> batch, cfg = get_dummy_batch_and_cfg()
         >>> encoder = HistogramEicEncoder(cfg)
         >>> output = encoder(batch)
@@ -80,33 +73,33 @@ class HistogramEicEncoder(nn.Module, Module):
         # Embedding for discrete codes
         self.code_embedder = nn.Embedding(cfg.vocab_size, cfg.token_dim)
 
-        # Embedding for histogram categories. This will be used to compute a weighted average.
-        self.category_embedding = nn.Embedding(cfg.subvocab_size, cfg.token_dim)
-        # Get NTP token index from metadata
+        # MLP embedder for the histogram (two-layer MLP with non-linearity)
+        self.histogram_embedder = nn.Sequential(
+            nn.Linear(cfg.subvocab_size, cfg.token_dim * 2, ),
+            nn.ReLU(),
+            nn.Linear(cfg.token_dim * 2, cfg.token_dim),
+        )
+
+        # Gating mechanism: takes concatenated code and histogram embeddings and outputs a gate per dimension.
         self.ntp_token = pl.read_parquet(cfg.metadata_fp).filter(pl.col("code").eq("[NTP]"))[
             "code/vocab_index"
         ][0]
 
     def forward(self, batch):
-        # Expecting keys "code", "histogram", and "mask" in the batch.
+        # Assume batch contains "code", "histogram", and "mask" keys.
         batch[INPUT_ENCODER_MASK_KEY] = batch["mask"]
 
         # Code embeddings: shape (batch_size, seq_length, token_dim)
         embedded_codes = self.code_embedder(batch["code"])
 
-        # Convert the histogram to float if it isn't already.
-        histogram = batch["histogram"].float()
-        # Normalize each histogram by its sum to get probabilities.
-        histogram_sum = histogram.sum(dim=-1, keepdim=True)
-        normalized_histogram = histogram / (
-            histogram_sum + 1e-8
-        )  # add small epsilon to avoid division by zero
+        # Normalize histograms. This normalization assumes that dividing by cfg.max_count
+        # brings the histogram values to a similar scale as the learned embeddings.
+        normalized_histogram = batch["histogram"] / self.cfg.max_count
 
-        # Compute the weighted average of the category embeddings.
-        # If histogram has shape (B, S, subvocab_size) and the embedding matrix has shape (subvocab_size, token_dim),
-        # then the resulting weighted average has shape (B, S, token_dim)
-        embedded_histograms = torch.matmul(normalized_histogram, self.category_embedding.weight)
-        # Fuse the code embeddings with the gated histogram embeddings.
+        # Histogram embeddings via a non-linear MLP: shape (batch_size, seq_length, token_dim)
+        embedded_histograms = self.histogram_embedder(normalized_histogram)
+
+        # Fuse the signals: histogram information is scaled by the gate then added to code embeddings.
         ntp_mask = (batch["code"] == self.ntp_token).unsqueeze(-1)
         fused_embeddings = torch.where(ntp_mask, embedded_codes + embedded_histograms, embedded_codes)
 
@@ -114,15 +107,10 @@ class HistogramEicEncoder(nn.Module, Module):
         return batch
 
     def process_sample(self, codes, histograms):
-        """
-        Process a single sample (or independent tensors) with the same logic.
-        """
+        # Process a single sample (or independent tensors) with the same logic.
         embedded_codes = self.code_embedder(codes)
-        histograms = histograms.float()
-        histogram_sum = histograms.sum(dim=-1, keepdim=True)
-        normalized_histogram = histograms / (histogram_sum + 1e-8)
+        normalized_histogram = histograms / self.cfg.max_count
+        embedded_histograms = self.histogram_embedder(normalized_histogram)
         ntp_mask = (codes == self.ntp_token).unsqueeze(-1)
-        with torch.autocast("cuda", torch.float32):
-            embedded_histograms = torch.matmul(normalized_histogram.to(torch.float32), self.category_embedding.weight.to(torch.float32))
         fused_embeddings = torch.where(ntp_mask, embedded_codes + embedded_histograms, embedded_codes)
-        return fused_embeddings.to(embedded_codes.dtype)
+        return fused_embeddings
