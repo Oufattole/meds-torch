@@ -5,7 +5,7 @@ defaults:
   - optimizer: adam
   - scheduler: null
   - _self_
-_target_: meds_torch.models.histogram_forecasting.HistogramForecastingModule.initialize
+_target_: meds_torch.models.prompt_tuned_histogram_forecasting.PromptTunedHistogram.initialize
 
 max_seq_len: ${data.max_seq_len}
 token_dim: 4
@@ -70,4 +70,6 @@ aux_loss: null
 aux_lambda: 0.0
 inference_method: null
 encode_for_prompt_tuning: false
+do_inference: false
+finetune_all_params: false
 weight_decay: ${.optimizer.weight_decay}

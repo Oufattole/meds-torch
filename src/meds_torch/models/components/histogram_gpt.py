@@ -56,6 +56,20 @@ class GPT2Wrapper(torch.nn.Module, Module):
         super().__init__()
         self.cfg = cfg
         self.model = self.cfg.model
+        if self.cfg.get("use_lora", False):
+            from peft import LoraConfig, get_peft_model
+
+            # 1) Define a LoRA config. r=8 or 16 is a good starting point.
+            lora_config = LoraConfig(
+                task_type="CAUSAL_LM",
+                inference_mode=False,
+                r=8,
+                lora_alpha=16,
+                target_modules=["query_key_value"],  # GPT-NeoX QKV
+                lora_dropout=0.05,
+                bias="none",
+            )
+            self.model.model = get_peft_model(self.model.model, lora_config)
 
     def forward(self, batch, do_get_last_token=None):
         input_data, mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]

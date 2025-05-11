@@ -1,9 +1,8 @@
-import polars as pl
 import torch
 from torch import nn
 
 from meds_torch.input_encoder import INPUT_ENCODER_MASK_KEY, INPUT_ENCODER_TOKENS_KEY
-from meds_torch.utils.module_class import Module
+from meds_torch.input_encoder.histogram_eic_encoder import BaseHistogramEicEncoder
 
 
 def get_dummy_batch_and_cfg(num_samples: int = 3):
@@ -51,7 +50,7 @@ def get_dummy_batch_and_cfg(num_samples: int = 3):
 import torch.nn as nn
 
 
-class HistogramEicEncoder(nn.Module, Module):
+class HistogramEicEncoder(BaseHistogramEicEncoder):
     """
     Embeds integer codes and combines them with histogram embeddings using
     an MLP for histogram embedding and a gating mechanism.
@@ -67,7 +66,7 @@ class HistogramEicEncoder(nn.Module, Module):
     """
 
     def __init__(self, cfg):
-        super().__init__()
+        super().__init__(cfg)
         self.cfg = cfg
 
         # Embedding for discrete codes
@@ -86,11 +85,8 @@ class HistogramEicEncoder(nn.Module, Module):
             nn.Sigmoid(),  # Produces values in the range (0, 1) for gating.
         )
         nn.init.constant_(self.gate_layer[0].bias, 2.0)
-        self.ntp_token = pl.read_parquet(cfg.metadata_fp).filter(pl.col("code").eq("[NTP]"))[
-            "code/vocab_index"
-        ][0]
 
-    def forward(self, batch):
+    def _forward(self, batch):
         # Assume batch contains "code", "histogram", and "mask" keys.
         batch[INPUT_ENCODER_MASK_KEY] = batch["mask"]
 
@@ -116,7 +112,7 @@ class HistogramEicEncoder(nn.Module, Module):
         batch[INPUT_ENCODER_TOKENS_KEY] = fused_embeddings
         return batch
 
-    def process_sample(self, codes, histograms):
+    def _process_sample(self, codes, histograms):
         # Process a single sample (or independent tensors) with the same logic.
         embedded_codes = self.code_embedder(codes)
         normalized_histogram = histograms / self.cfg.max_count

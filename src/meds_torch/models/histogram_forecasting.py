@@ -2502,15 +2502,11 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         num_future_codes = self.cfg.get("num_future_codes", None)
         if num_future_codes is not None:
             logger.info(f"Using {num_future_codes} future codes for forecasting")
-        self.train_next_token_metric = NextTokenPredictionMetric(
-            self.cfg.vocab_size, self.cfg.top_k_acc, self.cfg.next_token_auc
-        )
+        self.train_next_token_metric = NextTokenPredictionMetric(self.cfg.vocab_size, [], False)
         self.val_next_token_metric = NextTokenPredictionMetric(
             self.cfg.vocab_size, self.cfg.top_k_acc, self.cfg.next_token_auc
         )
-        self.test_next_token_metric = NextTokenPredictionMetric(
-            self.cfg.vocab_size, self.cfg.top_k_acc, self.cfg.next_token_auc
-        )
+        self.test_next_token_metric = NextTokenPredictionMetric(self.cfg.vocab_size, [], False)
 
         self.train_histogram_metric = HistogramMetric()
         self.val_histogram_metric = HistogramMetric()
@@ -2744,8 +2740,12 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         return loss, loss_dict
 
     @TimeableMixin.TimeAs
-    def forward(self, batch, keep_code_logits=False):
-        batch = self.input_encoder(batch)
+    def forward(self, batch, keep_code_logits=False, skip_input_encoder=False):
+        if skip_input_encoder:
+            assert INPUT_ENCODER_TOKENS_KEY in batch
+            assert INPUT_ENCODER_MASK_KEY in batch
+        else:
+            batch = self.input_encoder(batch)
         model_output = self.model(batch, do_get_last_token=False)
         embeddings = model_output[BACKBONE_EMBEDDINGS_KEY]
 
@@ -2758,10 +2758,14 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         batch[CODE_LOGITS] = forecast[CODE_LOGITS]
 
         code_loss = self.get_loss(batch)
-        histogram_loss, loss_dict = self.get_histogram_loss(
-            batch["code"], batch["histogram"], embeddings, batch["mask"]
-        )
-        model_loss = code_loss + self.cfg.histogram_loss_weight * histogram_loss
+        if self.cfg.histogram_loss_weight != 0:
+            histogram_loss, loss_dict = self.get_histogram_loss(
+                batch["code"], batch["histogram"], embeddings, batch["mask"]
+            )
+            model_loss = code_loss + self.cfg.histogram_loss_weight * histogram_loss
+        else:
+            model_loss = code_loss
+            loss_dict = {}
 
         loss_dict["MODEL//code_loss"] = code_loss
         batch.update(loss_dict)
@@ -3830,8 +3834,16 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         ignore_histogram_for_eos: bool = False,
         num_samples: None | int = None,
         get_metadata: bool = False,
+        token_bin_guidance: bool = True,
     ):
         batch = self.input_encoder(batch)
+        if hasattr(self.input_encoder, "prompt_mlp"):
+            batch = self.model(batch, do_get_last_token=False)
+            histogram_embeddings = batch[BACKBONE_EMBEDDINGS_KEY]
+            if self.cfg.encode_for_prompt_tuning:
+                histogram_embeddings = self.autoencoder.encode(histogram_embeddings).mean
+            batch = self.input_encoder(batch, histogram_embedding=histogram_embeddings)
+
         gpt_model: GPTNeoXForCausalLM = self.model.model.model
         samples = batch["code"]
         input_data, input_mask = batch[INPUT_ENCODER_TOKENS_KEY], batch[INPUT_ENCODER_MASK_KEY]
@@ -3853,6 +3865,8 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
         else:
             metadata = None
 
+        count = 1
+
         for _ in trange(remaining_tokens):
             if len(input_data.shape) == 2:
                 kwargs = dict(input_ids=input_data)
@@ -3872,6 +3886,8 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
             logits = output.logits
             kv_cache = output.past_key_values
             if use_guidance:
+                if hasattr(self.input_encoder, "prompt_mlp"):
+                    raise ValueError("Prompt mlp not supported for guided histogram forecasting.")
                 sample = self.hf_get_sample(
                     logits, prev_histogram, use_histogram_multiplier, ignore_histogram_for_eos
                 )
@@ -3895,8 +3911,21 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                     torch.ones(input_mask.shape[0]).to(input_mask.device, dtype=torch.float32).unsqueeze(-1)
                 )
             else:
-                probs = F.softmax(output.logits[:, -1] / self.cfg.temperature, dim=-1)
-                sample = torch.multinomial(probs, 1)
+                if token_bin_guidance:
+                    num_tokens_in_bin = self.cfg.token_bin_size + 2
+                    if count % num_tokens_in_bin == 0:  # should generate H tokens
+                        sample = torch.full_like(samples[:, -1], self.h_token).unsqueeze(-1)
+                    elif count % num_tokens_in_bin == 1:  # should generate NTP tokens
+                        sample = torch.full_like(samples[:, -1], self.ntp_token).unsqueeze(-1)
+                    else:
+                        last_logits = output.logits[:, -1]
+                        last_logits[:, self.h_token] = float("-inf")
+                        last_logits[:, self.ntp_token] = float("-inf")
+                        probs = F.softmax(last_logits / self.cfg.temperature, dim=-1)
+                        sample = torch.multinomial(probs, 1)
+                else:
+                    probs = F.softmax(output.logits[:, -1] / self.cfg.temperature, dim=-1)
+                    sample = torch.multinomial(probs, 1)
 
                 if get_metadata or hasattr(self.input_encoder, "process_sample"):
                     prev_sample = samples[:, -1]
@@ -3909,8 +3938,14 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 # Append new tokens
                 samples = torch.cat((samples, sample), dim=-1)
                 if hasattr(self.input_encoder, "process_sample"):
+                    kwargs = {}
+                    if hasattr(self.input_encoder, "prompt_mlp"):
+                        histogram_embeddings = embeddings[:, -1]
+                        if self.cfg.encode_for_prompt_tuning:
+                            histogram_embeddings = self.autoencoder.encode(histogram_embeddings).mean
+                        kwargs["histogram_embedding"] = histogram_embeddings
                     next_sample_embedding = self.input_encoder.process_sample(
-                        sample, prev_histogram.unsqueeze(1)
+                        sample, prev_histogram.unsqueeze(1), **kwargs
                     )
                 else:
                     next_sample_embedding = sample
@@ -3918,4 +3953,5 @@ class HistogramForecastingModule(BaseModule, TimeableMixin, BaseGenerativeModel)
                 input_mask = (
                     torch.ones(input_mask.shape[0]).to(input_mask.device, dtype=torch.float32).unsqueeze(-1)
                 )
+            count += 1
         return samples, metadata

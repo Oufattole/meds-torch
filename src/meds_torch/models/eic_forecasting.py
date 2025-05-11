@@ -388,7 +388,7 @@ class NextTokenPredictionMetric(Metric):
             f"top_{k}_accuracy": MulticlassAccuracy(num_classes=vocab_size, top_k=k) for k in top_k_acc
         }
         if next_token_auc:
-            metrics["auroc"] = MulticlassAUROC(num_classes=vocab_size, average="macro", thresholds=100)
+            metrics["auroc"] = MulticlassAUROC(num_classes=vocab_size, average=None, thresholds=100)
         self.next_token_metrics = MetricCollection(metrics)
 
     def update(self, logits: torch.Tensor, targets: torch.Tensor, mask: torch.Tensor):
@@ -422,6 +422,8 @@ class NextTokenPredictionMetric(Metric):
             dict: A dictionary containing the computed AUROC and top-n accuracy for each k in top_k_acc.
         """
         results = self.next_token_metrics.compute()
+        if "auroc" in results:  # ignore classes with zero counts which are assigned a 0 auc
+            results["auroc"] = torch.mean(results["auroc"][results["auroc"] > 0])
         return results
 
 

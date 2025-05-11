@@ -6,7 +6,7 @@ import lightning as L
 import torch
 from lightning import Callback, LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
-from omegaconf import DictConfig, OmegaConf, open_dict
+from omegaconf import DictConfig
 
 from meds_torch.utils import (
     RankedLogger,
@@ -32,16 +32,16 @@ def initialize_finetune_objects(cfg: DictConfig, **kwargs) -> Trainer:
     """
     # load pretrained backbone and input encoder:
     # set seed for random number generators in pytorch, numpy and python.random
-    pretrain_cfg = OmegaConf.load(cfg.pretrain_yaml_path)
-    # TODO this just adds backwards compatibility find a better way for loading pretrain_cfg
-    # see: https://github.com/Oufattole/meds-torch/issues/47
-    with open_dict(pretrain_cfg):
-        pretrain_cfg.data.vocab_size = cfg.data.vocab_size
-        pretrain_cfg.model.vocab_size = cfg.data.vocab_size
+    # pretrain_cfg = OmegaConf.load(cfg.pretrain_yaml_path)
+    # # TODO this just adds backwards compatibility find a better way for loading pretrain_cfg
+    # # see: https://github.com/Oufattole/meds-torch/issues/47
+    # with open_dict(pretrain_cfg):
+    #     pretrain_cfg.data.vocab_size = cfg.data.vocab_size
+    #     pretrain_cfg.model.vocab_size = cfg.data.vocab_size
 
-    pretrain_model: LightningModule = hydra.utils.instantiate(pretrain_cfg.model)
-    checkpoint = torch.load(cfg.pretrain_ckpt_path, map_location="cpu")
-    pretrain_model.load_state_dict(checkpoint["state_dict"])
+    # pretrain_model: LightningModule = hydra.utils.instantiate(pretrain_cfg.model)
+    # checkpoint = torch.load(cfg.pretrain_ckpt_path, map_location="cpu")
+    # pretrain_model.load_state_dict(checkpoint["state_dict"])
 
     # set seed for random number generators in pytorch, numpy and python.random
     if cfg.get("seed"):
@@ -52,22 +52,24 @@ def initialize_finetune_objects(cfg: DictConfig, **kwargs) -> Trainer:
 
     log.info(f"Instantiating model <{cfg.model._target_}>")
     model: LightningModule = hydra.utils.instantiate(cfg.model)
+    ckpt = torch.load(cfg.pretrain_ckpt_path, map_location="cpu", weights_only=False)
+    model.load_state_dict(ckpt["state_dict"], strict=False)
 
-    log.info(f"Loading backbone from {cfg.pretrain_yaml_path}")
-    if not isinstance(model.model, pretrain_model.model.__class__):
-        raise ValueError(
-            f"Model {model.model.__class__} is not compatible with pretrained model"
-            f" {pretrain_model.model.__class__}."
-        )
-    model.model = pretrain_model.model
+    # log.info(f"Loading backbone from {cfg.pretrain_yaml_path}")
+    # if not isinstance(model.model, pretrain_model.model.__class__):
+    #     raise ValueError(
+    #         f"Model {model.model.__class__} is not compatible with pretrained model"
+    #         f" {pretrain_model.model.__class__}."
+    #     )
+    # model.model = pretrain_model.model
 
-    log.info(f"Loading input encoder from {cfg.pretrain_yaml_path}")
-    if not isinstance(model.input_encoder, pretrain_model.input_encoder.__class__):
-        raise ValueError(
-            f"Input encoder {model.input_encoder.__class__} is not compatible with pretrained"
-            f" input encoder {pretrain_model.input_encoder.__class__}."
-        )
-    model.input_encoder = pretrain_model.input_encoder
+    # log.info(f"Loading input encoder from {cfg.pretrain_yaml_path}")
+    # if not isinstance(model.input_encoder, pretrain_model.input_encoder.__class__):
+    #     raise ValueError(
+    #         f"Input encoder {model.input_encoder.__class__} is not compatible with pretrained"
+    #         f" input encoder {pretrain_model.input_encoder.__class__}."
+    #     )
+    # model.input_encoder = pretrain_model.input_encoder
 
     log.info("Instantiating callbacks...")
     callbacks: list[Callback] = instantiate_callbacks(cfg.get("callbacks"))

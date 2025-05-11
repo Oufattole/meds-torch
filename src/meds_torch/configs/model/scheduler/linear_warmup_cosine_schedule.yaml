@@ -1,0 +1,10 @@
+instantiate:
+  _target_: transformers.get_cosine_schedule_with_warmup
+  _partial_: true
+  num_warmup_steps: ${int_prod:0.1,${.num_training_steps}} # ~10% of training steps
+  num_training_steps: ${trainer.max_steps}
+  num_cycles: 0.5
+
+extra_kwargs:
+  monitor: val/loss
+  interval: step

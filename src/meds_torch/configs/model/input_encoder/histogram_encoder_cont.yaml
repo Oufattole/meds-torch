@@ -6,3 +6,6 @@ subvocab_size: ${model.subvocab_size}
 token_dim: ${model.token_dim}
 max_count: ${model.max_count}
 metadata_fp: ${model.augmented_code_metadata_fp}
+do_prompt_tune: false
+encode_for_prompt_tuning: ${model.encode_for_prompt_tuning}
+encoder_dims: ${model.encoder_dims}

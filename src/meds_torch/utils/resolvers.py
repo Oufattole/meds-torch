@@ -21,6 +21,20 @@ def get_eos_token_id(vocab_size, eos_offset):
     return vocab_size - eos_offset
 
 
+def int_prod(x: int, y: int) -> int:
+    """Returns the closest integer to the product of x and y (available as an OmegaConf resolver).
+
+    Examples:
+        >>> int_prod(2, 3)
+        6
+        >>> int_prod(2, 3.5)
+        7
+        >>> int_prod(2.49, 3)
+        7
+    """
+    return round(x * y)
+
+
 def setup_resolvers():
     OmegaConf.register_new_resolver(
         "get_vocab_size",
@@ -35,5 +49,10 @@ def setup_resolvers():
     OmegaConf.register_new_resolver(
         "add_two",
         add_two,
+        replace=True,
+    )
+    OmegaConf.register_new_resolver(
+        "int_prod",
+        int_prod,
         replace=True,
     )
