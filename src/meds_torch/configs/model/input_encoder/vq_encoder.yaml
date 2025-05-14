@@ -1,0 +1,43 @@
+_target_: meds_torch.input_encoder.vq_histogram_encoder.VQEicEmbedder.initialize
+collate_style: eic
+model_type: ${model.backbone.model_type}
+vocab_size: ${model.vocab_size}
+subvocab_size: ${model.subvocab_size}
+token_dim: ${model.token_dim}
+metadata_fp: ${model.augmented_code_metadata_fp}
+pretrain: ${model.pretrain}
+max_count: ${model.max_count}
+cluster_token_offset: ${model.cluster_token_offset}
+
+token_insertion_strategy: ${data.token_insertion_strategy}
+token_bin_size: ${data.token_bin_size}
+ntp_token: ${get_vocab_index:${.metadata_fp},'[NTP]'}
+
+normalize_histogram: true
+scale: 1.0
+histogram_head_loss: 'multinomial' # softmax_l2 multinomial cont_softmax_multinomial
+vq_num_embeddings: 512
+
+autoencoder_vq:
+  _target_: meds_torch.input_encoder.vq_histogram_encoder.AutoencoderVQ
+  _partial_: true
+  embed_dim: 32
+  input_dim: ${..subvocab_size}
+  num_categories: ${data.subvocab_size}
+  vq_num_embeddings: ${..vq_num_embeddings}
+  vq_beta: 0.25
+  encoder_hidden_dims: [64, 64, 64, 32]
+  decoder_hidden_dims: [32, 64, 64, 64]
+  histogram_head_loss: ${..histogram_head_loss}
+  commitment_scale: 1.0
+
+histogram_normalizer:
+  _target_: meds_torch.input_encoder.vq_histogram_encoder.HistogramNormalizer
+  # h_token: ${get_subvocab_index:${..metadata_fp},'[H]'}
+  # o_token: ${get_subvocab_index:${..metadata_fp},'[NTP]'}
+  vocab_size: ${..subvocab_size}
+  histogram_head_loss: ${..histogram_head_loss}
+  max_count: ${..max_count}
+  # scale: 1
+  # use_diffusion: false
+  # normalize: false

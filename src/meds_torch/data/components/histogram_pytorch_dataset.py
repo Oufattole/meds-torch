@@ -9,12 +9,17 @@ from MEDS_transforms.mapreduce.utils import rwlock_wrap
 from mixins import SeedableMixin, TimeableMixin
 from omegaconf import DictConfig, OmegaConf, open_dict
 
-from meds_torch.data.components.pytorch_dataset import DummyConfig, PytorchDataset
+from meds_torch.data.components.pytorch_dataset import (
+    DummyConfig,
+    PytorchDataset,
+    SubsequenceSamplingStrategy,
+)
 
 
 class TokenInsertionStrategy(StrEnum):
     TOKEN_COUNT = "token_count"
     TIME_BINS = "time_bins"
+    TOKEN_COUNT_NO_DECREMENT = "token_count_no_decrement"
 
 
 class SubvocabMapper:
@@ -321,7 +326,7 @@ def compute_cumulative_count(codes: np.ndarray, vocab_size: int) -> np.ndarray:
 
 
 def insert_h_o_tokens(
-    codes: np.ndarray, token_bin_size: float, h_token: int, o_token: int, **kwargs
+    codes: np.ndarray, token_bin_size: float, h_token: int, o_token: int, skip_first: bool = False
 ) -> np.ndarray:
     """Insert H and O tokens into a sequence to mark bin boundaries.
 
@@ -330,6 +335,7 @@ def insert_h_o_tokens(
         token_bin_size (float): The size of the time bin to use for inserting H and O tokens.
         h_token (int): The token to insert for H.
         o_token (int): The token to insert for O.
+        skip_first (bool, optional): Whether to skip the first histogram. If False skip last.
 
     Returns:
         np.ndarray: Shape [L + num_prepended_h_o_tokens + 1] array of codes with H and O tokens inserted.
@@ -340,28 +346,65 @@ def insert_h_o_tokens(
         >>> O_TOKEN = 4
         >>> # Test case 1: Multiple tokens
         >>> codes = [1,2,1,1,1]
-        >>> result = insert_h_o_tokens(codes, 2, H_TOKEN, O_TOKEN)
+        >>> result = insert_h_o_tokens(codes, 2, H_TOKEN, O_TOKEN, skip_first=False)
         >>> expected = [3,4,1,2,3,4,1,1,3,4,1,3]
+        >>> np.array_equal(result, expected)
+        True
+        >>> H_TOKEN = 3
+        >>> O_TOKEN = 4
+        >>> # Test case 1: Multiple tokens
+        >>> codes = [1,2,1,1,1]
+        >>> result = insert_h_o_tokens(codes, 2, H_TOKEN, O_TOKEN, skip_first=True)
+        >>> expected = [1,3,4,2,1,3,4,1,1,3]
         >>> np.array_equal(result, expected)
         True
 
         >>> # Test case 2: Single token
         >>> codes = [1]
-        >>> result = insert_h_o_tokens(codes, 2, H_TOKEN, O_TOKEN)
+        >>> result = insert_h_o_tokens(codes, 2, H_TOKEN, O_TOKEN, skip_first=False)
         >>> expected = [3,4,1,3]
+        >>> np.array_equal(result, expected)
+        True
+        >>> codes = [1]
+        >>> result = insert_h_o_tokens(codes, 2, H_TOKEN, O_TOKEN, skip_first=True)
+        >>> expected = [1,3]
+        >>> np.array_equal(result, expected)
+        True
+
+        >>> # Test case 3: Single token
+        >>> H_TOKEN = 5
+        >>> O_TOKEN = 6
+        >>> codes = [0,1,2,3,4]
+        >>> result = insert_h_o_tokens(codes, 4, H_TOKEN, O_TOKEN, skip_first=False)
+        >>> expected = [5,6,0,1,2,3,5,6,4,5]
+        >>> np.array_equal(result, expected)
+        True
+
+        >>> codes = [0,1,2,3,4]
+        >>> result = insert_h_o_tokens(codes, 4, H_TOKEN, O_TOKEN, skip_first=True)
+        >>> expected = [0,5,6,1,2,3,4,5]
         >>> np.array_equal(result, expected)
         True
     """
     codes = np.array(codes, dtype=np.int64)
     # Calculate output length based on token_bin_size
-    num_prepended_h_o_tokens = ((len(codes) + token_bin_size - 1) // token_bin_size) * 2
+    num_prepended_h_o_tokens = (((len(codes) + token_bin_size - 1) // token_bin_size) - int(skip_first)) * 2
     output_length = len(codes) + num_prepended_h_o_tokens + 1  # +1 for the last h_token
 
     # Create output array with zeros
     result = np.zeros(output_length, dtype=codes.dtype)
 
     # Calculate positions for H and O tokens
-    token_positions = np.arange(0, output_length - 1, token_bin_size + 2)
+    step = token_bin_size + 2
+    if skip_first:
+        # build positions from the right, then reverse them
+        raw = np.arange(output_length - 1, 0, -step)
+        # reverse the order so we start with the smallest index, and skip the last token
+        token_positions = raw[::-1][:-1]
+    else:
+        # build positions from the left
+        token_positions = np.arange(0, output_length - 1, step)
+
     h_positions = np.hstack([token_positions, output_length - 1])
     o_positions = token_positions + 1
 
@@ -532,6 +575,67 @@ def compute_count_histogram(inserted_codes: np.ndarray, vocab_size: int, o_token
     return histograms
 
 
+import numpy as np
+
+
+def next_n_token_histogram(
+    codes: np.ndarray,
+    vocab_size: int,
+    window_size: int,
+) -> np.ndarray:
+    """
+    For each position i in `codes`, return a length‑`vocab_size`
+    histogram counting tokens in positions [i, i+window_size).
+
+    Args
+    ----
+    codes : (L,) np.ndarray[int]
+        Sequence of token indices (no special H/O handling needed).
+    vocab_size : int
+        Size of the full vocabulary (tokens are assumed 0 … vocab_size‑1).
+    window_size : int
+        Number of future tokens to include in the histogram.
+
+    Returns
+    -------
+    histograms : (L, vocab_size) np.ndarray[int]
+        Row i contains counts of tokens in
+        codes[i : i + window_size].
+
+    Example
+    -------
+    >>> codes = np.array([0, 1, 2])
+    >>> next_n_token_histogram(codes, vocab_size=3, window_size=2)
+    array([[1, 1, 0],
+           [0, 1, 1],
+           [0, 0, 1]])
+
+    >>> codes = np.array([2, 2, 1, 0])
+    >>> next_n_token_histogram(codes, vocab_size=3, window_size=3)
+    array([[0, 1, 2],
+           [1, 1, 1],
+           [1, 1, 0],
+           [1, 0, 0]])
+    """
+    codes = np.asarray(codes, dtype=int)
+    L = codes.shape[0]
+
+    # one‑hot encode the sequence → shape (L, vocab_size)
+    one_hot = np.eye(vocab_size, dtype=int)[codes]
+
+    # prefix sums with a leading zero row → shape (L+1, vocab_size)
+    prefix = np.vstack([np.zeros(vocab_size, dtype=int), np.cumsum(one_hot, axis=0)])
+
+    # vectorised gather of start / end indices
+    starts = np.arange(L)
+    ends = np.minimum(starts + window_size, L)
+
+    # hist[i] = prefix[end] – prefix[start]
+    histograms = prefix[ends] - prefix[starts]
+
+    return histograms
+
+
 def fill_dummy_config(cfg: DummyConfig):
     cfg = OmegaConf.structured(cfg)
     with open_dict(cfg):
@@ -582,7 +686,7 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
         subject_id
         >>> batch = dataset.collate([sample, dataset[1]])
         >>> print(sorted(list(batch.keys())))
-        ['code', 'end_idx', 'end_time', 'histogram', 'mask', 'start_idx', 'start_time', 'subject_id']
+        ['code', 'end_idx', 'end_time', 'histogram', 'mask', 'og_code', 'start_idx', 'start_time', 'subject_id']
         >>> print(batch['code'].shape)
         torch.Size([2, 21])
         >>> print(batch['mask'].shape)
@@ -671,12 +775,16 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
         self.subvocab_ntp_token = metadata_df.filter(pl.col("code") == "[NTP]")["code/subvocab_index"][-1]
 
     def update_codes(self, codes, time_deltas=None) -> torch.Tensor:
-        if self.cfg.token_insertion_strategy == TokenInsertionStrategy.TOKEN_COUNT:
+        if self.cfg.token_insertion_strategy in [
+            TokenInsertionStrategy.TOKEN_COUNT,
+            TokenInsertionStrategy.TOKEN_COUNT_NO_DECREMENT,
+        ]:
             inserted_codes = insert_h_o_tokens(
                 codes,
                 self.cfg.token_bin_size,
                 self.h_token,
                 self.ntp_token,
+                skip_first=self.cfg.skip_first_h_token,
             )
         elif self.cfg.token_insertion_strategy == TokenInsertionStrategy.TIME_BINS:
             inserted_codes = insert_h_o_tokens_with_time_bins(
@@ -688,7 +796,14 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
                 f"should be one of {TokenInsertionStrategy}"
             )
         subvocab_codes = self.subvocab_mapper.to_subvocab(torch.tensor(inserted_codes, dtype=torch.int64))
-        histogram = compute_count_histogram(subvocab_codes, self.cfg.subvocab_size, self.subvocab_ntp_token)
+        if TokenInsertionStrategy.TOKEN_COUNT_NO_DECREMENT == self.cfg.token_insertion_strategy:
+            histogram = next_n_token_histogram(
+                subvocab_codes, self.cfg.subvocab_size, self.cfg.token_bin_size + 2
+            )
+        else:
+            histogram = compute_count_histogram(
+                subvocab_codes, self.cfg.subvocab_size, self.subvocab_ntp_token
+            )
         return inserted_codes, histogram
 
     @SeedableMixin.WithSeed
@@ -704,6 +819,25 @@ class HistogramPytorchDataset(PytorchDataset, TimeableMixin):
         out = super()._seeded_getitem(idx)
         codes = out["dynamic"].tensors["dim0/code"]
         time_deltas = out["dynamic"].tensors["dim0/time_delta_days"]
+        if self.cfg.offset is not None:
+            subject_dynamic_data, subject_id, _, end = self.load_subject_dynamic_data(idx, do_slice=False)
+            global_start, global_end = self.subj_seq_bounds[subject_id]
+            start = end
+            end = min(end + self.cfg.offset, global_end)
+            offset_subject_dynamic_data = subject_dynamic_data[start:end]
+            if len(offset_subject_dynamic_data) > 0:
+                offset_out = self.load_subject(
+                    offset_subject_dynamic_data,
+                    subject_id,
+                    start,
+                    end,
+                    idx,
+                    postpend_override=self.cfg.postpend_token,
+                    subsequence_sampling_override=SubsequenceSamplingStrategy.FROM_START,
+                )
+                codes = np.hstack([codes, offset_out["dynamic"].tensors["dim0/code"]])
+                time_deltas = np.hstack([time_deltas, offset_out["dynamic"].tensors["dim0/time_delta_days"]])
+
         inserted_codes, histogram = self.update_codes(codes, time_deltas)
 
         out["cum_sum"] = dict(

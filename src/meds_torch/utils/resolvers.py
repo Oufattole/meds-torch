@@ -17,6 +17,10 @@ def add_two(a):
     return a + 2
 
 
+def add(a, b):
+    return a + b
+
+
 def get_eos_token_id(vocab_size, eos_offset):
     return vocab_size - eos_offset
 
@@ -33,6 +37,16 @@ def int_prod(x: int, y: int) -> int:
         7
     """
     return round(x * y)
+
+
+def get_subvocab_index(augmented_code_metadata_fp, token):
+    metadata_df = pl.read_parquet(augmented_code_metadata_fp)
+    return metadata_df.filter(pl.col("code") == token)["code/subvocab_index"][-1]
+
+
+def get_vocab_index(augmented_code_metadata_fp, token):
+    metadata_df = pl.read_parquet(augmented_code_metadata_fp)
+    return metadata_df.filter(pl.col("code") == token)["code/vocab_index"][-1]
 
 
 def setup_resolvers():
@@ -54,5 +68,23 @@ def setup_resolvers():
     OmegaConf.register_new_resolver(
         "int_prod",
         int_prod,
+        replace=True,
+    )
+
+    OmegaConf.register_new_resolver(
+        "get_subvocab_index",
+        get_subvocab_index,
+        replace=True,
+    )
+
+    OmegaConf.register_new_resolver(
+        "get_vocab_index",
+        get_vocab_index,
+        replace=True,
+    )
+
+    OmegaConf.register_new_resolver(
+        "add",
+        add,
         replace=True,
     )

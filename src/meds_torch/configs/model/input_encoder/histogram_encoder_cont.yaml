@@ -9,3 +9,4 @@ metadata_fp: ${model.augmented_code_metadata_fp}
 do_prompt_tune: false
 encode_for_prompt_tuning: ${model.encode_for_prompt_tuning}
 encoder_dims: ${model.encoder_dims}
+do_vector_quantize_prompts: false

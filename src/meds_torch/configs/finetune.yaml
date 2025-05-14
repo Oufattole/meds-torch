@@ -43,7 +43,7 @@ train: True
 
 # evaluate on test set, using best model weights achieved during training
 # lightning chooses best weights based on the metric specified in checkpoint callback
-test: True
+test: false
 
 # simply provide path to previous train run to finetune from
 pretrain_path: ???

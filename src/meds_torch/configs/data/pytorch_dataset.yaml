@@ -60,3 +60,4 @@ vocab_size: ${get_vocab_size:${data.code_metadata_fp}, ${data.postpend_token}, "
 eos_offset: 1
 EOS_TOKEN_ID: ${get_eos_token_id:${data.vocab_size}, ${data.eos_offset}}
 postpend_token: ${model.backbone.postpend_token}
+offset: null

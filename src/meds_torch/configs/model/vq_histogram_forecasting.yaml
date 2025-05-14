@@ -1,0 +1,39 @@
+defaults:
+  - input_encoder: vq_encoder
+  - backbone: gpt2
+  - trajectory_labeler: null
+  - optimizer: adamw
+  - scheduler: null
+  - _self_
+_target_: meds_torch.models.vq_histogram_forecasting.VQHistogramForecastingModule.initialize
+
+max_seq_len: ${data.max_seq_len}
+
+subvocab_size: ${data.subvocab_size}
+get_representations: false
+task_name: ${data.task_name}
+batch_size: ${data.dataloader.batch_size}
+code_head:
+  _target_: torch.nn.Identity
+augmented_code_metadata_fp: ${data.augmented_code_metadata_fp}
+cluster_token_offset: ${data.augmented_vocab_size}
+
+# compile model for faster training with pytorch 2.0
+compile: false
+
+# sampling parameters
+eos_tokens:
+  - ${data.EOS_TOKEN_ID}
+log_progress: true
+
+# Autoregressive modeling metric params
+top_k_acc:
+  - 1
+  - 5
+  - 10
+return_logits: false
+return_tokens: false
+token_dim: 4
+pretrain: false
+temperature: 1.0
+vocab_size: ${add:${data.augmented_vocab_size},${.input_encoder.vq_num_embeddings}}

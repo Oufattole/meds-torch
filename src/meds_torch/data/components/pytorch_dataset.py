@@ -39,6 +39,7 @@ class DummyConfig:
     do_include_end_time: bool = True
     do_include_prediction_time: bool = True
     subsequence_sampling_strategy: str = "from_start"
+    offset: int | None = None
 
 
 def create_dummy_dataset(
@@ -714,7 +715,7 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         return self._seeded_getitem(idx)
 
     @TimeableMixin.TimeAs
-    def load_subject_dynamic_data(self, idx: int):
+    def load_subject_dynamic_data(self, idx: int, do_slice: bool = True):
         """Loads and returns the dynamic data slice for a given subject index, with subject ID and time range.
 
         Args:
@@ -780,7 +781,10 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
 
         dynamic_data_fp = Path(self.config.data_dir) / "data" / f"{shard}.nrt"
 
-        subject_dynamic_data = JointNestedRaggedTensorDict(tensors_fp=dynamic_data_fp)[subject_idx, st:end]
+        subject_dynamic_data = JointNestedRaggedTensorDict(tensors_fp=dynamic_data_fp)[subject_idx]
+
+        if do_slice:
+            subject_dynamic_data = subject_dynamic_data[st:end]
 
         return subject_dynamic_data, subject_id, st, end
 
@@ -793,6 +797,9 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         global_st: int,
         global_end: int,
         idx: int,
+        postpend_override: PostpendToken | None = None,
+        subsequence_sampling_override: SubsequenceSamplingStrategy | None = None,
+        seq_len_override: int | None = None,
     ) -> dict[str, list[float]]:
         """Load and process data for a single subject.
 
@@ -884,6 +891,8 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         static_row = self.static_dfs[shard][subject_idx].to_dict()
 
         max_seq_len = self.config.max_seq_len
+        if seq_len_override is not None:
+            max_seq_len = seq_len_override
 
         out = {
             "static_indices": static_row["static_indices"].item().to_list(),
@@ -905,10 +914,12 @@ class PytorchDataset(SeedableMixin, torch.utils.data.Dataset, TimeableMixin):
         subject_dynamic_data, global_st, global_end, has_censor_token = subsample_subject_data(
             subject_dynamic_data,
             max_seq_len,
-            self.config.subsequence_sampling_strategy,
+            subsequence_sampling_override
+            if subsequence_sampling_override is not None
+            else self.config.subsequence_sampling_strategy,
             self.config.do_flatten_tensors,
             global_st,
-            self.config.postpend_token,
+            postpend_override if postpend_override is not None else self.config.postpend_token,
             includes_end=global_end
             == self.subj_seq_bounds[subject_id][1],  # Check if the end is the end of the data
         )
