@@ -36,4 +36,5 @@ return_tokens: false
 token_dim: 4
 pretrain: false
 temperature: 1.0
+no_cluster_vocab_size: ${data.augmented_vocab_size}
 vocab_size: ${add:${data.augmented_vocab_size},${.input_encoder.vq_num_embeddings}}

@@ -965,14 +965,22 @@ class VQHistogramForecastingModule(BaseModule):
             kv_cache = output.past_key_values
             if token_bin_guidance:
                 num_tokens_in_bin = self.cfg.max_count
+                last_logits = output.logits[:, -1]
+                last_logits[:, self.ntp_token] = float("-inf")
+                assert (
+                    self.ntp_token == self.cfg.no_cluster_vocab_size - 1
+                ), "ntp_token is not the last token in the metadata, which is assumed for token bin guidance"
                 if count % num_tokens_in_bin == 0:  # should generate H tokens
                     sample = torch.full_like(samples[:, -1], self.h_token).unsqueeze(-1)
                 elif count % num_tokens_in_bin == 1:  # should generate NTP tokens
-                    sample = torch.full_like(samples[:, -1], self.ntp_token).unsqueeze(-1)
+                    last_logits[:, : self.ntp_token] = float("-inf")
+                    probs = F.softmax(last_logits / self.cfg.temperature, dim=-1)
+                    sample = torch.multinomial(probs, 1)
                 else:
                     last_logits = output.logits[:, -1]
                     last_logits[:, self.h_token] = float("-inf")
-                    last_logits[:, self.ntp_token] = float("-inf")
+                    last_logits[:, self.ntp_token :] = float("-inf")
+                    last_logits[:, self.cfg.vocab_size :] = float("-inf")
                     probs = F.softmax(last_logits / self.cfg.temperature, dim=-1)
                     sample = torch.multinomial(probs, 1)
             else:
