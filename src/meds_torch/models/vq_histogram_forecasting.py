@@ -722,8 +722,7 @@ class VQHistogramForecastingModule(BaseModule):
                 self.log(f"test/NEXT_TOKEN/{metric_name.upper()}", value, on_epoch=True)
             self.test_next_token_metric.reset()
 
-    @classmethod
-    def get_metadata_means(cls, metadata_df):
+    def get_metadata_means(self, metadata_df):
         if "values/sum" not in metadata_df or "values/n_occurrences" not in metadata_df:
             raise ValueError("Missing 'values/sum' and/or 'values/n_occurrences' columns in metadata_df")
         metadata_df = metadata_df.with_columns(
@@ -731,8 +730,7 @@ class VQHistogramForecastingModule(BaseModule):
         )
         return metadata_df
 
-    @classmethod
-    def get_code_to_time_map(cls, metadata_df) -> dict:
+    def get_code_to_time_map(self, metadata_df) -> dict:
         """Convert the metadata DataFrame to a dictionary mapping code to time.
 
         Args:
@@ -752,10 +750,11 @@ class VQHistogramForecastingModule(BaseModule):
         >>> HistogramForecastingModule.get_code_to_time_map(metadata_df)
         tensor([0., 0., 0., 1., 0.])
         """
-        metadata_df = cls.get_metadata_means(metadata_df)
+        metadata_df = self.get_metadata_means(metadata_df)
         # Assuming we know the vocab size
-        num_vocab = metadata_df["code/vocab_index"].max()
-        code_to_time_map = torch.zeros(num_vocab + 2)  # +2 since indices start at 1 and EOS token is added
+        code_to_time_map = torch.zeros(
+            self.cfg.vocab_size
+        )  # +2 since indices start at 1 and EOS token is added
 
         # Set values using the indices
         time_mask = pl.col("code").str.starts_with(TIME_DELTA_TOKEN)
@@ -765,8 +764,7 @@ class VQHistogramForecastingModule(BaseModule):
         code_to_time_map[vocab_indices.to_list()] = time_values.to_torch().to(code_to_time_map.dtype)
         return code_to_time_map
 
-    @classmethod
-    def get_code_to_numeric_value_map(cls, metadata_df, get_raw_values=True) -> dict:
+    def get_code_to_numeric_value_map(self, metadata_df, get_raw_values=True) -> dict:
         """Convert the metadata DataFrame to a dictionary mapping code to numeric value.
 
         Args:
@@ -804,17 +802,14 @@ class VQHistogramForecastingModule(BaseModule):
         # First, verify the input DataFrame is sorted by vocab_index
         assert metadata_df["code/vocab_index"].is_sorted()
 
-        # Get the maximum vocab index to determine tensor size
-        max_vocab_idx = metadata_df["code/vocab_index"].max()
-
         # Create a tensor filled with NaN values
-        result = torch.full((max_vocab_idx + 1,), float("nan"))
+        result = torch.full((self.cfg.vocab_size,), float("nan"))
         # TODO(Oufattole) remove this and enforce that metadata_df must include the values/min
         ordered_quantiles = [field.name for field in metadata_df.schema["values/quantiles"].fields]
         percentiles = [0, *[float(q.split("/")[-1]) for q in ordered_quantiles], 1]
         if "values/min" not in metadata_df.columns or "values/max" not in metadata_df.columns:
             raise ValueError("Missing values/min and/or values/max values in metadata_df")
-        metadata_df = cls.get_metadata_means(metadata_df)
+        metadata_df = self.get_metadata_means(metadata_df)
 
         # Process each row in the DataFrame
         for row in metadata_df.iter_rows(named=True):
@@ -843,9 +838,8 @@ class VQHistogramForecastingModule(BaseModule):
             # This handles both the base code (e.g., "A") and any other non-quarterly codes
         return torch.cat([result, torch.Tensor([np.nan])])  # postpend a zero in case EOS token is postpended
 
-    @classmethod
     def to_trajectory_batch(
-        cls,
+        self,
         code,
         mask,
         metadata_df,
@@ -903,9 +897,9 @@ class VQHistogramForecastingModule(BaseModule):
         ['subject_id', 'prediction_time', 'time', 'code', 'code/vocab_index', 'numeric_value']
         """
         if not code_to_time_map:
-            code_to_time_map = cls.get_code_to_time_map(metadata_df)
+            code_to_time_map = self.get_code_to_time_map(metadata_df)
         if not code_to_numeric_value_map:
-            code_to_numeric_value_map = cls.get_code_to_numeric_value_map(metadata_df)
+            code_to_numeric_value_map = self.get_code_to_numeric_value_map(metadata_df)
         # Initialize lists to store the DataFrame rows
         time = torch.cumsum(code_to_time_map[code], dim=1)
         numeric_value = code_to_numeric_value_map[code]
@@ -970,7 +964,7 @@ class VQHistogramForecastingModule(BaseModule):
             # logits = output.logits
             kv_cache = output.past_key_values
             if token_bin_guidance:
-                num_tokens_in_bin = self.cfg.token_bin_size + 2
+                num_tokens_in_bin = self.cfg.max_count
                 if count % num_tokens_in_bin == 0:  # should generate H tokens
                     sample = torch.full_like(samples[:, -1], self.h_token).unsqueeze(-1)
                 elif count % num_tokens_in_bin == 1:  # should generate NTP tokens
