@@ -185,7 +185,7 @@ class TextCodeEmbedder(nn.Module, Module, TimeableMixin):
         code_embeddings = self.linear(code_embeddings)
         embeddings = code_embeddings[inverse_indices]
 
-        return torch.zeros_like(embeddings)
+        return embeddings
 
 
 class TextCodeEncoder(nn.Module, Module, TimeableMixin):
